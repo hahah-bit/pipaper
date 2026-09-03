@@ -1,5 +1,4 @@
 import { api, state, $, el, toast, updateZoteroFoot } from "./app.js";
-import { refreshSessions } from "./chat.js";
 
 let activeCollection = null; // collection id or null = all
 let searchQ = "";
@@ -13,12 +12,13 @@ export function initSidebar() {
   $("#file-input").addEventListener("change", async (e) => {
     const files = [...e.target.files];
     e.target.value = "";
+    const activeProj = state.projects.find((p) => p.id === state.projectId);
     for (const f of files) {
       try {
-        const r = await api.importPdf(f);
+        const r = await api.importPdf(f, state.projectId);
         await reloadPapers();
-        toast(r.reused ? `${f.name} 与已管理论文内容相同，已复用其解析状态` : `${f.name} 已导入`);
-        if (r.reused) await refreshSessions();
+        const where = activeProj ? `，已归入项目「${activeProj.name}」` : "";
+        toast(r.reused ? `${f.name} 与已管理论文内容相同，已复用解析状态${where}` : `${f.name} 已导入${where}`);
       } catch (err) {
         toast(`导入失败: ${err.message}`, true);
       }
@@ -47,6 +47,7 @@ export async function loadPapers(refresh = false) {
   state.papers = data.papers;
   state.collections = data.collections;
   state.zotero = data.zotero;
+  if (data.projects) state.projects = data.projects;
   return data;
 }
 
@@ -64,9 +65,9 @@ export function renderProjects() {
   const sel = $("#project-select");
   if (!sel) return;
   sel.replaceChildren();
-  sel.append(el("option", { value: "" }, "会话分组：全部"));
+  sel.append(el("option", { value: "" }, `📂 全部文献 (${state.papers.length}篇)`));
   for (const p of state.projects) {
-    sel.append(el("option", { value: p.id }, `项目：${p.name} (${p.paperIds.length}篇)`));
+    sel.append(el("option", { value: p.id }, `📁 ${p.name} (${p.paperIds.length}篇)`));
   }
   sel.value = state.projectId || "";
 }

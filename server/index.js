@@ -65,6 +65,7 @@ api.get("/papers", async (req, res) => {
     papers: listPapers().map(paperWithParseStatus),
     collections,
     zotero: zoteroStatus(),
+    projects: listProjects(),
   });
 });
 
@@ -74,7 +75,13 @@ api.put("/papers/import", (req, res) => {
     if (!/\.pdf$/i.test(name)) return res.status(400).json({ error: "仅支持 PDF" });
     if (!req.rawBody?.length) return res.status(400).json({ error: "空文件" });
     const { paper, reused } = importPdfFile(name, req.rawBody);
-    res.json({ ...paperWithParseStatus(paper), reused });
+    // project-scoped import: file lands in the currently selected project
+    const projectId = req.headers["x-project-id"];
+    if (projectId) {
+      const proj = updateProject(projectId, { addPaper: paper.id });
+      if (!proj) return res.status(400).json({ error: "项目不存在" });
+    }
+    res.json({ ...paperWithParseStatus(paper), reused, projectId: projectId || null });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }

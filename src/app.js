@@ -40,10 +40,14 @@ export const api = {
   getConfig: () => jfetch("/api/config"),
   saveConfig: (patch) => jfetch("/api/config", { method: "PUT", body: patch }),
   papers: (refresh) => jfetch("/api/papers" + (refresh ? "?refresh=1" : "")),
-  importPdf: async (file) => {
+  importPdf: async (file, projectId) => {
     const res = await fetch("/api/papers/import", {
       method: "PUT",
-      headers: { "Content-Type": "application/pdf", "X-Filename": encodeURIComponent(file.name) },
+      headers: {
+        "Content-Type": "application/pdf",
+        "X-Filename": encodeURIComponent(file.name),
+        ...(projectId ? { "X-Project-Id": projectId } : {}),
+      },
       body: file,
     });
     const data = await res.json().catch(() => ({}));
