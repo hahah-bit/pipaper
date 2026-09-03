@@ -1,29 +1,75 @@
 import { $, el, toast, addChip } from "./app.js";
 
-// Video panel: open local videos, play in the reader pane, capture frames to
-// ask the AI ("边看边交流"). Simple by design — deeper analysis comes later.
+// Video panel: open local videos or video URLs, play in the reader pane,
+// capture frames to ask the AI. The list doubles as a collapsible manager.
 
-const videos = []; // {name, url, file}
+const videos = []; // {name, url, file?, remote?}
 let current = null;
+let listCollapsed = false;
 
 export function initVideoPanel() {
   $("#btn-video-pick").addEventListener("click", () => $("#video-input").click());
   $("#video-input").addEventListener("change", (e) => {
-    for (const f of [...e.target.files]) {
-      const v = { name: f.name, url: URL.createObjectURL(f), file: f };
-      videos.push(v);
-      renderList();
-    }
+    for (const f of [...e.target.files]) addVideo({ name: f.name, url: URL.createObjectURL(f), file: f });
     e.target.value = "";
   });
+  $("#btn-video-url").addEventListener("click", () => {
+    const row = $("#video-url-row");
+    row.hidden = !row.hidden;
+    if (!row.hidden) $("#video-url-input").focus();
+  });
+  $("#btn-video-url-add").addEventListener("click", () => {
+    const url = $("#video-url-input").value.trim();
+    if (!url) return;
+    const name = decodeURIComponent(url.split("/").pop().split("?")[0]) || url;
+    addVideo({ name, url, remote: true });
+    $("#video-url-input").value = "";
+    $("#video-url-row").hidden = true;
+  });
+  $("#video-url-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); $("#btn-video-url-add").click(); }
+  });
+  $("#video-list-head").addEventListener("click", (e) => {
+    if (e.target.closest(".video-item") || e.target.closest("button")) return;
+    listCollapsed = !listCollapsed;
+    $("#video-list").hidden = listCollapsed;
+    $("#video-list-head .vd-caret").textContent = listCollapsed ? "▸" : "▾";
+  });
+  initFrameButtons();
+}
+
+function addVideo(v) {
+  videos.push(v);
+  try { openVideo(v); } catch (e) { window.__vidErr = String(e && e.stack || e); return; }
+  renderList();
+  openVideo(v);
+}
+
+function removeVideo(i) {
+  const v = videos[i];
+  if (current === v) {
+    const video = document.getElementById("video-el");
+    if (video) video.removeAttribute("src"), video.load();
+    current = null;
+    $("#tab-video-reader")?.classList.remove("active");
+  }
+  if (!v.remote) URL.revokeObjectURL(v.url);
+  videos.splice(i, 1);
+  renderList();
 }
 
 function renderList() {
   const box = $("#video-list");
+  if (!box) return;
   box.replaceChildren();
-  for (const v of videos) {
-    box.append(el("div", { class: "video-item" + (current?.name === v.name ? " active" : ""), onclick: () => openVideo(v) }, "🎬 " + v.name));
-  }
+  videos.forEach((v, i) => {
+    box.append(
+      el("div", { class: "video-item" + (current === v ? " active" : "") },
+        el("span", { class: "vi-name", title: v.name, onclick: () => openVideo(v) }, (v.remote ? "🔗 " : "🎬 ") + v.name),
+        el("button", { class: "vi-x", title: "移除", onclick: (e) => { e.stopPropagation(); removeVideo(i); } }, "✕")
+      )
+    );
+  });
 }
 
 function openVideo(v) {
@@ -36,7 +82,7 @@ function openVideo(v) {
     tv = el("button", { id: "tab-video-reader", class: "tab", onclick: () => showVideoView() }, "视频");
     $("#reader-head .tabs").append(tv);
   }
-  const view = $("#video-reader-view");
+  let view = $("#video-reader-view");
   if (!view) {
     const holder = el("div", { id: "video-reader-view", class: "reader-view", hidden: "hidden" });
     holder.innerHTML = `
@@ -49,6 +95,7 @@ function openVideo(v) {
         </div>
       </div>`;
     $("#reader-body").append(holder);
+    view = document.getElementById("video-reader-view");
   }
   const video = view.querySelector("#video-el");
   if (video.src !== v.url) video.src = v.url;
@@ -85,7 +132,14 @@ function captureFrame() {
   c.width = video.videoWidth * scale;
   c.height = video.videoHeight * scale;
   c.getContext("2d").drawImage(video, 0, 0, c.width, c.height);
-  return { dataUrl: c.toDataURL("image/jpeg", 0.9), ts: video.currentTime, name: current?.name || "video" };
+  let dataUrl;
+  try {
+    dataUrl = c.toDataURL("image/jpeg", 0.9);
+  } catch {
+    toast("跨域视频无法截帧 — 请下载到本地后打开", true);
+    return null;
+  }
+  return { dataUrl, ts: video.currentTime, name: current?.name || "video" };
 }
 
 function initFrameButtons() {
@@ -112,5 +166,4 @@ function initFrameButtons() {
 
 export function initVideoTab() {
   initVideoPanel();
-  initFrameButtons();
 }

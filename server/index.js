@@ -383,6 +383,31 @@ function migrateLibrary() {
 }
 
 // ---- resource manager: skills / extensions / packages / MCP ----
+// local plugin registry: skills/*/.codex-plugin/plugin.json
+function scanLocalPlugins() {
+  const out = [];
+  const skillsRoot = path.join(process.env.USERPROFILE || "", ".pi", "agent", "skills");
+  try {
+    for (const d of fs.readdirSync(skillsRoot)) {
+      const mf = path.join(skillsRoot, d, ".codex-plugin", "plugin.json");
+      if (!fs.existsSync(mf)) continue;
+      try {
+        const j = JSON.parse(fs.readFileSync(mf, "utf8"));
+        out.push({
+          id: d,
+          name: j.interface?.displayName || j.name || d,
+          version: j.version || "",
+          description: j.description || j.interface?.shortDescription || "",
+          category: j.interface?.category || "",
+          dir: path.join(skillsRoot, d),
+          skillPath: path.join(skillsRoot, d, "skills"),
+        });
+      } catch {}
+    }
+  } catch {}
+  return out;
+}
+
 api.get("/pi/resources", async (_req, res) => {
   try {
     const out = { skills: [], extensions: [], packages: [], mcp: [] };
@@ -393,6 +418,7 @@ api.get("/pi/resources", async (_req, res) => {
     try {
       const h = await import("./harness.js");
       out.gatedSkills = h.gatedSkills();
+      out.plugins = scanLocalPlugins();
       out.extensions = h.sharedLoaderInfo()?.extensions || [];
     } catch {}
     try {

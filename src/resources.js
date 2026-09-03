@@ -117,6 +117,15 @@ function renderExtensions(body) {
       el("span", { class: "res-src" }, e.source || "")
     ));
   }
+  body.append(el("div", { class: "dd-group", style: { paddingLeft: 0 } }, "已安装插件（本地）"));
+  if (!resData.plugins?.length) body.append(el("p", { class: "res-note" }, "尚无插件 — 插件放在 ~/.pi/agent/skills/<插件名>/.codex-plugin/plugin.json 即会被识别。"));
+  for (const p of resData.plugins || []) {
+    body.append(el("div", { class: "res-row" },
+      el("span", { class: "res-name" }, "🧩 " + p.name + (p.version ? " v" + p.version : "")),
+      el("span", { class: "res-desc" }, p.description),
+      el("span", { class: "res-src" }, p.category || "")
+    ));
+  }
   const input = el("input", { type: "text", placeholder: "扩展文件/目录绝对路径，如 D:\\my-ext.ts" });
   const addBtn = el("button", { class: "tool-btn", onclick: async () => {
     const p = currentProject();

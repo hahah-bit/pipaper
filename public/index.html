@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PiPaper · 论文精读工作台</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
-<link rel="stylesheet" href="/style.css?v=2eb3ce0528" />
+<link rel="stylesheet" href="/style.css?v=6caebf66b7" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -155,8 +155,18 @@
     </div>
     <div id="stab-video" class="stab" hidden>
       <div id="video-panel">
-        <button id="btn-video-pick" class="tool-btn" style="width:100%">📂 打开本地视频</button>
+        <div class="sch-row">
+          <button id="btn-video-pick" class="tool-btn" style="flex:1">📂 本地视频</button>
+          <button id="btn-video-url" class="tool-btn" style="flex:1">🔗 视频链接</button>
+        </div>
         <input type="file" id="video-input" accept="video/*" multiple hidden />
+        <div id="video-url-row" class="sch-row" hidden>
+          <input id="video-url-input" type="text" placeholder="mp4/webm 直链…" style="flex:1" />
+          <button id="btn-video-url-add" class="tool-btn primary">添加</button>
+        </div>
+        <div id="video-list-head" class="video-list-head">
+          <span>视频管理</span><span class="vd-caret">▾</span>
+        </div>
         <div id="video-list"></div>
         <p class="res-note">打开后在阅读器播放，可「截帧问 AI」：把当前画面 + 时间戳发给模型一起讨论。</p>
       </div>
@@ -225,6 +235,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=2eb3ce0528"></script>
+<script src="/app.js?v=6caebf66b7"></script>
 </body>
 </html>
