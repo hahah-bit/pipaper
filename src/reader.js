@@ -1,0 +1,430 @@
+import * as pdfjsLib from "pdfjs-dist";
+import { renderMd } from "./chat.js";
+import { api, state, $, el, toast, addChip } from "./app.js";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.min.mjs";
+
+let currentJobId = null;
+let jobTimer = null;
+let pdfDoc = null;
+let boxMode = false;
+let renderSeq = 0;
+
+// ---------------- load paper ----------------
+export async function readerLoadPaper(p) {
+  $("#tab-parsed").click();
+  $("#reader-status").textContent = p.title ? p.title.slice(0, 42) : "";
+  document.title = `${p.title || "PiPaper"} · PiPaper`;
+  await loadParsed(p);
+  // reset pdf
+  pdfDoc = null;
+  $("#pdf-pages").replaceChildren();
+}
+
+async function loadParsed(p) {
+  $("#parsed-content").replaceChildren();
+  const res = await fetch(`/api/papers/${p.id}/blocks`).then((r) => r.json());
+  updateParseStatus(res.status, res.engine, res.error);
+  if (res.blocks?.length) {
+    renderBlocks(p, res.blocks, res.paper);
+  } else {
+    $("#parsed-content").replaceChildren();
+    $("#parsed-empty").hidden = false;
+  }
+}
+
+function updateParseStatus(status, engine, error) {
+  const chip = $("#reader-status");
+  const btnParse = $("#btn-parse");
+  chip.dataset.status = status;
+  const label = { none: "未解析", running: "解析中…", done: `已解析${engine ? " · " + engine : ""}`, error: "解析失败" }[status] || status;
+  chip.textContent = (state.currentPaper ? "" : "") + label;
+  btnParse.textContent = status === "done" ? "重新解析" : "解析";
+}
+
+// ---------------- parsed blocks rendering ----------------
+function renderBlocks(paper, blocks, meta) {
+  $("#parsed-empty").hidden = true;
+  const wrap = $("#parsed-content");
+  wrap.replaceChildren();
+
+  wrap.append(el("h1", { class: "doc-title" }, paper.title || "(无标题)"));
+  const metaBits = [(paper.creators || []).slice(0, 4).join(", "), paper.year, paper.publication, paper.doi ? `DOI: ${paper.doi}` : "", `引擎: ${meta?.parse?.engine || "?"}`].filter(Boolean);
+  wrap.append(el("div", { class: "doc-meta" }, metaBits.join(" · ")));
+
+  let lastPage = 0;
+  blocks.forEach((b, idx) => {
+    if (b.page && b.page !== lastPage && b.page > lastPage + 0) {
+      wrap.append(el("div", { class: "page-mark" }, `— 第 ${b.page} 页 —`));
+      lastPage = b.page;
+    }
+    const blk = el("div", { class: "blk", "data-idx": idx, ...(b.page ? { "data-page": b.page } : {}) });
+    const addBtn = el("button", {
+      class: "add-btn",
+      title: "把该部分加入对话",
+      onclick: (e) => { e.stopPropagation(); addBlockToChat(b, blk, paper); },
+    }, "＋ 对话");
+    blk.append(addBtn);
+    switch (b.type) {
+      case "heading": {
+        const lv = Math.min(4, b.level || 1);
+        blk.append(el("h" + (lv + 1), {}, b.text));
+        break;
+      }
+      case "para": {
+        const div = el("div", {});
+        renderMd(b.md, div);
+        blk.append(div);
+        break;
+      }
+      case "table": {
+        const div = el("div", { class: "tbl-wrap" });
+        if (b.html) div.innerHTML = safeHtml(b.html);
+        else renderMd(b.md, div);
+        blk.append(div);
+        break;
+      }
+      case "image": {
+        const src = `/api/papers/${paper.id}/${b.src}`;
+        const img = el("img", { src, alt: b.caption || "figure", loading: "lazy" });
+        img.addEventListener("load", () => { /* natural size kept via max-width */ });
+        img.addEventListener("click", () => lightbox(src, b.caption));
+        blk.append(el("figure", {}, img, b.caption ? el("figcaption", {}, b.caption) : null));
+        break;
+      }
+      case "formula": {
+        const div = el("div", { class: "formula-blk" });
+        renderMd(`$$${b.latex}$$`, div);
+        blk.append(div);
+        break;
+      }
+      case "code": {
+        const div = el("div");
+        renderMd("```" + (b.lang || "") + "\n" + b.text + "\n```", div);
+        blk.append(div);
+        break;
+      }
+      default:
+        return;
+    }
+    wrap.append(blk);
+  });
+
+  // headings clickable for outline jump? keep simple
+}
+
+function safeHtml(html) {
+  const t = document.createElement("div");
+  t.innerHTML = html;
+  return t.innerHTML;
+}
+
+function addBlockToChat(b, blkEl, paper) {
+  if (b.type === "image") {
+    const img = blkEl.querySelector("img");
+    const chip = { kind: "block", tag: "图", label: `图 · ${b.caption || "figure"}${b.page ? ` (p.${b.page})` : ""}`, body: b.caption || "", dataUrl: null };
+    // convert image to dataURL for vision
+    const c = document.createElement("canvas");
+    const im = new Image();
+    im.onload = () => {
+      const scale = Math.min(1, 1600 / Math.max(im.width, im.height));
+      c.width = im.width * scale; c.height = im.height * scale;
+      c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
+      chip.dataUrl = c.toDataURL("image/png");
+      renderChipsIf();
+    };
+    im.src = img.src;
+    addChip(chip);
+    toast("图片已加入对话上下文");
+  } else if (b.type === "table") {
+    addChip({ kind: "block", tag: "表", label: `表格${b.page ? ` (p.${b.page})` : ""}`, body: b.md || stripTags(b.html) });
+    toast("表格已加入对话上下文");
+  } else if (b.type === "formula") {
+    addChip({ kind: "block", tag: "公式", label: `公式${b.page ? ` (p.${b.page})` : ""}`, body: `$$${b.latex}$$` });
+    toast("公式已加入对话上下文");
+  } else {
+    const text = blkEl.innerText.trim();
+    if (text) {
+      addChip({ kind: "text", tag: "段落", body: text.slice(0, 6000), page: b.page });
+      toast("段落已加入对话上下文");
+    }
+  }
+}
+
+function stripTags(html) {
+  const d = el("div", { html });
+  return d.textContent || "";
+}
+
+function renderChipsIf() { import("./app.js").then((m) => m.renderChips()); }
+
+function lightbox(src, caption) {
+  const back = el("div", {
+    style: { position: "fixed", inset: "0", background: "rgba(4,6,14,.85)", zIndex: "150", display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-out", flexDirection: "column", gap: "10px" },
+    onclick: () => back.remove(),
+  });
+  const img = el("img", { src, style: { maxWidth: "92vw", maxHeight: "86vh", borderRadius: "6px" } });
+  back.append(img, caption ? el("div", { style: { color: "#aab" } }, caption) : null);
+  document.body.append(back);
+}
+
+// ---------------- selection (both views) ----------------
+function initSelection() {
+  const popup = $("#sel-popup");
+  document.addEventListener("mouseup", (e) => {
+    if (e.target?.closest?.("#sel-popup")) return;
+    setTimeout(() => {
+      const sel = window.getSelection();
+      const text = sel?.toString().trim();
+      if (!text || text.length < 2 || sel.isCollapsed) {
+        popup.hidden = true;
+        return;
+      }
+      // must be inside reader
+      const anchor = sel.anchorNode?.parentElement || sel.anchorNode;
+      if (!anchor?.closest?.("#reader-body")) {
+        popup.hidden = true;
+        return;
+      }
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      popup.style.left = Math.min(window.innerWidth - 130, rect.left + rect.width / 2 - 55) + "px";
+      popup.style.top = rect.top + "px";
+      popup.hidden = false;
+      popup.dataset.page = anchor.closest(".page-el")?.dataset.page || anchor.closest(".blk")?.dataset.page || "";
+    }, 10);
+  });
+  $("#btn-sel-add").addEventListener("click", () => {
+    const sel = window.getSelection();
+    const text = sel?.toString().trim();
+    if (text) {
+      const page = parseInt(popup.dataset.page) || null;
+      addChip({ kind: "text", tag: "选中", body: text.slice(0, 8000), page });
+      toast("选中文本已加入对话");
+    }
+    popup.hidden = true;
+  });
+}
+
+// ---------------- pdf view ----------------
+async function loadPdf(paper) {
+  if (!paper.pdfPath) {
+    $("#pdf-pages").replaceChildren(el("div", { class: "empty-hint" }, "该论文没有关联 PDF 文件"));
+    return;
+  }
+  const seq = ++renderSeq;
+  try {
+    const url = `/api/papers/${paper.id}/pdf`;
+    pdfDoc = await pdfjsLib.getDocument({ url }).promise;
+    const container = $("#pdf-pages");
+    container.replaceChildren();
+    for (let pno = 1; pno <= pdfDoc.numPages; pno++) {
+      if (seq !== renderSeq) return; // paper switched
+      await renderPage(pno);
+    }
+  } catch (e) {
+    $("#pdf-pages").replaceChildren(el("div", { class: "empty-hint" }, "PDF 加载失败: " + e.message));
+  }
+}
+
+async function renderPage(pno) {
+  const page = await pdfDoc.getPage(pno);
+  const holder = $("#pdf-pages");
+  let pageEl = holder.querySelector(`.page-el[data-page="${pno}"]`);
+  if (!pageEl) {
+    pageEl = el("div", { class: "page-el", "data-page": pno });
+    pageEl.append(el("div", { class: "page-num-label" }, `p. ${pno}`));
+    const canvas = el("canvas");
+    const textDiv = el("div", { class: "textLayer" });
+    pageEl.append(canvas, textDiv);
+    holder.append(pageEl);
+  }
+  const canvas = pageEl.querySelector("canvas");
+  const textDiv = pageEl.querySelector(".textLayer");
+  const cssWidth = Math.min(900, holder.clientWidth - 48);
+  const scale = cssWidth / page.getViewport({ scale: 1 }).width;
+  const viewport = page.getViewport({ scale });
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = viewport.width * dpr;
+  canvas.height = viewport.height * dpr;
+  canvas.style.width = viewport.width + "px";
+  canvas.style.height = viewport.height + "px";
+  pageEl.style.width = viewport.width + "px";
+  pageEl.style.height = viewport.height + "px";
+
+  const ctx = canvas.getContext("2d");
+  await page.render({ canvasContext: ctx, viewport, transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined }).promise;
+
+  textDiv.replaceChildren();
+  const tc = await page.getTextContent();
+  const tl = new pdfjsLib.TextLayer({ textContentSource: tc, container: textDiv, viewport });
+  await tl.render();
+  textDiv.style.width = textDiv.style.height = "";
+}
+
+// box-select screenshots
+function initBoxSelect() {
+  const btn = $("#btn-boxselect");
+  btn.addEventListener("click", () => {
+    boxMode = !boxMode;
+    btn.classList.toggle("active", boxMode);
+    toast(boxMode ? "框选模式：在 PDF 页面上拖拽截图" : "框选模式关闭");
+  });
+
+  const holder = $("#pdf-pages");
+  let dragging = null;
+  holder.addEventListener("mousedown", (e) => {
+    if (!boxMode) return;
+    const pageEl = e.target.closest(".page-el");
+    if (!pageEl) return;
+    e.preventDefault();
+    const rect = pageEl.getBoundingClientRect();
+    dragging = { pageEl, x0: e.clientX - rect.left, y0: e.clientY - rect.top, box: null };
+    const box = el("div", { class: "box-overlay" });
+    pageEl.append(box);
+    dragging.box = box;
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const rect = dragging.pageEl.getBoundingClientRect();
+    const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    const y = Math.max(0, Math.min(e.clientY - rect.top, rect.height));
+    const b = dragging.box;
+    b.style.left = Math.min(dragging.x0, x) + "px";
+    b.style.top = Math.min(dragging.y0, y) + "px";
+    b.style.width = Math.abs(x - dragging.x0) + "px";
+    b.style.height = Math.abs(y - dragging.y0) + "px";
+    dragging.cur = { x, y };
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    const { pageEl, box, x0, y0, cur } = dragging;
+    dragging = null;
+    box.remove();
+    if (!cur) return; // click without drag
+    const w = Math.abs(cur.x - x0);
+    const h = Math.abs(cur.y - y0);
+    if (w < 12 || h < 12) return;
+    const pageNum = parseInt(pageEl.dataset.page);
+    const leftCss = Math.min(x0, cur.x), topCss = Math.min(y0, cur.y);
+    // crop from canvas at device pixels
+    const canvas = pageEl.querySelector("canvas");
+    const dpr = canvas.width / (parseFloat(canvas.style.width) || canvas.offsetWidth || 1);
+    const sx = Math.max(0, leftCss * dpr), sy = Math.max(0, topCss * dpr);
+    const sw = Math.min(w * dpr, canvas.width - sx), sh = Math.min(h * dpr, canvas.height - sy);
+    if (sw < 4 || sh < 4) return;
+    const out = document.createElement("canvas");
+    out.width = Math.round(sw); out.height = Math.round(sh);
+    out.getContext("2d").drawImage(canvas, sx, sy, sw, sh, 0, 0, out.width, out.height);
+    const dataUrl = out.toDataURL("image/png");
+    if (!dataUrl || dataUrl.length < 100) {
+      toast("截图失败，请重试", true);
+      return;
+    }
+    addChip({ kind: "image", tag: "截图", body: `PDF 第${pageNum}页区域截图`, dataUrl, mimeType: "image/png", page: pageNum });
+    toast("截图已加入对话上下文");
+  });
+}
+
+// ---------------- parse panel ----------------
+function initParsePanel() {
+  $("#btn-parse").addEventListener("click", () => {
+    const p = state.currentPaper;
+    if (!p) return toast("请先选择论文", true);
+    $("#parse-panel").hidden = false;
+    $("#parse-title").textContent = `解析《${(p.title || "").slice(0, 40)}》`;
+    const st = p.parse?.status;
+    if (st !== "running") $("#parse-log").textContent = "";
+  });
+  $("#btn-parse-close").addEventListener("click", () => {
+    $("#parse-panel").hidden = true;
+    stopJobPoll();
+  });
+  $("#btn-parse-start").addEventListener("click", async () => {
+    const p = state.currentPaper;
+    if (!p) return toast("请先选择论文", true);
+    try {
+      const r = await api.parse(p.id, $("#parse-engine").value);
+      currentJobId = r.jobId;
+      $("#parse-log").textContent = `引擎: ${r.engine}\n`;
+      startJobPoll(p.id);
+    } catch (e) {
+      $("#parse-log").textContent += "✕ " + e.message + "\n";
+    }
+  });
+}
+
+function startJobPoll(paperId) {
+  stopJobPoll();
+  setBusyStatus("解析中…");
+  jobTimer = setInterval(async () => {
+    try {
+      const j = await api.job(currentJobId);
+      $("#parse-log").textContent = `引擎: ${j.engine}\n` + j.log.join("\n");
+      $("#parse-log").scrollTop = $("#parse-log").scrollHeight;
+      if (j.status === "done") {
+        stopJobPoll();
+        setBusyStatus(null);
+        toast("解析完成 ✓");
+        await reloadPaperQuiet(paperId);
+      } else if (j.status === "error") {
+        stopJobPoll();
+        setBusyStatus(null);
+        toast("解析失败: " + j.error, true);
+      }
+    } catch {}
+  }, 1200);
+}
+
+function stopJobPoll() {
+  clearInterval(jobTimer);
+  jobTimer = null;
+}
+
+function setBusyStatus(txt) {
+  const chip = $("#reader-status");
+  if (txt) chip.dataset.busy = "1";
+  else delete chip.dataset.busy;
+  if (txt) chip.textContent = txt;
+  else if (state.currentPaper) updateParseStatus(state.currentPaper.parse?.status || "none");
+}
+
+async function reloadPaperQuiet(paperId) {
+  const { loadPapers, renderPapers } = await import("./sidebar.js");
+  await loadPapers();
+  state.currentPaper = state.papers.find((p) => p.id === paperId) || state.currentPaper;
+  renderPapers();
+  const p = state.currentPaper;
+  const res = await fetch(`/api/papers/${p.id}/blocks`).then((r) => r.json());
+  updateParseStatus(res.status, res.engine, res.error);
+  if (res.blocks?.length) renderBlocks(p, res.blocks, res.paper);
+}
+
+// ---------------- init ----------------
+export function initReader() {
+  $("#tab-parsed").addEventListener("click", () => switchTab("parsed"));
+  $("#tab-pdf").addEventListener("click", () => switchTab("pdf"));
+  initSelection();
+  initBoxSelect();
+  initParsePanel();
+  let rt = null;
+  window.addEventListener("resize", () => {
+    clearTimeout(rt);
+    rt = setTimeout(() => {
+      if (pdfDoc && !$("#pdf-view").hidden) {
+        renderSeq++;
+        (async () => { for (let i = 1; i <= pdfDoc.numPages; i++) await renderPage(i); })();
+      }
+    }, 300);
+  });
+}
+
+function switchTab(which) {
+  const isParsed = which === "parsed";
+  $("#tab-parsed").classList.toggle("active", isParsed);
+  $("#tab-pdf").classList.toggle("active", !isParsed);
+  $("#parsed-view").hidden = !isParsed;
+  $("#pdf-view").hidden = isParsed;
+  if (!isParsed && state.currentPaper && !pdfDoc) loadPdf(state.currentPaper);
+}
+
+export { loadPdf };

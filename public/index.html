@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PiPaper · 论文精读工作台</title>
+<link rel="stylesheet" href="/vendor/katex/katex.min.css" />
+<link rel="stylesheet" href="/style.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
+</head>
+<body>
+<div id="app">
+  <!-- ============ Sidebar ============ -->
+  <aside id="sidebar">
+    <div class="side-head">
+      <div class="brand"><span class="logo">π</span><span>PiPaper</span></div>
+      <div class="side-actions">
+        <button id="btn-import" class="icon-btn" title="导入本地 PDF">＋导入</button>
+        <button id="btn-settings" class="icon-btn" title="设置">⚙</button>
+      </div>
+    </div>
+    <input id="paper-search" type="search" placeholder="搜索标题 / 作者 / 年份…" />
+    <div id="collections"></div>
+    <div id="paper-list" class="paper-list"></div>
+    <div id="side-foot" class="side-foot"></div>
+    <input type="file" id="file-input" accept="application/pdf" multiple hidden />
+  </aside>
+
+  <!-- ============ Chat ============ -->
+  <section id="chat-pane">
+    <header id="chat-head">
+      <div class="session-row">
+        <div class="dropdown" id="session-dd">
+          <button id="session-btn" class="session-btn"><span id="session-title">选择会话…</span><span class="caret">▾</span></button>
+          <div class="dropdown-menu" id="session-menu"></div>
+        </div>
+        <button id="btn-new-session" class="icon-btn" title="新会话">＋</button>
+        <button id="btn-del-session" class="icon-btn" title="删除当前会话">🗑</button>
+        <div class="spacer"></div>
+        <select id="model-select" title="模型"></select>
+        <select id="think-select" title="思考深度">
+          <option value="off">思考:关</option>
+          <option value="low">思考:低</option>
+          <option value="medium">思考:中</option>
+          <option value="high" selected>思考:高</option>
+        </select>
+      </div>
+    </header>
+    <div id="messages"></div>
+    <div id="composer-wrap">
+      <div id="chips"></div>
+      <div id="quick-actions"></div>
+      <div id="composer">
+        <textarea id="composer-input" rows="1" placeholder="问点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button id="btn-send" title="发送">➤</button>
+        <button id="btn-stop" title="停止" hidden>■</button>
+      </div>
+      <div id="composer-hint"></div>
+    </div>
+  </section>
+
+  <!-- ============ Reader ============ -->
+  <section id="reader-pane">
+    <header id="reader-head">
+      <div class="tabs">
+        <button id="tab-parsed" class="tab active">解析视图</button>
+        <button id="tab-pdf" class="tab">PDF 原文</button>
+      </div>
+      <div class="spacer"></div>
+      <span id="reader-status" class="status-chip"></span>
+      <button id="btn-parse" class="tool-btn">解析</button>
+      <button id="btn-boxselect" class="tool-btn" title="在 PDF 上框选截图加入对话">⬚ 框选</button>
+    </header>
+    <div id="parse-panel" hidden>
+      <div class="parse-panel-head">
+        <span id="parse-title">解析</span>
+        <select id="parse-engine">
+          <option value="auto">自动选择引擎</option>
+          <option value="mineru">MinerU（公式/表格/图片）</option>
+          <option value="unstructured">unstructured.io</option>
+          <option value="fallback">本地兜底（纯文本）</option>
+        </select>
+        <button id="btn-parse-start" class="tool-btn primary">开始解析</button>
+        <div class="spacer"></div>
+        <button id="btn-parse-close" class="icon-btn">✕</button>
+      </div>
+      <pre id="parse-log" class="parse-log"></pre>
+    </div>
+    <div id="reader-body">
+      <div id="parsed-view" class="reader-view">
+        <div id="parsed-empty" class="empty-hint">
+          <h3>尚无解析内容</h3>
+          <p>选择左侧论文后点击「解析」。<br/>推荐 MinerU（云端 API 或本地部署）以保留公式 / 表格 / 图片版式；<br/>未配置时可用本地兜底抽取纯文本。</p>
+        </div>
+        <div id="parsed-content" class="paper-doc"></div>
+      </div>
+      <div id="pdf-view" class="reader-view" hidden>
+        <div id="pdf-pages"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="sel-popup" hidden><button id="btn-sel-add">✂ 加入对话</button></div>
+
+<!-- ============ Settings modal ============ -->
+<div id="modal-backdrop" hidden>
+  <div id="settings-modal" class="modal">
+    <div class="modal-head"><span>设置</span><button id="btn-settings-close" class="icon-btn">✕</button></div>
+    <div class="modal-body">
+      <h4>Zotero</h4>
+      <label>数据目录（zotero.sqlite 所在文件夹）
+        <input id="cfg-zotero-dir" type="text" placeholder="例如 C:\Users\you\Zotero" />
+      </label>
+      <button id="btn-zotero-sync" class="tool-btn">立即同步 Zotero 库</button>
+      <span id="zotero-sync-status"></span>
+
+      <h4>MinerU（公式 / 表格 / 图片精排）</h4>
+      <label>模式
+        <select id="cfg-mineru-mode">
+          <option value="off">关闭</option>
+          <option value="api">云端 API（mineru.net，需 token）</option>
+          <option value="local">本地部署 CLI（mineru / magic-pdf）</option>
+        </select>
+      </label>
+      <label>API Token <input id="cfg-mineru-token" type="password" placeholder="mineru.net 申请" /></label>
+      <label>本地命令 <input id="cfg-mineru-cmd" type="text" placeholder="mineru" /></label>
+
+      <h4>unstructured.io（图片 / 表格元素级解析）</h4>
+      <label>模式
+        <select id="cfg-uns-mode">
+          <option value="off">关闭</option>
+          <option value="api">云端 API（unstructured.io）</option>
+          <option value="local">本地服务（unstructured-api，Docker）</option>
+        </select>
+      </label>
+      <label>API Key <input id="cfg-uns-key" type="password" /></label>
+      <label>服务地址 <input id="cfg-uns-url" type="text" placeholder="https://api.unstructured.io 或 http://localhost:8000" /></label>
+    </div>
+    <div class="modal-foot">
+      <span id="settings-msg"></span>
+      <div class="spacer"></div>
+      <button id="btn-settings-save" class="tool-btn primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
