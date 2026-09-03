@@ -10,6 +10,8 @@ import { initChat, refreshSessions, loadCommands } from "./chat.js";
 import { initReader } from "./reader.js";
 import { initSearchPanel } from "./searchPanel.js";
 import { initVideoTab } from "./videoPanel.js";
+import { initTheme } from "./theme.js";
+import { initClipboard } from "./clipPanel.js";
 
 export const state = {
   papers: [],
@@ -151,6 +153,8 @@ async function boot() {
   try { initChat(); } catch (e) { window.__initErrors.push("initChat: " + (e.message||e)); }
   try { initReader(); } catch (e) { window.__initErrors.push("initReader: " + (e.message||e)); }
   try { initSettings(); } catch (e) { window.__initErrors.push("initSettings: " + (e.message||e)); }
+  initTheme();
+  initClipboard();
   window.__bootStage = "search"; try { initSearchPanel(); } catch (e) { window.__initErrors.push("initSearchPanel: " + (e.message||e)); }
   window.__bootStage = "video"; try { initVideoTab(); } catch (e) { window.__initErrors.push("initVideoTab: " + (e.message||e)); }
   try {
@@ -202,4 +206,4 @@ export function renderWelcome() {
   );
 }
 
-boot();
+boot().catch((e) => { window.__bootErr = String(e && e.stack || e); console.error(e); });

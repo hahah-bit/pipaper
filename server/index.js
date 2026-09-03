@@ -8,6 +8,7 @@ import { listPapers, getPaper, importPdfFile, mergeZoteroSnapshot, getPapers, ge
 import { syncZotero } from "./zotero.js";
 import { startParse, getJob, paperWithParseStatus } from "./parser/index.js";
 import { aggregateSearch, DEFAULT_SOURCES, tierOf } from "./search/engines.js";
+import { clipAdd, clipList, clipDelete, clipClear } from "./clip.js";
 import * as harness from "./harness.js";
 
 const app = express();
@@ -559,6 +560,15 @@ api.post("/translate", async (req, res) => {
     res.status(502).json({ error: "翻译服务不可用（docker compose up -d 启动 libretranslate）：" + String(e.message || e).slice(0, 160) });
   }
 });
+
+// ---- clipboard history (2-day TTL) ----
+api.get("/clip", (_req, res) => res.json({ entries: clipList() }));
+api.post("/clip", (req, res) => {
+  const e = clipAdd(req.body?.text);
+  res.json(e ? { ok: true, entry: e } : { ok: false });
+});
+api.delete("/clip/:id", (req, res) => { clipDelete(req.params.id); res.json({ ok: true }); });
+api.post("/clip/clear", (_req, res) => { clipClear(); res.json({ ok: true }); });
 
 // ---- academic search ----
 api.get("/search/sources", (_req, res) => {

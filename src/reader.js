@@ -2,7 +2,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import { renderMd } from "./chat.js";
 import { streamPrompt } from "./chat.js";
 import { api, state, $, el, toast, addChip } from "./app.js";
-import { getTemplates, saveTemplates } from "./templates.js";
+import { getTemplates, saveTemplates, applyTemplate } from "./templates.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.min.mjs";
 
@@ -203,22 +203,29 @@ function showAnnotPopup(ctx) {
 
 async function annotAsk() {
   if (!annotCtx) return;
-  const text = buildAnnotText() || "请解释这个选区的内容。";
+  const tplName = $("#annot-tpl")?.value || "";
+  const note = $("#annot-input")?.value.trim() || "";
+  const tpl = getTemplates().find((t) => t.name === tplName);
+  const regionBody = annotCtx.body || "";
   const images = [];
-  let previewText = ($("#annot-tpl")?.value ? `【${$("#annot-tpl").value}】` : "") + ($("#annot-input")?.value.trim() ? " " + $("#annot-input").value.trim() : "") || text.slice(0, 40);
+  const displayBlocks = [];
   if (annotCtx.dataUrl) {
     const data = annotCtx.dataUrl.split(",")[1];
     if (data && data.length > 50) {
       images.push({ mimeType: "image/png", data });
-      previewText += "\n[🖼 框选区域]";
+      displayBlocks.push({ type: "image", dataUrl: annotCtx.dataUrl });
     }
   }
-  let fullText = text;
-  if (annotCtx.body) fullText += `\n\n--- 选区内容（${annotCtx.kind}${annotCtx.page ? ` 第${annotCtx.page}页` : ""}） ---\n${annotCtx.body.slice(0, 6000)}\n--- 选区结束 ---`;
+  let text;
+  if (tpl) text = applyTemplate(tpl.content, regionBody || undefined, note || undefined);
+  else {
+    text = "请解释这个选区的内容。";
+    if (regionBody) text += "\n\n--- 选区内容（" + annotCtx.kind + (annotCtx.page ? " 第" + annotCtx.page + "页" : "") + "） ---\n" + regionBody.slice(0, 6000);
+  }
+  const preview = (tplName ? "【" + tplName + "】" : "") + (note ? " " + note : "") + (images.length ? "\n[🖼 框选原图]" : "");
+  annotCtx = null;
   $("#annot-popup")?.remove();
-  // 切到会话面板视觉提示
-  import("./chat.js").then(() => {});
-  await streamPrompt(fullText, images, previewText);
+  await streamPrompt(text, images, preview.trim(), displayBlocks);
 }
 
 function annotAddToChat() {
@@ -226,11 +233,12 @@ function annotAddToChat() {
   const tplName = $("#annot-tpl")?.value || "";
   const note = $("#annot-input")?.value.trim() || "";
   const tpl = getTemplates().find((t) => t.name === tplName);
+  const tplText = tpl ? applyTemplate(tpl.content, annotCtx.body || undefined, note || undefined) : "";
   if (annotCtx.dataUrl) {
     addChip({ kind: "image", tag: "批注", body: note || tplName || annotCtx.label, dataUrl: annotCtx.dataUrl, mimeType: "image/png", page: annotCtx.page });
   }
   const textBits = [];
-  if (tpl) textBits.push(`【模板:${tpl.name}】${tpl.content}`);
+  if (tpl) textBits.push(`【模板:${tpl.name}】${tplText}`);
   if (note) textBits.push(`【批注】${note}`);
   if (annotCtx.body) textBits.push(`【选区:${annotCtx.label}】\n${annotCtx.body.slice(0, 4000)}`);
   if (textBits.length) addChip({ kind: "text", tag: "批注", body: textBits.join("\n"), page: annotCtx.page });
@@ -263,7 +271,7 @@ function renderTplEditor(back) {
     el("div", { class: "modal" },
       el("div", { class: "modal-head" }, el("span", {}, "提示词模板（可编辑）"), el("button", { class: "icon-btn", onclick: () => (back.hidden = true) }, "✕")),
       el("div", { class: "modal-body" },
-        el("p", { class: "res-note" }, "模板用于框选批注：选区图片/内容 + 模板一起发给 AI。修改后立即保存到本地。"),
+        el("p", { class: "res-note" }, "模板用于框选批注，支持占位符：{{选区}} = 框选/选中的内容；{{批注}} = 用户输入。发送时自动替换。修改立即保存到本地。"),
         rows,
         el("div", { style: { display: "flex", gap: "8px", marginTop: "10px" } },
           el("button", {

@@ -137,10 +137,23 @@ function assistantSkeleton() {
   return { root, bubble, mdDiv, toolCards: new Map(), textAcc: "", activity: null, renderTimer: null };
 }
 
-function addMessageEl(role, text, thumbs = []) {
+function addMessageEl(role, text, thumbs = [], displayBlocks = []) {
   const bubble = el("div", { class: "bubble" }, text);
   if (thumbs?.length) {
     bubble.append(el("div", { class: "thumbs" }, ...thumbs.map((t) => el("img", { src: t }))));
+  }
+  for (const b of displayBlocks || []) {
+    if (b.type === "image") {
+      bubble.append(el("div", { class: "msg-block" }, el("img", { src: b.dataUrl, style: { maxWidth: "60%", borderRadius: "8px", border: "1px solid var(--border)" } })));
+    } else if (b.type === "html") {
+      const d = el("div", { class: "msg-block tbl" });
+      d.innerHTML = b.html;
+      bubble.append(d);
+    } else if (b.type === "md") {
+      const d = el("div", { class: "msg-block md" });
+      renderMd(b.md, d);
+      bubble.append(d);
+    }
   }
   const node = el("div", { class: "msg " + role }, bubble);
   $("#messages").append(node);
@@ -412,7 +425,7 @@ async function sendMessageInner() {
 
 // Shared streaming core: ensures a session, renders the exchange, streams SSE.
 // Used by the composer and by the reader's box-annotation quick-ask.
-export async function streamPrompt(fullText, images = [], userPreview) {
+export async function streamPrompt(fullText, images = [], userPreview, displayBlocks = []) {
   if (state.streaming) {
     toast("上一条还在回复中，稍候", true);
     return;
@@ -431,7 +444,8 @@ export async function streamPrompt(fullText, images = [], userPreview) {
   addMessageEl(
     "user",
     (userPreview || fullText) + (images.length ? `\n[🖼 截图 ×${images.length}]` : ""),
-    images.map((im) => `data:${im.mimeType};base64,${im.data}`)
+    images.map((im) => `data:${im.mimeType};base64,${im.data}`),
+    displayBlocks
   );
   const node = assistantSkeleton();
   $("#messages").append(node.root);
