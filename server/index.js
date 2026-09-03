@@ -2,8 +2,8 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { APP_ROOT, PUBLIC_DIR, PARSED_DIR, LIBRARY_DIR, getConfig, saveConfig, redactedConfig } from "./config.js";
-import { listPapers, getPaper, importPdfFile, mergeZoteroSnapshot, getPapers, getParseState, readBlocks, allSessionMeta, listProjects, createProject, updateProject, deleteProject } from "./store.js";
+import { APP_ROOT, PUBLIC_DIR, DATA_DIR, getConfig, saveConfig, redactedConfig } from "./config.js";
+import { listPapers, getPaper, importPdfFile, mergeZoteroSnapshot, getPapers, getParseState, readBlocks, allSessionMeta, listProjects, createProject, updateProject, deleteProject, parsedDir, attachHash, flushHashCache, fileHash, findByHash } from "./store.js";
 import { syncZotero } from "./zotero.js";
 import { startParse, getJob, paperWithParseStatus } from "./parser/index.js";
 import * as harness from "./harness.js";
@@ -73,8 +73,8 @@ api.put("/papers/import", (req, res) => {
     const name = decodeURIComponent(req.headers["x-filename"] || "paper.pdf");
     if (!/\.pdf$/i.test(name)) return res.status(400).json({ error: "仅支持 PDF" });
     if (!req.rawBody?.length) return res.status(400).json({ error: "空文件" });
-    const paper = importPdfFile(name, req.rawBody);
-    res.json(paperWithParseStatus(paper));
+    const { paper, reused } = importPdfFile(name, req.rawBody);
+    res.json({ ...paperWithParseStatus(paper), reused });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
@@ -119,8 +119,9 @@ api.get("/jobs/:id", (req, res) => {
 
 api.get("/papers/:id/file/*", (req, res) => {
   const rel = req.params[0] || "";
-  const target = path.resolve(PARSED_DIR, req.params.id, rel);
-  if (!target.startsWith(path.resolve(PARSED_DIR, req.params.id))) return res.status(403).end();
+  const base = parsedDir(req.params.id);
+  const target = path.resolve(base, rel);
+  if (!target.startsWith(path.resolve(base))) return res.status(403).end();
   if (!fs.existsSync(target)) return res.status(404).end();
   res.sendFile(target);
 });
@@ -290,7 +291,7 @@ api.get("/file", async (req, res) => {
       }
       if (m[2].startsWith("asset/")) {
         const name = path.basename(m[2]);
-        const file = safeJoin(PARSED_DIR, path.join(paper.id, "assets", name));
+        const file = safeJoin(parsedDir(paper.id), path.join("assets", name));
         if (!file || !fs.existsSync(file)) return res.status(404).json({ error: "资源不存在" });
         const ext = path.extname(file).toLowerCase();
         const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" }[ext];
@@ -347,11 +348,80 @@ api.delete("/projects/:id", (req, res) => {
   res.json({ ok: true });
 });
 
+// ---- pi surface: commands (prompts/skills), files (@), projects ----
+
+// startup migration: attach content hashes and move legacy parse dirs to
+// hash-keyed locations so parse state is shared across duplicate imports
+function migrateLibrary() {
+  const moved = [];
+  for (const p of listPapers()) {
+    if (!p.pdfPath || !fs.existsSync(p.pdfPath)) continue;
+    const before = p.contentHash;
+    attachHash(p);
+    if (!before && p.contentHash) {
+      const oldDir = path.join(DATA_DIR, "parsed", p.id);
+      const newDir = path.join(DATA_DIR, "parsed", "h_" + p.contentHash.slice(0, 24));
+      if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+        try {
+          fs.renameSync(oldDir, newDir);
+          moved.push(p.id);
+        } catch {}
+      }
+    }
+  }
+  if (moved.length) console.log(`[migrate] parse cache re-keyed for ${moved.length} papers`);
+}
+
+// ---- resource manager: skills / extensions / packages / MCP ----
+api.get("/pi/resources", async (_req, res) => {
+  try {
+    const out = { skills: [], extensions: [], packages: [], mcp: [] };
+    try {
+      const sk = await import("./harness.js").then((h) => h.listCommands());
+      out.skills = sk.skills || [];
+    } catch {}
+    try {
+      const { sharedLoaderInfo } = await import("./harness.js");
+      out.extensions = sharedLoaderInfo()?.extensions || [];
+    } catch {}
+    try {
+      const settingsPath = path.join(process.env.USERPROFILE || "", ".pi", "agent", "settings.json");
+      if (fs.existsSync(settingsPath)) {
+        out.packages = JSON.parse(fs.readFileSync(settingsPath, "utf8")).packages || [];
+      }
+    } catch {}
+    // MCP: pi has no native MCP by design; scan common config files read-only
+    const candidates = [
+      path.join(process.env.USERPROFILE || "", ".claude", "claude_desktop_config.json"),
+      path.join(process.env.USERPROFILE || "", ".codeium", "windsurf", "mcp_config.json"),
+      path.join(APP_ROOT, ".mcp.json"),
+    ];
+    for (const f of candidates) {
+      try {
+        if (!fs.existsSync(f)) continue;
+        const cfg = JSON.parse(fs.readFileSync(f, "utf8"));
+        for (const [name, def] of Object.entries(cfg.mcpServers || {})) {
+          out.mcp.push({ name, command: def.command || def.url || "", args: (def.args || []).slice(0, 4), config: f });
+        }
+      } catch {}
+    }
+    res.json(out);
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+api.get("/projects/resources/:id", (req, res) => {
+  const p = listProjects().find((x) => x.id === req.params.id);
+  res.json(p?.resources || {});
+});
+
 app.use("/api", api);
 app.use(express.static(PUBLIC_DIR));
 app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 
 const port = Number(process.env.PORT || getConfig().port || 4318);
+migrateLibrary();
 app.listen(port, "127.0.0.1", () => {
   console.log(`\n  PiPaper 论文精读工作台  →  http://127.0.0.1:${port}\n`);
 });

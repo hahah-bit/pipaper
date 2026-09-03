@@ -16,6 +16,7 @@
       <div class="brand"><span class="logo">π</span><span>PiPaper</span></div>
       <div class="side-actions">
         <button id="btn-import" class="icon-btn" title="导入本地 PDF">＋导入</button>
+        <button id="btn-resources" class="icon-btn" title="资源管理（技能/扩展/MCP）">🧩</button>
         <button id="btn-settings" class="icon-btn" title="设置">⚙</button>
       </div>
     </div>
@@ -31,6 +32,7 @@
   </aside>
 
   <!-- ============ Chat ============ -->
+  <div class="gutter" id="gutter-1" title="拖拽调整宽度"></div>
   <section id="chat-pane">
     <header id="chat-head">
       <div class="session-row">
@@ -65,6 +67,7 @@
   </section>
 
   <!-- ============ Reader ============ -->
+  <div class="gutter" id="gutter-2" title="拖拽调整宽度"></div>
   <section id="reader-pane">
     <header id="reader-head">
       <div class="tabs">
@@ -147,6 +150,23 @@
       <div class="spacer"></div>
       <button id="btn-settings-save" class="tool-btn primary">保存</button>
     </div>
+  </div>
+</div>
+
+<!-- ============ Resources modal ============ -->
+<div id="resources-backdrop" hidden>
+  <div class="modal" style="width: 720px;">
+    <div class="modal-head">
+      <span>资源管理 <span id="res-proj-name" class="res-proj"></span></span>
+      <button id="btn-resources-close" class="icon-btn">✕</button>
+    </div>
+    <div class="res-tabs">
+      <button class="res-tab active" data-tab="skills">Skills</button>
+      <button class="res-tab" data-tab="extensions">扩展 / 插件</button>
+      <button class="res-tab" data-tab="packages">Packages</button>
+      <button class="res-tab" data-tab="mcp">MCP</button>
+    </div>
+    <div class="modal-body" id="res-body" style="min-height: 260px;"></div>
   </div>
 </div>
 

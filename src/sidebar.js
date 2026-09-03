@@ -15,16 +15,17 @@ export function initSidebar() {
     e.target.value = "";
     for (const f of files) {
       try {
-        toast(`导入 ${f.name} …`);
-        await api.importPdf(f);
+        const r = await api.importPdf(f);
         await reloadPapers();
-        toast(`${f.name} 已导入`, false);
+        toast(r.reused ? `${f.name} 与已管理论文内容相同，已复用其解析状态` : `${f.name} 已导入`);
+        if (r.reused) await refreshSessions();
       } catch (err) {
         toast(`导入失败: ${err.message}`, true);
       }
     }
   });
   // project controls
+  $("#project-select").addEventListener("change", (e) => switchProject(e.target.value));
   $("#btn-new-project").addEventListener("click", async () => {
     const name = prompt("项目名称：");
     if (!name?.trim()) return;

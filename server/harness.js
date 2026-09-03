@@ -11,7 +11,7 @@ import {
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { APP_ROOT, getConfig } from "./config.js";
-import { listPapers, getPaper, sessionMeta, setSessionMeta, deleteSessionMeta, readParsedText, readBlocks, writeParseState } from "./store.js";
+import { listPapers, getPaper, sessionMeta, setSessionMeta, deleteSessionMeta, readParsedText, readBlocks, writeParseState, getProject } from "./store.js";
 
 // ---------------------------------------------------------------------------
 // PiPaper harness: embeds the pi agent SDK as the conversation kernel.
@@ -102,6 +102,50 @@ export async function compactSession(sessionId, customInstructions) {
   if (c.busy) throw new Error("会话正在回复中，稍后再压缩");
   const r = await c.session.compact(customInstructions);
   return { ok: true, summary: String(r?.summary || "").slice(0, 400) };
+}
+
+// Loader introspection for the resource manager UI
+export function sharedLoaderInfo() {
+  if (!sharedLoader) return null;
+  const ext = sharedLoader.getExtensions?.();
+  const extensions = (ext?.extensions || []).map((e) => ({
+    name: e.name || String(e.path || "").split(/[\\/]/).pop(),
+    path: e.path || "",
+    source: e.source || "",
+  }));
+  return { extensions };
+}
+
+// Per-project loader: skill enable-list filtering + extra extension paths.
+const projectLoaders = new Map(); // projectId|global -> loader
+function loaderKey(projectId) {
+  const key = projectId || "global";
+  if (projectLoaders.has(key)) return projectLoaders.get(key);
+  let loader = sharedLoader;
+  if (projectId) {
+    const proj = getProject(projectId);
+    const res = proj?.resources || {};
+    const enabled = res.skillsEnabled || [];
+    const extraExts = res.extensions || [];
+    if (enabled.length || extraExts.length) {
+      loader = new DefaultResourceLoader({
+        cwd: APP_ROOT,
+        agentDir: getAgentDir(),
+        systemPromptOverride: () => SYSTEM_PROMPT,
+        appendSystemPromptOverride: () => [],
+        skillsOverride: enabled.length
+          ? (cur) => ({
+              skills: (cur.skills || []).filter((s) => enabled.includes(s.name) || s.source === "custom"),
+              diagnostics: cur.diagnostics,
+            })
+          : undefined,
+        additionalExtensionPaths: extraExts,
+      });
+      loader.reload?.();
+    }
+  }
+  projectLoaders.set(key, loader);
+  return loader;
 }
 
 // ---------------- agent tools (paper domain) ----------------
@@ -267,13 +311,13 @@ function buildPaperTools(idHolder) {
 
 const PAPER_TOOL_NAMES = ["list_library", "search_library", "read_paper", "get_paper_pages"];
 
-function makeSessionOpts(sm, idHolder) {
+function makeSessionOpts(sm, idHolder, projectId) {
   return {
     cwd: APP_ROOT,
     agentDir: getAgentDir(),
     modelRuntime,
     settingsManager: SettingsManager.create(APP_ROOT, getAgentDir()),
-    resourceLoader: sharedLoader,
+    resourceLoader: loaderKey(projectId),
     tools: ["read", "grep", "ls", ...PAPER_TOOL_NAMES],
     customTools: buildPaperTools(idHolder),
     sessionManager: sm,
@@ -283,7 +327,7 @@ function makeSessionOpts(sm, idHolder) {
 async function newChat({ paperId, projectId } = {}) {
   await ensureInit();
   const idHolder = { id: null };
-  const { session } = await createAgentSession(makeSessionOpts(SessionManager.create(APP_ROOT), idHolder));
+  const { session } = await createAgentSession(makeSessionOpts(SessionManager.create(APP_ROOT), idHolder, projectId));
   idHolder.id = session.sessionId;
   setSessionMeta(idHolder.id, { paperId: paperId || null, projectId: projectId || null });
   chats.set(idHolder.id, { session, busy: false });
@@ -297,7 +341,7 @@ async function openChat(sessionId) {
   const info = all.find((s) => s.id === sessionId || path.basename(s.path || "").startsWith(sessionId));
   if (!info) throw new Error("会话不存在: " + sessionId);
   const idHolder = { id: sessionId };
-  const { session } = await createAgentSession(makeSessionOpts(SessionManager.open(info.path), idHolder));
+  const { session } = await createAgentSession(makeSessionOpts(SessionManager.open(info.path), idHolder, sessionMeta(sessionId)?.projectId));
   const id = session.sessionId;
   idHolder.id = id;
   chats.set(id, { session, busy: false });

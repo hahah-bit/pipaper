@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getConfig, PARSED_DIR } from "../config.js";
-import { getPaper, writeParseState, readBlocks, getParseState } from "../store.js";
+import { getConfig } from "../config.js";
+import { getPaper, writeParseState, readBlocks, getParseState, parsedDir } from "../store.js";
 import { mdToBlocks, blocksToMd } from "./mdblocks.js";
 import { parseMineru } from "./mineru.js";
 import { parseUnstructured } from "./unstructured.js";
@@ -52,7 +52,7 @@ export function resolveEngine(requested) {
 }
 
 function ensureAssetDir(paperId) {
-  const dir = path.join(PARSED_DIR, paperId);
+  const dir = parsedDir(paperId);
   const assetDir = path.join(dir, "assets");
   fs.mkdirSync(assetDir, { recursive: true });
   return { dir, assetDir };

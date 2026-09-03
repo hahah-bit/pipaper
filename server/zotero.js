@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
-import { TMP_DIR } from "./store.js";
+import { TMP_DIR, fileHash } from "./store.js";
 
 // Zotero integration via a sqlite snapshot of <dataDir>/zotero.sqlite.
 // Works whether or not Zotero is running (WAL files are copied alongside).
@@ -138,6 +138,7 @@ export function syncZotero(cfg) {
         collectionIds: collMap[it.id] || [],
         source: "zotero",
         pdfPath: att ? att.path : null,
+        contentHash: att ? fileHash(att.path) : null,
         added: fields.dateAdded || null,
       });
     }

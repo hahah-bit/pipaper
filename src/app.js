@@ -3,6 +3,8 @@ import "./sidebar.js";
 import "./chat.js";
 import "./reader.js";
 import { initSettings } from "./settings.js";
+import { initResources } from "./resources.js";
+import { initPanes } from "./panes.js";
 import { initSidebar, renderPapers, renderCollections, renderProjects } from "./sidebar.js";
 import { initChat, refreshSessions, loadCommands } from "./chat.js";
 import { initReader } from "./reader.js";
@@ -52,6 +54,7 @@ export const api = {
   job: (id) => jfetch(`/api/jobs/${id}`),
   models: () => jfetch("/api/models"),
   commands: () => jfetch("/api/pi/commands"),
+  resources: () => jfetch("/api/pi/resources"),
   files: (q) => jfetch("/api/files?q=" + encodeURIComponent(q || "")),
   file: (path) => jfetch("/api/file?path=" + encodeURIComponent(path)),
   projects: () => jfetch("/api/projects"),
@@ -132,6 +135,8 @@ export function renderChips() {
 
 // ---------------- boot ----------------
 async function boot() {
+  initPanes();
+  initResources();
   initSidebar();
   initChat();
   initReader();
