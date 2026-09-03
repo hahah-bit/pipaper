@@ -7,6 +7,7 @@ import { APP_ROOT, PUBLIC_DIR, DATA_DIR, getConfig, saveConfig, redactedConfig }
 import { listPapers, getPaper, importPdfFile, mergeZoteroSnapshot, getPapers, getParseState, readBlocks, allSessionMeta, listProjects, createProject, updateProject, deleteProject, parsedDir, attachHash, flushHashCache, fileHash, findByHash } from "./store.js";
 import { syncZotero } from "./zotero.js";
 import { startParse, getJob, paperWithParseStatus } from "./parser/index.js";
+import { aggregateSearch, DEFAULT_SOURCES, tierOf } from "./search/engines.js";
 import * as harness from "./harness.js";
 
 const app = express();
@@ -528,6 +529,63 @@ api.post("/translate", async (req, res) => {
     res.json({ translated: j.translatedText, detected: j.detectedLanguage });
   } catch (e) {
     res.status(502).json({ error: "翻译服务不可用（docker compose up -d 启动 libretranslate）：" + String(e.message || e).slice(0, 160) });
+  }
+});
+
+// ---- academic search ----
+api.get("/search/sources", (_req, res) => {
+  let custom = null;
+  try {
+    custom = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "search-sources.json"), "utf8"));
+  } catch {}
+  res.json({ sources: custom || DEFAULT_SOURCES, custom: !!custom, defaults: DEFAULT_SOURCES });
+});
+
+api.put("/search/sources", (req, res) => {
+  const sources = req.body?.sources;
+  if (!Array.isArray(sources)) return res.status(400).json({ error: "sources 必须是数组" });
+  fs.writeFileSync(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
+  res.json({ ok: true, sources });
+});
+
+api.get("/search", async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (!q) return res.json({ results: [], total: 0, errors: [] });
+  let sources;
+  try {
+    const f = path.join(DATA_DIR, "search-sources.json");
+    if (fs.existsSync(f)) sources = (JSON.parse(fs.readFileSync(f, "utf8")) || []).filter((s) => s.enabled).map((s) => s.id);
+  } catch {}
+  try {
+    const r = await aggregateSearch(q, {
+      sources,
+      yearFrom: req.query.yearFrom,
+      yearTo: req.query.yearTo,
+      oa: req.query.oa === "1",
+      sort: req.query.sort,
+      limit: Number(req.query.limit || 15),
+    });
+    r.results = r.results.map((x) => ({ ...x, tier: tierOf(x) }));
+    res.json({ ...r, sources: sources || null });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e) });
+  }
+});
+
+// import a search result: download the OA pdf and manage it like any import
+api.post("/search/import", async (req, res) => {
+  const { pdfUrl, title, projectId } = req.body || {};
+  if (!pdfUrl) return res.status(400).json({ error: "该结果没有可下载的 PDF（非开放获取）" });
+  try {
+    const r = await fetch(pdfUrl, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(120000), redirect: "follow" });
+    if (!r.ok) throw new Error("下载失败 HTTP " + r.status);
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (buf.length < 10000 || buf[0] !== 0x25) throw new Error("下载内容不是有效 PDF（可能被出版社拦截）");
+    const { paper, reused } = importPdfFile((title || "paper") + ".pdf", buf);
+    if (projectId) updateProject(projectId, { addPaper: paper.id });
+    res.json({ ...paperWithParseStatus(paper), reused, imported: true });
+  } catch (e) {
+    res.status(502).json({ error: String(e.message || e).slice(0, 200) });
   }
 });
 

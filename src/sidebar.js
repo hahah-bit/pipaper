@@ -4,6 +4,17 @@ let activeCollection = null; // collection id or null = all
 let searchQ = "";
 
 export function initSidebar() {
+  // sidebar tabs
+  document.querySelectorAll(".st-tab").forEach((t) =>
+    t.addEventListener("click", () => {
+      document.querySelectorAll(".st-tab").forEach((x) => x.classList.remove("active"));
+      t.classList.add("active");
+      for (const name of ["lib", "search", "video"]) {
+        $(`#stab-${name}`).hidden = t.dataset.tab !== name;
+      }
+      if (t.dataset.tab === "search") import("./searchPanel.js").then((m) => m.onShow());
+    })
+  );
   $("#paper-search").addEventListener("input", (e) => {
     searchQ = e.target.value.trim().toLowerCase();
     renderPapers();
@@ -26,6 +37,21 @@ export function initSidebar() {
   });
   // project controls
   $("#project-select").addEventListener("change", (e) => switchProject(e.target.value));
+  $("#btn-del-project").addEventListener("click", async () => {
+    const p = state.projects.find((x) => x.id === state.projectId);
+    if (!p) return;
+    if (!confirm(`删除项目「${p.name}」？（论文不会被删除，只解除分组）`)) return;
+    try {
+      await api.deleteProject(p.id);
+      state.projects = state.projects.filter((x) => x.id !== p.id);
+      state.projectId = null;
+      renderProjects();
+      renderPapers();
+      toast(`项目「${p.name}」已删除`);
+    } catch (e) {
+      toast("删除失败: " + e.message, true);
+    }
+  });
   $("#btn-new-project").addEventListener("click", async () => {
     const name = prompt("项目名称：");
     if (!name?.trim()) return;
@@ -70,6 +96,7 @@ export function renderProjects() {
     sel.append(el("option", { value: p.id }, `📁 ${p.name} (${p.paperIds.length}篇)`));
   }
   sel.value = state.projectId || "";
+  $("#btn-del-project").hidden = !state.projectId;
 }
 
 export async function switchProject(id) {

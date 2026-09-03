@@ -33,6 +33,7 @@ const SYSTEM_PROMPT = `你是 PiPaper 论文精读工作台中的研究助手（
 - 用户的对话通常绑定了一篇"当前论文"。通过 read_paper 工具阅读论文（不带 paper_id 时读当前论文）。
 - 读长文前先 read_paper mode=outline 看结构，再 mode=section 精读相关章节；需要精确定位时用 mode=search。
 - list_library / search_library 可以跨论文检索用户文献库。
+- search_papers 可以在线聚合检索学术文献（OpenAlex/arXiv/Semantic Scholar 等），download_paper 可把开放获取论文下载入库；用户想"找论文/查相关工作"时优先用这两个工具。
 - 用户消息里可能出现"引用块"（以【选中】或【截图】开头的附件上下文），那是用户从阅读器里框选或划选的内容，优先围绕这些内容回答。
 - 回答用中文（用户使用英文提问时可用英文），公式用 LaTeX（$...$ 行内、$$...$$ 独立），重要结论注明来源章节/页码。
 - 涉及事实性内容必须基于论文原文，不要编造；论文里没有的就明说。
@@ -304,12 +305,65 @@ function buildPaperTools(idHolder) {
     },
   });
 
-  return [list_library, search_library, read_paper, get_paper_pages];
+  const search_papers = defineTool({
+    name: "search_papers",
+    label: "学术检索",
+    description: "聚合检索学术论文（OpenAlex/arXiv/Semantic Scholar/Crossref/PubMed）。返回标题、作者、年份、DOI、venue、被引数、OA 与 PDF 链接、摘要。可用 year_from/year_to 过滤。",
+    parameters: Type.Object({
+      query: Type.String({ description: "检索词（主题/方法/模型名等）" }),
+      year_from: Type.Optional(Type.Number()),
+      year_to: Type.Optional(Type.Number()),
+      limit: Type.Optional(Type.Number({ description: "每个源的返回条数，默认 10" })),
+    }),
+    execute: async (_id, { query, year_from, year_to, limit }) => {
+      const { aggregateSearch, tierOf } = await import("./search/engines.js");
+      const r = await aggregateSearch(query, { yearFrom: year_from, yearTo: year_to, limit: Math.min(limit || 10, 20) });
+      if (!r.results.length) return { content: [{ type: "text", text: `“${query}” 没有检索到结果。${r.errors.length ? "部分源出错: " + r.errors.join("; ") : ""}` }], details: {} };
+      const lines = r.results.slice(0, 12).map((x, i) => {
+        const tier = tierOf(x);
+        return `${i + 1}. ${x.title}\n   ${x.authors.slice(0, 3).join(", ")}${x.authors.length > 3 ? " 等" : ""} | ${x.year || "?"} | ${x.venue || "无 venue"} | 被引 ${x.citations ?? "?"} [${tier.label}]${x.oa ? " [OA]" : ""}\n   DOI: ${x.doi || "-"} | PDF: ${x.pdfUrl ? "有" : "无"}\n   摘要: ${x.abstract.slice(0, 160)}…`;
+      });
+      return { content: [{ type: "text", text: clamp(`“${query}” 检索到 ${r.total} 条（前 12 条）：\n\n` + lines.join("\n"), 12000) }], details: {} };
+    },
+  });
+
+  const download_paper = defineTool({
+    name: "download_paper",
+    label: "下载论文入库",
+    description: "按 DOI 或精确标题检索并下载开放获取 PDF 到用户文献库（成功后可用 read_paper 读取）。优先精确 DOI。",
+    parameters: Type.Object({
+      doi: Type.Optional(Type.String()),
+      title: Type.Optional(Type.String()),
+    }),
+    execute: async (_id, { doi, title }) => {
+      if (!doi && !title) return { content: [{ type: "text", text: "请提供 doi 或 title。" }], details: {} };
+      const { aggregateSearch, tierOf } = await import("./search/engines.js");
+      const q = doi || title;
+      const r = await aggregateSearch(q, { limit: 5 });
+      const hit = r.results.find((x) => (doi && x.doi === String(doi).toLowerCase()) || (title && x.title.toLowerCase().includes(String(title).toLowerCase().slice(0, 40))));
+      if (!hit) return { content: [{ type: "text", text: "未检索到匹配论文。" }], details: {} };
+      if (!hit.pdfUrl) return { content: [{ type: "text", text: `找到了《${hit.title}》（DOI:${hit.doi || "-"}），但没有开放获取 PDF，无法自动下载。` }], details: {} };
+      try {
+        const ua = "PiPaper/0.5 (academic reader; local app)";
+        const res = await fetch(hit.pdfUrl, { headers: { "User-Agent": ua }, signal: AbortSignal.timeout(120000), redirect: "follow" });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length < 10000 || buf[0] !== 0x25) throw new Error("内容不是有效 PDF");
+        const { importPdfFile } = await import("./store.js");
+        const { paper } = importPdfFile(hit.title.slice(0, 80) + ".pdf", buf);
+        return { content: [{ type: "text", text: `已下载并入库：《${paper.title}》（id: ${paper.id}），现在可以用 read_paper 阅读了。` }], details: {} };
+      } catch (e) {
+        return { content: [{ type: "text", text: `下载失败（${String(e.message || e).slice(0, 100)}）。可以请用户手动从 ${hit.url || hit.pdfUrl} 下载导入。` }], details: {} };
+      }
+    },
+  });
+
+  return [list_library, search_library, read_paper, get_paper_pages, search_papers, download_paper];
 }
 
 // ---------------- session lifecycle ----------------
 
-const PAPER_TOOL_NAMES = ["list_library", "search_library", "read_paper", "get_paper_pages"];
+const PAPER_TOOL_NAMES = ["list_library", "search_library", "read_paper", "get_paper_pages", "search_papers", "download_paper"];
 
 function makeSessionOpts(sm, idHolder, projectId) {
   return {

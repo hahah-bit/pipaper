@@ -8,6 +8,8 @@ import { initPanes } from "./panes.js";
 import { initSidebar, renderPapers, renderCollections, renderProjects } from "./sidebar.js";
 import { initChat, refreshSessions, loadCommands } from "./chat.js";
 import { initReader } from "./reader.js";
+import { initSearchPanel } from "./searchPanel.js";
+import { initVideoTab } from "./videoPanel.js";
 
 export const state = {
   papers: [],
@@ -148,6 +150,8 @@ async function boot() {
   initChat();
   initReader();
   initSettings();
+  initSearchPanel();
+  initVideoTab();
   try {
     const [paperData, models, projects] = await Promise.all([api.papers(), api.models(), api.projects()]);
     state.papers = paperData.papers;
