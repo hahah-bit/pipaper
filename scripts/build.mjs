@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import esbuild from "esbuild";
 import fs from "node:fs";
 import path from "node:path";
@@ -28,4 +29,16 @@ await esbuild.build({
   logLevel: "info",
 });
 
-console.log("build ok");
+// cache-bust: stamp bundle/css versions into index.html
+const js = fs.readFileSync(path.join(PUB, "app.js"));
+const css = fs.readFileSync(path.join(PUB, "style.css"));
+const v = crypto.createHash("sha1").update(js).update(css).digest("hex").slice(0, 10);
+const htmlPath = path.join(PUB, "index.html");
+let html = fs.readFileSync(htmlPath, "utf8");
+const jsRe = new RegExp('app[.]js([?]v=[a-f0-9]+)?' + String.fromCharCode(34));
+const cssRe = new RegExp('style[.]css([?]v=[a-f0-9]+)?' + String.fromCharCode(34));
+html = html.replace(jsRe, 'app.js?v=' + v + '"');
+html = html.replace(cssRe, 'style.css?v=' + v + '"');
+fs.writeFileSync(htmlPath, html);
+
+console.log("build ok (v=" + v + ")");

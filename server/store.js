@@ -51,8 +51,8 @@ export function getProject(id) {
   return projects.find((x) => x.id === id) || null;
 }
 
-export function createProject(name) {
-  const p = { id: "prj_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name, paperIds: [], resources: { skillsEnabled: [], extensions: [] }, createdAt: new Date().toISOString() };
+export function createProject(name, type = "temp") {
+  const p = { id: "prj_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name, type, paperIds: [], resources: { skillsEnabled: [], extensions: [] }, createdAt: new Date().toISOString() };
   projects.push(p);
   persist();
   return p;

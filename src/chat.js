@@ -137,8 +137,12 @@ function assistantSkeleton() {
   return { root, bubble, mdDiv, toolCards: new Map(), textAcc: "", activity: null, renderTimer: null };
 }
 
-function addMessageEl(role, text) {
-  const node = el("div", { class: "msg " + role }, el("div", { class: "bubble" }, text));
+function addMessageEl(role, text, thumbs = []) {
+  const bubble = el("div", { class: "bubble" }, text);
+  if (thumbs?.length) {
+    bubble.append(el("div", { class: "thumbs" }, ...thumbs.map((t) => el("img", { src: t }))));
+  }
+  const node = el("div", { class: "msg " + role }, bubble);
   $("#messages").append(node);
   scrollBottom();
   return node;
@@ -424,7 +428,11 @@ export async function streamPrompt(fullText, images = [], userPreview) {
       return;
     }
   }
-  addMessageEl("user", userPreview || fullText);
+  addMessageEl(
+    "user",
+    (userPreview || fullText) + (images.length ? `\n[🖼 截图 ×${images.length}]` : ""),
+    images.map((im) => `data:${im.mimeType};base64,${im.data}`)
+  );
   const node = assistantSkeleton();
   $("#messages").append(node.root);
   liveNodes.length = 0;

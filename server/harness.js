@@ -34,6 +34,7 @@ const SYSTEM_PROMPT = `你是 PiPaper 论文精读工作台中的研究助手（
 - 读长文前先 read_paper mode=outline 看结构，再 mode=section 精读相关章节；需要精确定位时用 mode=search。
 - list_library / search_library 可以跨论文检索用户文献库。
 - search_papers 可以在线聚合检索学术文献（OpenAlex/arXiv/Semantic Scholar 等），download_paper 可把开放获取论文下载入库；用户想"找论文/查相关工作"时优先用这两个工具。
+- 会话绑定论文或 Zotero 项目时，你还会加载"论文综合"技能组（zotero 文献管理、nature 系列学术技能）。zotero_search / zotero_item 用于管理用户 Zotero 库。
 - 用户消息里可能出现"引用块"（以【选中】或【截图】开头的附件上下文），那是用户从阅读器里框选或划选的内容，优先围绕这些内容回答。
 - 回答用中文（用户使用英文提问时可用英文），公式用 LaTeX（$...$ 行内、$$...$$ 独立），重要结论注明来源章节/页码。
 - 涉及事实性内容必须基于论文原文，不要编造；论文里没有的就明说。
@@ -117,33 +118,94 @@ export function sharedLoaderInfo() {
   return { extensions };
 }
 
+// ---------------------------------------------------------------------------
+// Layered skills (progressive disclosure, display-level routing):
+//   base layer    — pi's normal discovery (always on)
+//   gated layer   — 论文综合技能组 (zotero, nature-*, ...) loaded ONLY into
+//                   sessions bound to a paper or a Zotero-linked project.
+//                   Nothing is copied: gated skills are referenced in place.
+// ---------------------------------------------------------------------------
+
+function gatedSkillDirs() {
+  const dirs = [];
+  const gatedRoot = path.join(getAgentDir(), "skills-gated");
+  if (fs.existsSync(gatedRoot)) {
+    for (const d of fs.readdirSync(gatedRoot)) dirs.push(path.join(gatedRoot, d));
+  }
+  const codexSkills = path.join(process.env.USERPROFILE || "", ".codex", "skills");
+  try {
+    if (fs.existsSync(codexSkills)) {
+      for (const d of fs.readdirSync(codexSkills)) {
+        if (d.startsWith("nature-")) dirs.push(path.join(codexSkills, d));
+      }
+    }
+  } catch {}
+  return dirs.filter((d) => fs.existsSync(path.join(d, "SKILL.md")));
+}
+
+export function gatedSkills() {
+  const out = [];
+  for (const dir of gatedSkillDirs()) {
+    let name = path.basename(dir);
+    let description = "";
+    try {
+      const md = fs.readFileSync(path.join(dir, "SKILL.md"), "utf8");
+      name = (md.match(/^name:\s*(.+)$/m) || [])[1]?.trim() || name;
+      description = (md.match(/^description:\s*([\s\S]*?)(?=\n[a-z-]+:|\n---|$)/m) || [])[1]?.trim().replace(/\s+/g, " ") || "";
+    } catch {}
+    out.push({ name, description: description.slice(0, 140), dir });
+  }
+  return out;
+}
+
+function gatedSkillObjects() {
+  const fsmods = [];
+  void fsmods;
+  return gatedSkills().map((s) => ({
+    name: s.name,
+    description: s.description,
+    filePath: path.join(s.dir, "SKILL.md"),
+    baseDir: s.dir,
+    source: "gated:论文综合",
+  }));
+}
+
+function projectTypeOf(projectId) {
+  if (!projectId) return null;
+  try {
+    const p = getProject(projectId);
+    return p?.type || null;
+  } catch {
+    return null;
+  }
+}
+
 // Per-project loader: skill enable-list filtering + extra extension paths.
-const projectLoaders = new Map(); // projectId|global -> loader
-function loaderKey(projectId) {
-  const key = projectId || "global";
+// Layer rule: sessions bound to a paper or a Zotero project also get the
+// gated 论文综合 skill group (display-level routing, no hooks).
+const projectLoaders = new Map(); // key -> loader
+function loaderKey(projectId, { paperBound = false } = {}) {
+  const key = (projectId || "global") + (paperBound ? ":paper" : "");
   if (projectLoaders.has(key)) return projectLoaders.get(key);
   let loader = sharedLoader;
-  if (projectId) {
-    const proj = getProject(projectId);
-    const res = proj?.resources || {};
-    const enabled = res.skillsEnabled || [];
-    const extraExts = res.extensions || [];
-    if (enabled.length || extraExts.length) {
-      loader = new DefaultResourceLoader({
-        cwd: APP_ROOT,
-        agentDir: getAgentDir(),
-        systemPromptOverride: () => SYSTEM_PROMPT,
-        appendSystemPromptOverride: () => [],
-        skillsOverride: enabled.length
-          ? (cur) => ({
-              skills: (cur.skills || []).filter((s) => enabled.includes(s.name) || s.source === "custom"),
-              diagnostics: cur.diagnostics,
-            })
-          : undefined,
-        additionalExtensionPaths: extraExts,
-      });
-      loader.reload?.();
-    }
+  const proj = projectId ? getProject(projectId) : null;
+  const res = proj?.resources || {};
+  const enabled = res.skillsEnabled || [];
+  const extraExts = res.extensions || [];
+  const gated = paperBound || proj?.type === "zotero" ? gatedSkillObjects() : [];
+  if (enabled.length || extraExts.length || gated.length) {
+    loader = new DefaultResourceLoader({
+      cwd: APP_ROOT,
+      agentDir: getAgentDir(),
+      systemPromptOverride: () => SYSTEM_PROMPT,
+      appendSystemPromptOverride: () => [],
+      skillsOverride: (cur) => ({
+        skills: [...(cur.skills || []).filter((s) => !enabled.length || enabled.includes(s.name) || s.source === "custom"), ...gated],
+        diagnostics: cur.diagnostics,
+      }),
+      additionalExtensionPaths: extraExts,
+    });
+    loader.reload?.();
   }
   projectLoaders.set(key, loader);
   return loader;
@@ -358,20 +420,67 @@ function buildPaperTools(idHolder) {
     },
   });
 
-  return [list_library, search_library, read_paper, get_paper_pages, search_papers, download_paper];
+  const zotero_search = defineTool({
+    name: "zotero_search",
+    label: "Zotero 检索",
+    description: "在用户 Zotero 文献库中按标题/作者/摘要检索，返回条目、年份与 PDF 可用性。需要文献管理时先用它。",
+    parameters: Type.Object({
+      query: Type.String(),
+      limit: Type.Optional(Type.Number()),
+    }),
+    execute: async (_id, { query, limit }) => {
+      const { getConfig } = await import("./config.js");
+      const { zoteroSearch } = await import("./zotero.js");
+      try {
+        const hits = zoteroSearch(getConfig().zotero, query, Math.min(limit || 8, 20));
+        if (!hits.length) return { content: [{ type: "text", text: `Zotero 库中没有匹配 "${query}" 的条目。` }], details: {} };
+        const lines = hits.map((h) => `- [${h.zoteroKey}] ${h.title} (${h.year || "?"})｜${(h.creators || []).slice(0, 2).join(", ")}｜${h.pdfPath ? "有PDF" : "无PDF"}${h.doi ? "｜DOI:" + h.doi : ""}`);
+        return { content: [{ type: "text", text: clamp(`Zotero 检索到 ${hits.length} 条：\n` + lines.join("\n"), 8000) }], details: {} };
+      } catch (e) {
+        return { content: [{ type: "text", text: "Zotero 不可用: " + String(e.message || e).slice(0, 120) }], details: {} };
+      }
+    },
+  });
+
+  const zotero_item = defineTool({
+    name: "zotero_item",
+    label: "Zotero 条目详情",
+    description: "按 key 查看一条 Zotero 条目的完整元数据（DOI、venue、摘要、PDF 路径）。",
+    parameters: Type.Object({ key: Type.String() }),
+    execute: async (_id, { key }) => {
+      const { getConfig } = await import("./config.js");
+      const { zoteroItem } = await import("./zotero.js");
+      const it = zoteroItem(getConfig().zotero, key);
+      if (!it) return { content: [{ type: "text", text: "未找到该 key 的条目。" }], details: {} };
+      const lines = [
+        `标题: ${it.title}`,
+        `作者: ${(it.creators || []).join(", ")}`,
+        `年份: ${it.year ?? "-"}`,
+        `DOI: ${it.doi || "-"}`,
+        `期刊: ${it.publication || "-"}`,
+        `类型: ${it.itemType}`,
+        it.pdfPath ? `PDF: ${it.pdfPath}` : "PDF: 无附件",
+        it.abstract ? `摘要: ${it.abstract.slice(0, 800)}` : "",
+      ].filter(Boolean);
+      return { content: [{ type: "text", text: lines.join("\n") }], details: {} };
+    },
+  });
+
+  return [list_library, search_library, read_paper, get_paper_pages, search_papers, download_paper, zotero_search, zotero_item];
 }
 
 // ---------------- session lifecycle ----------------
 
-const PAPER_TOOL_NAMES = ["list_library", "search_library", "read_paper", "get_paper_pages", "search_papers", "download_paper"];
+const PAPER_TOOL_NAMES = ["list_library", "search_library", "read_paper", "get_paper_pages", "search_papers", "download_paper", "zotero_search", "zotero_item"];
 
 function makeSessionOpts(sm, idHolder, projectId) {
+  const paperBound = !!(idHolder.paperId || projectTypeOf(projectId) === "zotero");
   return {
     cwd: APP_ROOT,
     agentDir: getAgentDir(),
     modelRuntime,
     settingsManager: SettingsManager.create(APP_ROOT, getAgentDir()),
-    resourceLoader: loaderKey(projectId),
+    resourceLoader: loaderKey(projectId, { paperBound }),
     tools: ["read", "grep", "ls", ...PAPER_TOOL_NAMES],
     customTools: buildPaperTools(idHolder),
     sessionManager: sm,
@@ -380,7 +489,7 @@ function makeSessionOpts(sm, idHolder, projectId) {
 
 async function newChat({ paperId, projectId } = {}) {
   await ensureInit();
-  const idHolder = { id: null };
+  const idHolder = { id: null, paperId };
   const { session } = await createAgentSession(makeSessionOpts(SessionManager.create(APP_ROOT), idHolder, projectId));
   idHolder.id = session.sessionId;
   setSessionMeta(idHolder.id, { paperId: paperId || null, projectId: projectId || null });
@@ -394,7 +503,7 @@ async function openChat(sessionId) {
   const all = await SessionManager.list(APP_ROOT);
   const info = all.find((s) => s.id === sessionId || path.basename(s.path || "").startsWith(sessionId));
   if (!info) throw new Error("会话不存在: " + sessionId);
-  const idHolder = { id: sessionId };
+  const idHolder = { id: sessionId, paperId: sessionMeta(sessionId)?.paperId || null };
   const { session } = await createAgentSession(makeSessionOpts(SessionManager.open(info.path), idHolder, sessionMeta(sessionId)?.projectId));
   const id = session.sessionId;
   idHolder.id = id;

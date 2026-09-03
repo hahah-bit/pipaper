@@ -22,6 +22,40 @@ function openalexAbstract(inv) {
   return pos.filter(Boolean).join(" ").slice(0, 1500);
 }
 
+// journal metrics (SJR 2026, imported from sci-helper's catalog):
+// issn(digits-only) -> {sjr, q, cat}
+let metricsByIssn = null;
+function metrics() {
+  if (!metricsByIssn) {
+    try {
+      metricsByIssn = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "journal-metrics-2026.json"), "utf8"));
+    } catch {
+      metricsByIssn = {};
+    }
+  }
+  return metricsByIssn;
+}
+
+function enrich(r) {
+  // attach journal partition (分区) + SJR impact metric by matching ISSNs
+  const issns = (r.issns || []).map((i) => String(i).replace(/-/g, ""));
+  let m = null;
+  for (const i of issns) {
+    if (metrics()[i]) {
+      m = metrics()[i];
+      break;
+    }
+  }
+  if (m) {
+    r.sjr = m.sjr;
+    r.quartile = "Q" + m.q;
+  } else {
+    r.sjr = null;
+    r.quartile = null;
+  }
+  return r;
+}
+
 async function jget(url, headers = {}) {
   let r = await fetch(url, { headers: { "User-Agent": UA, ...headers }, signal: AbortSignal.timeout(20000) });
   if (r.status === 429) {
@@ -55,6 +89,7 @@ async function searchOpenAlex(q, o) {
     date: w.publication_date || "",
     doi: normDoi(w.doi),
     venue: w.primary_location?.source?.display_name || "",
+    issns: [w.primary_location?.source?.issn_l, ...((w.primary_location?.source?.issn || []).slice(0, 2))].filter(Boolean),
     citations: w.cited_by_count || 0,
     oa: !!w.open_access?.is_oa,
     pdfUrl: w.best_oa_location?.pdf_url || w.best_oa_location?.landing_page_url || "",
@@ -147,7 +182,7 @@ async function searchCrossref(q, o) {
   const url = new URL("https://api.crossref.org/works");
   url.searchParams.set("query", q);
   url.searchParams.set("rows", String(o.limit || 20));
-  url.searchParams.set("select", "DOI,title,author,issued,container-title,is-referenced-by-count,abstract,URL,subject");
+  url.searchParams.set("select", "DOI,title,author,issued,container-title,is-referenced-by-count,abstract,URL,subject,ISSN");
   if (o.yearFrom) url.searchParams.set("filter", `from-pub-date:${o.yearFrom}-01-01`);
   const j = await jget(url);
   return (j.message?.items || []).map((w) => {
@@ -161,6 +196,7 @@ async function searchCrossref(q, o) {
       date: w.issued?.["date-parts"]?.[0]?.join("-") || "",
       doi: normDoi(w.DOI),
       venue: (w["container-title"] || [])[0] || "",
+      issns: (w.ISSN || []).slice(0, 3),
       citations: w["is-referenced-by-count"] ?? null,
       oa: false,
       pdfUrl: "",
@@ -198,12 +234,68 @@ async function searchPubMed(q, o) {
   });
 }
 
+// Google Scholar via logged-in browser cookie. The user verifies the mirror
+// once in their browser, pastes the Cookie into the source config, and the
+// server-side fetch reuses that session. Without a cookie the gate blocks us —
+// reported as an actionable error.
+async function searchScholarMirror(q, o, sourceDef) {
+  const base = (sourceDef?.url || "https://sc.panda985.com").replace(/\/$/, "");
+  const cookie = sourceDef?.cookie || "";
+  const url = `${base}/scholar?hl=zh-CN&q=${encodeURIComponent(q)}${o.yearFrom ? `&as_ylo=${o.yearFrom}` : ""}${o.yearTo ? `&as_yhi=${o.yearTo}` : ""}`;
+  const r = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
+    signal: AbortSignal.timeout(25000),
+  });
+  const html = await r.text();
+  if (r.status !== 200 || html.includes("verify_gate") || html.includes("Redirecting")) {
+    throw new Error("镜像需要浏览器验证 — 在浏览器打开一次该镜像并过验证后，把 Cookie 粘贴到检索源配置里（或直接用对话让 agent 走已登录浏览器检索）");
+  }
+  const results = [];
+  // scholar result blocks: <div class="gs_r gs_or gs_scl" ...> ... </div> up to next block
+  const blocks = html.split('<div class="gs_r').slice(1);
+  for (const b of blocks) {
+    const titleM = b.match(/<h3 class="gs_rt"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/);
+    if (!titleM) continue;
+    const title = titleM[2].replace(/<[^>]+>/g, "").trim();
+    const link = titleM[1].startsWith("http") ? titleM[1] : base + titleM[1];
+    const am = b.match(/<div class="gs_a"[^>]*>([\s\S]*?)<\/div>/);
+    const info = am ? am[1].replace(/<[^>]+>/g, "") : "";
+    const year = Number((info.match(/(\d{4})/) || [])[0]) || null;
+    const sm = b.match(/<div class="gs_rs">([\s\S]*?)<\/div>/);
+    const snippet = sm ? sm[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "";
+    const cm = b.match(/被引用次数[：:]\s*(\d+)/) || b.match(/Cited by (\d+)/);
+    const pdfM = b.match(/<a[^>]*href="([^"]+\.pdf[^"]*)"/i);
+    results.push({
+      id: "scholar:" + link,
+      source: sourceDef?.id || "scholar",
+      title,
+      authors: info.split("-")[0]?.split(",")?.slice(0, 6).map((s) => s.trim()) || [],
+      year,
+      date: year ? String(year) : "",
+      doi: normDoi((b.match(/doi\.org\/([^"&\s<]+)/) || [])[1]),
+      venue: (info.split("-")[1] || "").split(",")[0].trim(),
+      issns: [],
+      citations: cm ? Number(cm[1]) : null,
+      oa: !!pdfM,
+      pdfUrl: pdfM ? pdfM[1] : "",
+      url: link,
+      abstract: snippet.slice(0, 800),
+      keywords: [],
+    });
+  }
+  return results;
+}
+
 export const ADAPTERS = {
   openalex: searchOpenAlex,
   semanticscholar: searchSemanticScholar,
   arxiv: searchArxiv,
   crossref: searchCrossref,
   pubmed: searchPubMed,
+  "scholar-mirror": (q, o, sourceDef) => searchScholarMirror(q, o, sourceDef),
 };
 
 // Built-in source registry. Users can add/edit sources in
@@ -211,13 +303,14 @@ export const ADAPTERS = {
 // or "unavailable" for sources that need subscriptions (WoS) / have no open
 // API (Google Scholar).
 export const DEFAULT_SOURCES = [
-  { id: "openalex", name: "OpenAlex", type: "openalex", enabled: true, note: "开放全库" },
-  { id: "semanticscholar", name: "Semantic Scholar", type: "semanticscholar", enabled: true, note: "开放（限速 100次/5分钟）" },
-  { id: "arxiv", name: "arXiv", type: "arxiv", enabled: true, note: "预印本" },
-  { id: "crossref", name: "Crossref", type: "crossref", enabled: true, note: "DOI 元数据" },
+  { id: "openalex", name: "OpenAlex", type: "openalex", enabled: true, note: "开放全库，带 ISSN（可查分区/SJR）" },
+  { id: "semanticscholar", name: "Semantic Scholar", type: "semanticscholar", enabled: true, note: "开放（限速）；可配 apiKey" },
+  { id: "arxiv", name: "arXiv", type: "arxiv", enabled: true, note: "预印本（无分区）" },
+  { id: "crossref", name: "Crossref", type: "crossref", enabled: true, note: "DOI 元数据，带 ISSN" },
+  { id: "scholar", name: "Google 学术（panda985 镜像）", type: "scholar-mirror", enabled: false, url: "https://sc.panda985.com", note: "需已登录浏览器的 Cookie：浏览器过一次验证后复制 Cookie 填入源配置" },
   { id: "pubmed", name: "PubMed", type: "pubmed", enabled: false, note: "生物医学" },
-  { id: "wos", name: "Web of Science", type: "unavailable", enabled: false, note: "需要机构订阅，无开放 API" },
-  { id: "scholar", name: "Google Scholar", type: "unavailable", enabled: false, note: "无官方 API（反爬严格）" },
+  { id: "wos", name: "Web of Science", type: "unavailable", enabled: false, note: "需要机构订阅；后续走已登录浏览器（暂缓）" },
+  { id: "scholar-direct", name: "Google Scholar 官方", type: "unavailable", enabled: false, note: "无官方 API；镜像可用时可替代" },
 ];
 
 export function dedupe(results) {
@@ -237,25 +330,33 @@ export function dedupe(results) {
   return [...byKey.values()];
 }
 
-export async function aggregateSearch(q, { sources, yearFrom, yearTo, oa, sort, limit } = {}) {
-  const use = (sources && sources.length ? sources : DEFAULT_SOURCES.filter((s) => s.enabled).map((s) => s.id)).slice(0, 8);
+export async function aggregateSearch(q, { sources, yearFrom, yearTo, oa, sort, limit, quartile } = {}) {
+  let sourceDefs;
+  try {
+    const f = path.join(DATA_DIR, "search-sources.json");
+    sourceDefs = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null;
+  } catch {}
+  if (!sourceDefs) sourceDefs = DEFAULT_SOURCES;
+  const use = (sources && sources.length ? sources : sourceDefs.filter((s) => s.enabled && s.type !== "unavailable").map((s) => s.id)).slice(0, 8);
   const opts = { yearFrom: yearFrom && Number(yearFrom), yearTo: yearTo && Number(yearTo), oa: !!oa, sort, limit: limit || 15 };
   const settled = await Promise.allSettled(use.map(async (id) => {
-    const def = DEFAULT_SOURCES.find((s) => s.id === id);
+    const def = sourceDefs.find((s) => s.id === id) || DEFAULT_SOURCES.find((s) => s.id === id);
     const type = def?.type || id;
     const adapter = ADAPTERS[type];
     if (!adapter) return [];
-    return adapter(q, opts);
+    return adapter(q, opts, def);
   }));
   const results = [];
   const errors = [];
   settled.forEach((s, i) => {
     if (s.status === "fulfilled") results.push(...s.value);
-    else errors.push(`${use[i]}: ${String(s.reason?.message || s.reason).slice(0, 80)}`);
+    else errors.push(`${use[i]}: ${String(s.reason?.message || s.reason).slice(0, 100)}`);
   });
-  let merged = dedupe(results);
+  let merged = dedupe(results).map(enrich);
+  if (quartile) merged = merged.filter((r) => r.quartile === quartile);
   if (sort === "citations") merged.sort((a, b) => (b.citations || 0) - (a.citations || 0));
   else if (sort === "year") merged.sort((a, b) => (b.year || 0) - (a.year || 0));
+  else if (sort === "if") merged.sort((a, b) => (b.sjr ?? -1) - (a.sjr ?? -1)); // 无分区/IF 的自然排到最后
   return { results: merged.slice(0, 60), total: merged.length, errors };
 }
 

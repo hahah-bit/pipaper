@@ -6,6 +6,14 @@ export function onShow() {
   renderSources();
 }
 
+// 分区徽章行：分区 + SJR 影响指标
+function metaBadges(r) {
+  const bits = [];
+  if (r.quartile) bits.push(el("span", { class: "sr-quartile", title: "SJR 分区（2026）" }, r.quartile));
+  if (r.sjr != null) bits.push(el("span", { class: "sr-sjr", title: "SJR 指标" }, "SJR " + r.sjr.toFixed(2)));
+  return bits;
+}
+
 function bibtex(r) {
   const key = (r.authors[0] || "anon").split(" ").pop().toLowerCase() + (r.year || "nd") + (r.title.match(/\w+/)?.[0] || "").toLowerCase();
   const authors = r.authors.join(" and ");
@@ -38,9 +46,11 @@ function renderSources() {
 function resultCard(r) {
   const tierColor = r.tier?.color || "#767e99";
   const authors = r.authors.slice(0, 3).join(", ") + (r.authors.length > 3 ? " 等" : "");
+  const absId = "abs-" + Math.random().toString(36).slice(2, 8);
   const card = el("div", { class: "sch-result" },
     el("div", { class: "sr-top" },
       el("span", { class: "sr-tier", style: { background: tierColor } }, r.tier?.label || ""),
+      ...metaBadges(r),
       r.oa ? el("span", { class: "sr-oa" }, "OA") : null,
       el("span", { class: "sr-year" }, String(r.year || "")),
       el("span", { class: "sr-venue" }, (r.venue || "").slice(0, 42)),
@@ -48,37 +58,28 @@ function resultCard(r) {
     ),
     el("div", { class: "sr-title", title: r.title }, r.title),
     el("div", { class: "sr-authors" }, authors),
-    r.abstract ? el("div", { class: "sr-abs" }, r.abstract.slice(0, 180) + "…") : null,
-    el("div", { class: "sr-actions" },
-      el("button", {
-        class: "tool-btn", title: r.pdfUrl || "无开放获取 PDF",
-        onclick: async (e) => {
-          const btn = e.target;
-          btn.disabled = true; btn.textContent = "下载中…";
-          try {
-            const res = await fetch("/api/search/import", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ pdfUrl: r.pdfUrl, title: r.title, projectId: state.projectId }),
-            });
-            const j = await res.json();
-            if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
-            toast(j.reused ? "文献库已有该论文（内容相同），已复用解析状态" : `已导入《${(j.title || "").slice(0, 30)}》`);
-            btn.textContent = "✓ 已入库";
-            const { reloadPapers } = await import("./sidebar.js");
-            await reloadPapers();
-          } catch (err) {
-            btn.disabled = false; btn.textContent = "📥 导入";
-            toast("导入失败: " + err.message, true);
-          }
+    r.abstract ? el("div", {},
+      el("div", { class: "sr-abs", id: absId, style: { maxHeight: "44px", overflow: "hidden" } }, r.abstract),
+      el("a", {
+        class: "sr-abs-toggle", style: { fontSize: "11px", color: "var(--accent)", cursor: "pointer" },
+        onclick: () => {
+          const a = document.getElementById(absId);
+          const open = a.style.maxHeight !== "none";
+          a.style.maxHeight = open ? "none" : "44px";
+          a.textContent = r.abstract;
+          a.nextElementSibling.textContent = open ? "收起" : "展开摘要";
         },
-      }, "📥 导入"),
+      }, "展开摘要"),
+    ) : null,
+    el("div", { class: "sr-actions" },
+      r.pdfUrl ? el("a", { class: "tool-btn", href: r.pdfUrl, target: "_blank", rel: "noreferrer", title: "打开/下载 PDF 链接" }, "PDF") : null,
+      r.url ? el("a", { class: "tool-btn", href: r.url, target: "_blank", rel: "noreferrer", title: "打开原文链接" }, "原文") : null,
       el("button", {
         class: "tool-btn", title: "复制 BibTeX",
         onclick: () => {
           navigator.clipboard.writeText(bibtex(r)).then(() => toast("BibTeX 已复制"), () => toast("复制失败", true));
         },
       }, "BibTeX"),
-      r.doi ? el("a", { class: "tool-btn", href: "https://doi.org/" + r.doi, target: "_blank", rel: "noreferrer", style: { textDecoration: "none" } }, "DOI") : null,
       el("span", { class: "sr-src" }, (r.sources || [r.source]).join("+")),
     )
   );
@@ -117,37 +118,45 @@ async function doSearch() {
 }
 
 export function initSearchPanel() {
+  window.__schInit = true;
+  renderSources();
   $("#btn-search").addEventListener("click", doSearch);
   $("#sch-q").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); doSearch(); }
   });
   $("#btn-sch-sources").addEventListener("click", () => {
-    fetch("/api/search/sources").then((r) => r.json()).then((d) => {
-      const ta = el("textarea", { rows: "14", style: { width: "100%", fontFamily: "monospace", fontSize: "12px" } });
-      ta.value = JSON.stringify(d.sources, null, 2);
-      const back = el("div", { id: "tpl-editor-backdrop" }, el("div", { class: "modal", style: { width: "640px" } },
-        el("div", { class: "modal-head" }, el("span", {}, "检索源（可自由添加/编辑；type 见 server/search/engines.js）"), el("button", { class: "icon-btn", onclick: () => back.remove() }, "✕")),
-        el("div", { class: "modal-body" },
-          ta,
-          el("div", { style: { display: "flex", gap: "8px", marginTop: "10px" } },
-            el("button", {
-              class: "tool-btn primary", onclick: async () => {
-                try {
-                  const sources = JSON.parse(ta.value);
-                  await fetch("/api/search/sources", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sources }) });
-                  toast("检索源已保存");
-                  back.remove();
-                  renderSources();
-                } catch (e) {
-                  toast("保存失败: " + e.message, true);
-                }
+    const url = el("input", { type: "text", placeholder: "镜像/站点网址，如 https://sc.panda985.com", style: { width: "100%" } });
+    const key = el("input", { type: "text", placeholder: "Semantic Scholar apiKey（可选）", style: { width: "100%" } });
+    const cookie = el("input", { type: "text", placeholder: "镜像 Cookie（可选：浏览器过验证后 F12 复制 Cookie 头）", style: { width: "100%" } });
+    const back = el("div", { id: "tpl-editor-backdrop" }, el("div", { class: "modal", style: { width: "560px" } },
+      el("div", { class: "modal-head" }, el("span", {}, "添加检索源"), el("button", { class: "icon-btn", onclick: () => back.remove() }, "✕")),
+      el("div", { class: "modal-body" },
+        el("p", { class: "res-note" }, "只需填网址（和可选的密钥/Cookie），其余元数据自动补全。Google 学术镜像需先在浏览器过一次人机验证，再把 Cookie 复制进来即可免登录检索。"),
+        el("label", { class: "modal-label" }, "网址", url),
+        el("label", { class: "modal-label" }, "API Key（可选）", key),
+        el("label", { class: "modal-label" }, "Cookie（可选）", cookie),
+        el("div", { style: { display: "flex", gap: "8px", marginTop: "10px" } },
+          el("button", {
+            class: "tool-btn primary", onclick: async () => {
+              try {
+                const res = await fetch("/api/search/sources/add", {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ url: url.value, apiKey: key.value, cookie: cookie.value }),
+                });
+                const j = await res.json();
+                if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
+                toast("检索源已添加: " + (j.source?.name || ""));
+                back.remove();
+                renderSources();
+              } catch (e) {
+                toast("添加失败: " + e.message, true);
               }
-            }, "保存"),
-            el("button", { class: "tool-btn", onclick: () => back.remove() }, "取消")
-          )
+            }
+          }, "添加源"),
+          el("button", { class: "tool-btn", onclick: () => back.remove() }, "取消")
         )
-      ));
-      document.body.append(back);
-    });
+      )
+    ));
+    document.body.append(back);
   });
 }

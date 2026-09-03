@@ -342,8 +342,9 @@ api.get("/projects", (_req, res) => {
 
 api.post("/projects", (req, res) => {
   const name = String(req.body?.name || "").trim();
+  const type = req.body?.type === "zotero" ? "zotero" : "temp";
   if (!name) return res.status(400).json({ error: "项目名不能为空" });
-  res.json(createProject(name));
+  res.json(createProject(name, type));
 });
 
 api.put("/projects/:id", (req, res) => {
@@ -390,8 +391,9 @@ api.get("/pi/resources", async (_req, res) => {
       out.skills = sk.skills || [];
     } catch {}
     try {
-      const { sharedLoaderInfo } = await import("./harness.js");
-      out.extensions = sharedLoaderInfo()?.extensions || [];
+      const h = await import("./harness.js");
+      out.gatedSkills = h.gatedSkills();
+      out.extensions = h.sharedLoaderInfo()?.extensions || [];
     } catch {}
     try {
       const settingsPath = path.join(process.env.USERPROFILE || "", ".pi", "agent", "settings.json");
@@ -548,6 +550,60 @@ api.put("/search/sources", (req, res) => {
   res.json({ ok: true, sources });
 });
 
+// user-facing add: only needs a URL (+optional key/cookie); metadata auto-filled
+api.post("/search/sources/add", (req, res) => {
+  const { url, apiKey, cookie } = req.body || {};
+  const u = String(url || "").trim();
+  if (!u) return res.status(400).json({ error: "请填写网址" });
+  let sources;
+  try {
+    sources = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "search-sources.json"), "utf8"));
+  } catch {
+    sources = JSON.parse(JSON.stringify(DEFAULT_SOURCES));
+  }
+  let def;
+  const lower = u.toLowerCase();
+  if (lower.includes("panda985") || lower.includes("scholar")) {
+    def = {
+      id: "scholar-" + Date.now().toString(36),
+      name: "Google 学术（自定义镜像）",
+      type: "scholar-mirror",
+      enabled: true,
+      url: u.replace(/\/$/, ""),
+      note: cookie ? "已配置 Cookie" : "未配 Cookie — 浏览器过一次验证后把 Cookie 粘贴进来",
+    };
+    if (cookie) def.cookie = cookie.trim();
+  } else if (lower.includes("semanticscholar")) {
+    const existing = sources.find((x) => x.id === "semanticscholar");
+    if (existing) {
+      if (apiKey) existing.apiKey = apiKey.trim();
+      def = existing;
+    } else {
+      def = { id: "semanticscholar", name: "Semantic Scholar", type: "semanticscholar", enabled: true, note: apiKey ? "已配置 apiKey" : "开放（限速）" };
+      if (apiKey) def.apiKey = apiKey.trim();
+      sources.push(def);
+    }
+    fs.writeFileSync(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
+    return res.json({ ok: true, source: def, sources });
+  } else {
+    // generic mirror entry; the adapter scraper handles scholar-style layouts
+    def = {
+      id: "mirror-" + Date.now().toString(36),
+      name: "自定义学术站点",
+      type: "scholar-mirror",
+      enabled: true,
+      url: u.replace(/\/$/, ""),
+      note: cookie ? "已配置 Cookie" : "未配 Cookie",
+    };
+    if (cookie) def.cookie = cookie.trim();
+  }
+  const i = sources.findIndex((x) => x.id === def.id);
+  if (i >= 0) sources[i] = def;
+  else sources.push(def);
+  fs.writeFileSync(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
+  res.json({ ok: true, source: def, sources });
+});
+
 api.get("/search", async (req, res) => {
   const q = String(req.query.q || "").trim();
   if (!q) return res.json({ results: [], total: 0, errors: [] });
@@ -563,6 +619,7 @@ api.get("/search", async (req, res) => {
       yearTo: req.query.yearTo,
       oa: req.query.oa === "1",
       sort: req.query.sort,
+      quartile: req.query.quartile,
       limit: Number(req.query.limit || 15),
     });
     r.results = r.results.map((x) => ({ ...x, tier: tierOf(x) }));

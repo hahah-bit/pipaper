@@ -71,9 +71,20 @@ function renderSkills(body) {
   const enabled = proj?.resources?.skillsEnabled || [];
   body.append(
     el("p", { class: "res-note" },
-      "来自 pi 的技能发现（~/.pi/agent/skills 与项目 .pi/skills）。选择项目后可勾选该项目会话可用的技能；不选项目时为全局视图（全部启用）。")
+      "分层技能路由（展示层）：基座技能始终可用；", el("b", {}, "论文综合技能组"), "（zotero / nature-* 等）只在会话绑定论文或 Zotero 项目时自动注入，不做强制钩子。")
   );
-  if (!resData.skills.length) body.append(el("p", { class: "res-note" }, "未发现任何技能。"));
+  // gated 论文综合 group
+  const gated = resData.gatedSkills || [];
+  body.append(el("div", { class: "dd-group", style: { paddingLeft: 0 } }, `论文综合技能组（按需加载 · ${gated.length} 个）`));
+  if (!gated.length) body.append(el("p", { class: "res-note" }, "未发现分层技能。把技能放进 ~/.pi/agent/skills-gated/ 即进入该组（不直接暴露给 pi）。"));
+  for (const s of gated) {
+    body.append(el("div", { class: "res-row" },
+      el("span", { class: "res-name" }, "🔒 " + s.name),
+      el("span", { class: "res-desc" }, s.description),
+      el("span", { class: "res-src" }, "论文综合")
+    ));
+  }
+  body.append(el("div", { class: "dd-group", style: { paddingLeft: 0 } }, "基座技能（pi 常规发现）"));
   for (const s of resData.skills) {
     const cb = el("input", { type: "checkbox" });
     cb.checked = !proj || !enabled.length || enabled.includes(s.name);

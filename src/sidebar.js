@@ -4,17 +4,6 @@ let activeCollection = null; // collection id or null = all
 let searchQ = "";
 
 export function initSidebar() {
-  // sidebar tabs
-  document.querySelectorAll(".st-tab").forEach((t) =>
-    t.addEventListener("click", () => {
-      document.querySelectorAll(".st-tab").forEach((x) => x.classList.remove("active"));
-      t.classList.add("active");
-      for (const name of ["lib", "search", "video"]) {
-        $(`#stab-${name}`).hidden = t.dataset.tab !== name;
-      }
-      if (t.dataset.tab === "search") import("./searchPanel.js").then((m) => m.onShow());
-    })
-  );
   $("#paper-search").addEventListener("input", (e) => {
     searchQ = e.target.value.trim().toLowerCase();
     renderPapers();
@@ -55,16 +44,23 @@ export function initSidebar() {
   $("#btn-new-project").addEventListener("click", async () => {
     const name = prompt("项目名称：");
     if (!name?.trim()) return;
+    const asZotero = confirm(`「${name.trim()}」是否作为 Zotero 联动项目？\n\n确定 = Zotero 联动（会话自动加载论文综合技能组，工具栏出现打开 Zotero 按钮）\n取消 = 临时文献项目`);
     try {
-      const p = await api.createProject(name.trim());
+      const p = await api.createProject(name.trim(), asZotero ? "zotero" : "temp");
+      p.type = asZotero ? "zotero" : "temp";
       state.projects.push(p);
       state.projectId = p.id;
       renderProjects();
       renderPapers();
-      toast(`项目「${p.name}」已创建`);
+      updateProjectBar();
+      toast(`项目「${p.name}」已创建${asZotero ? "（Zotero 联动）" : ""}`);
     } catch (e) {
       toast("创建失败: " + e.message, true);
     }
+  });
+  $("#btn-open-zotero").addEventListener("click", () => {
+    window.open("zotero://open-library", "_blank");
+    setTimeout(() => toast("如果 Zotero 未打开，请确认 Zotero 已安装并在运行", true), 800);
   });
 }
 
@@ -93,10 +89,17 @@ export function renderProjects() {
   sel.replaceChildren();
   sel.append(el("option", { value: "" }, `📂 全部文献 (${state.papers.length}篇)`));
   for (const p of state.projects) {
-    sel.append(el("option", { value: p.id }, `📁 ${p.name} (${p.paperIds.length}篇)`));
+    sel.append(el("option", { value: p.id }, `${p.type === "zotero" ? "🔗" : "📁"} ${p.name} (${p.paperIds.length}篇)`));
   }
   sel.value = state.projectId || "";
   $("#btn-del-project").hidden = !state.projectId;
+  updateProjectBar();
+}
+
+function updateProjectBar() {
+  const proj = state.projects.find((x) => x.id === state.projectId);
+  const btn = $("#btn-open-zotero");
+  if (btn) btn.hidden = proj?.type !== "zotero";
 }
 
 export async function switchProject(id) {

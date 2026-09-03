@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PiPaper · 论文精读工作台</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
-<link rel="stylesheet" href="/style.css" />
+<link rel="stylesheet" href="/style.css?v=2eb3ce0528" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -22,48 +22,14 @@
     </div>
     <div class="project-bar">
       <select id="project-select" title="项目（会话分组）"></select>
+      <button id="btn-open-zotero" class="icon-btn" title="打开 Zotero" hidden>🔗</button>
       <button id="btn-del-project" class="icon-btn" title="删除当前项目" hidden>🗑</button>
       <button id="btn-new-project" class="icon-btn" title="新建项目">＋</button>
-    </div>
-    <div class="side-tabs">
-      <button class="st-tab active" data-tab="lib">文献库</button>
-      <button class="st-tab" data-tab="search">🔍 检索</button>
-      <button class="st-tab" data-tab="video">🎬 视频</button>
     </div>
     <div id="stab-lib" class="stab">
       <input id="paper-search" type="search" placeholder="搜索标题 / 作者 / 年份…" />
       <div id="collections"></div>
       <div id="paper-list" class="paper-list"></div>
-    </div>
-    <div id="stab-search" class="stab" hidden>
-      <div id="search-panel">
-        <textarea id="sch-q" rows="2" placeholder="检索论文：主题 / 方法 / 模型名…（Enter 检索）"></textarea>
-        <div class="sch-row">
-          <input id="sch-year-from" type="number" placeholder="年份≥" style="width:74px" />
-          <input id="sch-year-to" type="number" placeholder="年份≤" style="width:74px" />
-          <select id="sch-sort">
-            <option value="relevance">按相关度</option>
-            <option value="citations">按被引</option>
-            <option value="year">按年份</option>
-          </select>
-          <label class="sch-oa"><input id="sch-oa" type="checkbox" />仅OA</label>
-        </div>
-        <div class="sch-row">
-          <div id="sch-sources" class="sch-sources"></div>
-          <button id="btn-sch-sources" class="icon-btn" title="编辑检索源">⚙</button>
-        </div>
-        <button id="btn-search" class="tool-btn primary" style="width:100%">🔍 检索</button>
-        <div id="sch-status" class="res-note"></div>
-        <div id="sch-results"></div>
-      </div>
-    </div>
-    <div id="stab-video" class="stab" hidden>
-      <div id="video-panel">
-        <button id="btn-video-pick" class="tool-btn" style="width:100%">📂 打开本地视频</button>
-        <input type="file" id="video-input" accept="video/*" multiple hidden />
-        <div id="video-list"></div>
-        <p class="res-note">打开后在右侧播放，可「截帧问 AI」：把当前画面 + 时间戳发给模型一起讨论。</p>
-      </div>
     </div>
     <div id="side-foot" class="side-foot"></div>
     <input type="file" id="file-input" accept="application/pdf" multiple hidden />
@@ -115,6 +81,7 @@
       <div class="spacer"></div>
       <span id="reader-status" class="status-chip"></span>
       <button id="btn-parse" class="tool-btn">解析</button>
+      <button id="btn-rightbar-toggle" class="tool-btn active" title="检索/视频面板">🔍</button>
       <button id="btn-boxselect" class="tool-btn" title="在 PDF 上框选截图加入对话">⬚ 框选</button>
     </header>
     <div id="parse-panel" hidden>
@@ -145,6 +112,56 @@
       </div>
     </div>
   </section>
+
+  <!-- ============ Right panel: 检索 / 视频 ============ -->
+  <div class="gutter" id="gutter-3" title="拖拽调整宽度"></div>
+  <aside id="rightbar">
+    <div class="side-tabs">
+      <button class="rt-tab active" data-tab="search">🔍 检索</button>
+      <button class="rt-tab" data-tab="video">🎬 视频</button>
+      <button id="btn-rightbar-close" class="icon-btn" title="收起" style="flex:none">«</button>
+    </div>
+    <div id="stab-search" class="stab">
+      <div id="search-panel">
+        <textarea id="sch-q" rows="2" placeholder="检索论文：主题 / 方法 / 模型名…（Enter 检索）"></textarea>
+        <div class="sch-row">
+          <input id="sch-year-from" type="number" placeholder="年份≥" style="width:70px" />
+          <input id="sch-year-to" type="number" placeholder="年份≤" style="width:70px" />
+          <select id="sch-sort">
+            <option value="relevance">按相关度</option>
+            <option value="if">按影响因子(SJR)</option>
+            <option value="citations">按被引</option>
+            <option value="year">按年份</option>
+          </select>
+        </div>
+        <div class="sch-row">
+          <select id="sch-quartile" style="flex:1">
+            <option value="">全部分区</option>
+            <option value="Q1">Q1 区</option>
+            <option value="Q2">Q2 区</option>
+            <option value="Q3">Q3 区</option>
+            <option value="Q4">Q4 区</option>
+          </select>
+          <label class="sch-oa"><input id="sch-oa" type="checkbox" />仅OA</label>
+        </div>
+        <div class="sch-row">
+          <div id="sch-sources" class="sch-sources"></div>
+          <button id="btn-sch-sources" class="icon-btn" title="编辑检索源">⚙</button>
+        </div>
+        <button id="btn-search" class="tool-btn primary" style="width:100%">🔍 检索</button>
+        <div id="sch-status" class="res-note"></div>
+        <div id="sch-results"></div>
+      </div>
+    </div>
+    <div id="stab-video" class="stab" hidden>
+      <div id="video-panel">
+        <button id="btn-video-pick" class="tool-btn" style="width:100%">📂 打开本地视频</button>
+        <input type="file" id="video-input" accept="video/*" multiple hidden />
+        <div id="video-list"></div>
+        <p class="res-note">打开后在阅读器播放，可「截帧问 AI」：把当前画面 + 时间戳发给模型一起讨论。</p>
+      </div>
+    </div>
+  </aside>
 </div>
 
 <div id="sel-popup" hidden><button id="btn-sel-add">✂ 加入对话</button></div>
@@ -208,6 +225,6 @@
   </div>
 </div>
 
-<script src="/app.js"></script>
+<script src="/app.js?v=2eb3ce0528"></script>
 </body>
 </html>

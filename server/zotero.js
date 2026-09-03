@@ -48,6 +48,29 @@ const FIELD_QUERY = `SELECT f.fieldName AS name, v.value AS value
   FROM itemData d JOIN fields f ON d.fieldID=f.fieldID
   JOIN itemDataValues v ON d.valueID=v.valueID WHERE d.itemID=?`;
 
+// cached snapshot for agent tools (avoid re-copying sqlite on every call)
+let snapCache = { at: 0, data: null };
+export function getZoteroSnapshot(cfg, { maxAgeMs = 60000, force = false } = {}) {
+  if (!force && snapCache.data && Date.now() - snapCache.at < maxAgeMs) return snapCache.data;
+  const data = syncZotero(cfg);
+  snapCache = { at: Date.now(), data };
+  return data;
+}
+
+export function zoteroSearch(cfg, query, limit = 10) {
+  const { items } = getZoteroSnapshot(cfg);
+  const q = query.toLowerCase();
+  const hits = items.filter((p) =>
+    [p.title, p.abstract, ...(p.creators || []), p.doi].some((t) => String(t || "").toLowerCase().includes(q))
+  );
+  return hits.slice(0, limit);
+}
+
+export function zoteroItem(cfg, key) {
+  const { items } = getZoteroSnapshot(cfg);
+  return items.find((p) => p.zoteroKey === key || p.id === "zot_" + key) || null;
+}
+
 function findPdfAttachment(db, dataDir, itemID) {
   const rows = db.prepare(
     `SELECT ia.itemID AS attID, i.key AS attKey, ia.path AS p, ia.linkMode AS lm, ia.contentType AS ct

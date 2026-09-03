@@ -67,7 +67,7 @@ export const api = {
   files: (q) => jfetch("/api/files?q=" + encodeURIComponent(q || "")),
   file: (path) => jfetch("/api/file?path=" + encodeURIComponent(path)),
   projects: () => jfetch("/api/projects"),
-  createProject: (name) => jfetch("/api/projects", { method: "POST", body: { name } }),
+  createProject: (name, type) => jfetch("/api/projects", { method: "POST", body: { name, type } }),
   updateProject: (id, body) => jfetch(`/api/projects/${id}`, { method: "PUT", body }),
   deleteProject: (id) => jfetch(`/api/projects/${id}`, { method: "DELETE" }),
   sessions: () => jfetch("/api/sessions"),
@@ -144,14 +144,15 @@ export function renderChips() {
 
 // ---------------- boot ----------------
 async function boot() {
-  initPanes();
-  initResources();
-  initSidebar();
-  initChat();
-  initReader();
-  initSettings();
-  initSearchPanel();
-  initVideoTab();
+  window.__bootStage = "start"; window.__initErrors = [];
+  try { initPanes(); } catch (e) { window.__initErrors.push("initPanes: " + (e.message||e)); }
+  try { initResources(); } catch (e) { window.__initErrors.push("initResources: " + (e.message||e)); }
+  try { initSidebar(); } catch (e) { window.__initErrors.push("initSidebar: " + (e.message||e)); }
+  try { initChat(); } catch (e) { window.__initErrors.push("initChat: " + (e.message||e)); }
+  try { initReader(); } catch (e) { window.__initErrors.push("initReader: " + (e.message||e)); }
+  try { initSettings(); } catch (e) { window.__initErrors.push("initSettings: " + (e.message||e)); }
+  window.__bootStage = "search"; try { initSearchPanel(); } catch (e) { window.__initErrors.push("initSearchPanel: " + (e.message||e)); }
+  window.__bootStage = "video"; try { initVideoTab(); } catch (e) { window.__initErrors.push("initVideoTab: " + (e.message||e)); }
   try {
     const [paperData, models, projects] = await Promise.all([api.papers(), api.models(), api.projects()]);
     state.papers = paperData.papers;
@@ -170,6 +171,7 @@ async function boot() {
       renderWelcome();
     }
   } catch (e) {
+    window.__bootStage = "error:" + (e.message || e);
     toast("初始化失败: " + (e.message || e), true);
   }
 }
