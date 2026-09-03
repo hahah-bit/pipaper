@@ -118,21 +118,22 @@ select, #model-select, #think-select {
   background: var(--bg2); border: 1px solid var(--border); color: var(--fg1);
   border-radius: 8px; padding: 6px 8px; font-size: 12.5px; outline: none; max-width: 150px;
 }
-#messages { flex: 1; overflow-y: auto; padding: 18px 16px; display: flex; flex-direction: column; gap: 14px; }
+#messages { flex: 1; overflow-y: auto; padding: 18px 14px; display: flex; flex-direction: column; gap: 18px; }
 .msg { max-width: 100%; display: flex; flex-direction: column; }
 .msg.user { align-items: flex-end; }
 .msg .bubble {
-  max-width: 92%; border-radius: 14px; padding: 9px 13px; font-size: 14px; line-height: 1.6;
+  max-width: 92%; border-radius: 14px; padding: 9px 13px; font-size: 14px; line-height: 1.65;
   white-space: pre-wrap; word-break: break-word;
 }
-.msg.user .bubble { background: #2b3358; border: 1px solid #3a4470; }
+.msg.user .bubble { background: #232a47; border-radius: 14px 14px 4px 14px; }
 .msg.assistant { align-items: stretch; }
+/* mature reader-chat style: assistant text is flat, no bubble-in-box noise */
 .msg.assistant .bubble {
-  background: var(--bg1); border: 1px solid var(--border); width: 100%; max-width: 100%;
-  white-space: normal;
+  background: transparent; border: 0; width: 100%; max-width: 100%;
+  white-space: normal; padding: 2px 2px;
 }
-.msg .meta { font-size: 11px; color: var(--fg2); margin-top: 4px; display: flex; gap: 10px; justify-content: flex-end; }
-.msg.error .bubble { background: #3a2126; border-color: #5c3038; color: #f2b8bb; }
+.msg .meta { font-size: 10.5px; color: #565d78; margin-top: 6px; display: flex; gap: 10px; justify-content: flex-start; }
+.msg.error .bubble { background: #3a2126; border-color: #5c3038; color: #f2b8bb; border-radius: 10px; padding: 8px 12px; }
 
 /* markdown in assistant bubbles */
 .md p { margin: .45em 0; }
@@ -150,31 +151,7 @@ select, #model-select, #think-select {
 .katex { font-size: 1.05em; }
 .katex-display { overflow-x: auto; overflow-y: hidden; padding: 3px 0; }
 
-details.thinking { display: none; }
-
-/* ZCode-style one-line thinking */
-.think-line {
-  border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px;
-  margin: 6px 0; font-size: 12.5px; color: var(--fg2); background: #141828;
-  user-select: none;
-}
-.think-line .think-head { display: flex; align-items: center; gap: 7px; cursor: default; }
-.think-line.open { cursor: pointer; }
-.think-line .t-glyph { color: var(--accent2); }
-.think-line.streaming .t-glyph { animation: spin 1.2s linear infinite; display: inline-block; }
-.think-line .t-status { color: var(--fg1); }
-.think-line .t-time { color: var(--fg2); }
-.think-line .t-toggle { margin-left: auto; color: var(--fg2); }
-.think-line .think-tail {
-  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-top: 3px;
-  color: #5d6584; font-style: italic; animation: shimmer 1.6s ease-in-out infinite;
-}
-@keyframes shimmer { 0%,100% { opacity: .45; } 50% { opacity: .95; } }
-.think-line .think-body {
-  white-space: pre-wrap; max-height: 300px; overflow: auto; margin-top: 6px;
-  padding-top: 6px; border-top: 1px dashed var(--border); user-select: text;
-}
-.bubble.thinking-active .md-body { display: none; }
+/* legacy think-line removed: unified .activity instead */
 
 /* tool one-liner */
 .tool-card {
@@ -341,6 +318,56 @@ details.thinking { display: none; }
   background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff;
   border: 0; border-radius: 8px; padding: 6px 12px; font-size: 12.5px; box-shadow: 0 6px 18px rgba(0,0,0,.4);
 }
+
+/* ================= 框选批注弹窗 ================= */
+#annot-popup {
+  display: none; position: fixed; z-index: 120; width: 350px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.6); padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.annot-title { font-size: 12.5px; color: var(--accent); font-weight: 600; }
+#annot-popup select, #annot-popup input {
+  width: 100%; background: var(--bg1); border: 1px solid var(--border); color: var(--fg0);
+  border-radius: 8px; padding: 7px 9px; font-size: 13px; outline: none;
+}
+#annot-popup input:focus, #annot-popup select:focus { border-color: var(--accent); }
+.annot-actions { display: flex; gap: 6px; }
+.annot-actions .tool-btn { flex: none; }
+#annot-ask { flex: 1 !important; }
+#tpl-editor-backdrop {
+  position: fixed; inset: 0; background: rgba(5,8,18,.66); z-index: 130;
+  display: flex; align-items: center; justify-content: center;
+}
+#tpl-editor-backdrop .modal { width: 640px; }
+#tpl-editor-backdrop textarea {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--fg0);
+  border-radius: 8px; padding: 7px 9px; font-size: 13px; outline: none; font-family: inherit; resize: vertical;
+}
+#tpl-editor-backdrop textarea:focus, #tpl-editor-backdrop input:focus { border-color: var(--accent); }
+
+/* ================= 统一活动折叠（思考+工具） ================= */
+.activity {
+  border-left: 2px solid #333c66; border-radius: 6px; padding: 4px 10px; margin: 4px 0 8px;
+  font-size: 12.5px; color: var(--fg2); background: rgba(20, 24, 40, .6);
+}
+.activity .act-head { display: flex; align-items: center; gap: 7px; }
+.activity.streaming .t-glyph { animation: spin 1.2s linear infinite; display: inline-block; color: var(--accent2); }
+.activity .t-glyph { color: var(--accent2); }
+.activity.open { cursor: pointer; }
+.activity .act-status { color: var(--fg1); }
+.activity .act-time { color: var(--fg2); }
+.activity .t-toggle { margin-left: auto; color: var(--fg2); }
+.activity .act-tail {
+  margin-top: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  color: #5d6584; font-style: italic; animation: shimmer 1.6s ease-in-out infinite;
+}
+.activity .act-think { display: none; }
+.activity.open .act-think {
+  display: block; white-space: pre-wrap; max-height: 260px; overflow: auto; user-select: text;
+  padding: 6px 0; border-bottom: 1px dashed var(--border); margin-bottom: 4px; color: var(--fg2);
+}
+.bubble.thinking-active .md-body { display: none; }
 
 /* ================= Modal ================= */
 #modal-backdrop {

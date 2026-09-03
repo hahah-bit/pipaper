@@ -127,18 +127,14 @@ function sessionRow(s, menu) {
 }
 
 // ---------------- message rendering ----------------
+// Unified "agent activity" block: thinking + tool calls collapse into ONE
+// line (ZCode style) and expand into a timeline. Assistant text renders flat.
+
 function assistantSkeleton() {
   const mdDiv = el("div", { class: "md-body" });
   const bubble = el("div", { class: "bubble md" }, mdDiv);
   const root = el("div", { class: "msg assistant" }, bubble);
-  return {
-    root, bubble, mdDiv,
-    toolCards: new Map(),
-    textAcc: "",
-    thinkAcc: "",
-    think: null, // {line, tail, body, startedAt, collapsed, timer}
-    renderTimer: null,
-  };
+  return { root, bubble, mdDiv, toolCards: new Map(), textAcc: "", activity: null, renderTimer: null };
 }
 
 function addMessageEl(role, text) {
@@ -148,74 +144,83 @@ function addMessageEl(role, text) {
   return node;
 }
 
-// ZCode-style thinking: one live line while thinking, collapses to a single
-// dim line once output starts; click to expand the full text.
-function ensureThinking(node) {
-  if (node.think) return node.think;
-  const body = el("div", { class: "think-body" });
-  const tail = el("div", { class: "think-tail" });
-  const status = el("span", { class: "t-status" }, "思考中");
-  const time = el("span", { class: "t-time" });
-  const line = el(
+function makeActivity() {
+  const thinkText = el("div", { class: "act-think" });
+  const tail = el("div", { class: "act-tail" });
+  const status = el("span", { class: "act-status" }, "思考中");
+  const time = el("span", { class: "act-time" });
+  const body = el("div", { class: "act-body" }, thinkText);
+  const root = el(
     "div",
     {
-      class: "think-line streaming",
+      class: "activity streaming",
       onclick: () => {
-        if (line.classList.contains("streaming")) return;
-        const open = line.classList.toggle("open");
-        line.querySelector(".t-toggle").textContent = open ? "▾" : "▸";
+        if (root.classList.contains("streaming")) return;
+        const open = root.classList.toggle("open");
+        root.querySelector(".t-toggle").textContent = open ? "▾" : "▸";
         body.style.display = open ? "block" : "none";
       },
     },
-    el("div", { class: "think-head" }, el("span", { class: "t-glyph" }, "✻"), status, time, el("span", { class: "t-toggle" })),
+    el("div", { class: "act-head" }, el("span", { class: "t-glyph" }, "✻"), status, time, el("span", { class: "t-toggle" })),
     tail,
     body
   );
   body.style.display = "none";
-  node.think = { line, tail, body, status, time, startedAt: Date.now(), collapsed: false, timer: null };
-  node.bubble.insertBefore(line, node.mdDiv);
-  return node.think;
+  return { root, status, time, tail, thinkText, body, startedAt: Date.now(), collapsed: false, timer: null, steps: 0, thinkShown: false };
+}
+
+function ensureActivity(node) {
+  if (!node.activity) {
+    node.activity = makeActivity();
+    node.bubble.insertBefore(node.activity.root, node.mdDiv);
+  }
+  return node.activity;
 }
 
 function thinkTail(t) {
   t = t.replace(/\s+/g, " ").trim();
-  return t.length > 110 ? "…" + t.slice(-110) : t;
+  return t.length > 100 ? "…" + t.slice(-100) : t;
 }
 
 function setThinking(node, text, streaming) {
-  const th = ensureThinking(node);
-  th.body.textContent = text;
-  th.tail.textContent = " " + thinkTail(text);
-  if (streaming && !th.collapsed) {
-    if (!th.timer) {
-      th.timer = setInterval(() => {
-        const s = ((Date.now() - th.startedAt) / 1000).toFixed(1);
-        th.time.textContent = " " + s + "s";
-      }, 100);
-      node.bubble.classList.add("thinking-active");
-    }
+  const act = ensureActivity(node);
+  act.thinkText.textContent = text;
+  act.thinkShown = true;
+  act.tail.textContent = " " + thinkTail(text);
+  act.tail.style.display = "block";
+  if (streaming && !act.collapsed && !act.timer) {
+    act.status.textContent = "深度思考中";
+    act.timer = setInterval(() => {
+      act.time.textContent = " " + ((Date.now() - act.startedAt) / 1000).toFixed(0) + "s";
+    }, 500);
+    node.bubble.classList.add("thinking-active");
   }
 }
 
-function collapseThinking(node) {
-  if (!node.think || node.think.collapsed) return;
-  const th = node.think;
-  th.collapsed = true;
-  clearInterval(th.timer);
-  th.timer = null;
-  const secs = ((Date.now() - th.startedAt) / 1000).toFixed(1);
-  th.line.classList.remove("streaming");
-  th.status.textContent = secs >= 0.5 ? `已深度思考 ${secs}s` : "已思考";
-  th.time.textContent = "";
-  th.tail.style.display = "none";
-  th.line.querySelector(".t-toggle").textContent = "▸";
+function collapseActivity(node) {
+  if (!node.activity || node.activity.collapsed) return;
+  const act = node.activity;
+  act.collapsed = true;
+  clearInterval(act.timer);
+  act.timer = null;
+  const secs = ((Date.now() - act.startedAt) / 1000).toFixed(0);
+  act.root.classList.remove("streaming");
+  const bits = [];
+  if (act.thinkShown) bits.push("深度思考");
+  if (act.steps) bits.push(`${act.steps} 次工具调用`);
+  act.status.textContent = bits.length ? bits.join(" · ") : "已分析";
+  act.time.textContent = Number(secs) > 0 ? ` ${secs}s` : "";
+  act.tail.style.display = "none";
+  act.root.querySelector(".t-toggle").textContent = "▸";
   node.bubble.classList.remove("thinking-active");
 }
+
+const collapseThinking = collapseActivity; // history renderer alias
 
 function flushAssistant(node, text, thinking, streaming) {
   node.textAcc = text;
   if (thinking) setThinking(node, thinking, streaming);
-  if (text && thinking) collapseThinking(node); // output started → collapse
+  if (text && node.activity && !node.activity.collapsed) collapseActivity(node);
   if (!node.renderTimer) {
     node.renderTimer = setTimeout(() => {
       node.renderTimer = null;
@@ -226,9 +231,12 @@ function flushAssistant(node, text, thinking, streaming) {
   }
 }
 
-// Tool calls: one-line cards that expand on click (ZCode style)
+// Tool calls: one-line cards INSIDE the activity timeline
 function addToolCard(node, id, name, args) {
-  const status = el("span", { class: "tl-status" }, "");
+  const act = ensureActivity(node);
+  act.steps++;
+  if (!act.thinkShown) act.status.textContent = "调用工具中";
+  const status = el("span", { class: "tl-status" }, "…");
   const glyph = el("span", { class: "tl-glyph" }, "⚙");
   const card = el(
     "div",
@@ -238,14 +246,14 @@ function addToolCard(node, id, name, args) {
   const tout = el("div", { class: "tout" });
   tout.style.display = "none";
   card.append(tout);
-  card.addEventListener("click", () => {
+  card.addEventListener("click", (e) => {
+    e.stopPropagation();
     if (!tout.dataset.has) return;
     const open = tout.style.display !== "none";
     tout.style.display = open ? "none" : "block";
   });
   node.toolCards.set(id, { card, tout, glyph, status, startedAt: Date.now() });
-  status.textContent = "…";
-  node.bubble.append(card);
+  act.body.append(card);
   scrollBottom();
   return card;
 }
@@ -256,8 +264,7 @@ function fillToolCard(id, name, text, isError) {
     if (tc) {
       tc.card.classList.toggle("err", !!isError);
       tc.glyph.textContent = isError ? "✕" : "✓";
-      const dur = ((Date.now() - tc.startedAt) / 1000).toFixed(1);
-      tc.status.textContent = dur + "s";
+      tc.status.textContent = ((Date.now() - tc.startedAt) / 1000).toFixed(1) + "s";
       if (text && text.trim()) {
         tc.tout.textContent = text.slice(0, 2500);
         tc.tout.dataset.has = "1";
@@ -303,33 +310,64 @@ function scrollBottom(force = false) {
 }
 
 // ---------------- send ----------------
-function buildPromptParts() {
-  // returns {text, images}
-  const chips = [...state.chips];
+// extract embedded paper images out of context text so the model gets the
+// actual figure, not a link
+async function extractInlineImages(text) {
+  const images = [];
+  let out = text;
+  const paperId = state.currentPaper?.id;
+  if (!paperId) return { text, images };
+  const re = /(?:!\[[^\]]*\]\(|src=["']|>)\s*(?:\/api\/papers\/[^/)\s"']+\/)?(file\/assets\/[^)\s"']+)/g;
+  const seen = new Set();
+  const matches = [...text.matchAll(re)].map((m) => m[1]).filter((p) => !seen.has(p) && seen.add(p)).slice(0, 4);
+  for (const rel of matches) {
+    try {
+      const res = await fetch(`/api/papers/${paperId}/${rel}`);
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      if (blob.size > 6 * 1024 * 1024) continue;
+      const dataUrl = await new Promise((resolve) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.readAsDataURL(blob);
+      });
+      const data = dataUrl.split(",")[1];
+      if (!data || data.length < 50) continue;
+      images.push({ mimeType: blob.type || "image/png", data });
+      out = out.split(rel).join(`附图${images.length}`);
+    } catch {}
+  }
+  return { text: out, images };
+}
+
+async function buildPromptParts(chipsIn) {
+  const chips = chipsIn || [...state.chips];
   if (!chips.length) return { text: null, images: [] };
   const lines = ["--- 用户在阅读器中添加的上下文 ---"];
   const images = [];
-  chips.forEach((c, i) => {
+  for (const c of chips) {
     if (c.kind === "text") {
       lines.push(`【选中${c.page ? ` · 第${c.page}页` : ""}】\n"""\n${c.body}\n"""`);
     } else if (c.kind === "image") {
       const data = (c.dataUrl || "").split(",")[1];
-      if (!data || data.length < 50) return; // skip broken crops
+      if (!data || data.length < 50) continue; // skip broken crops
       lines.push(`【截图${c.page ? ` · 第${c.page}页` : ""}】（见第 ${images.length + 1} 张附图）`);
       images.push({ mimeType: c.mimeType || "image/png", data });
     } else if (c.kind === "block") {
       if (c.dataUrl) {
         const data = c.dataUrl.split(",")[1];
-        if (!data || data.length < 50) return;
+        if (!data || data.length < 50) continue;
         lines.push(`【${c.label}】（见第 ${images.length + 1} 张附图）`);
         images.push({ mimeType: c.mimeType || "image/png", data });
       } else if (c.body) {
         lines.push(`【${c.label}】\n${c.body}`);
       }
     }
-  });
+  }
   lines.push("--- 上下文结束 ---");
-  return { text: lines.join("\n\n"), images };
+  const base = lines.join("\n\n");
+  const extracted = await extractInlineImages(base);
+  return { text: extracted.text, images: [...images, ...extracted.images] };
 }
 
 export async function sendMessage() {
@@ -343,7 +381,7 @@ export async function sendMessage() {
 async function sendMessageInner() {
   const input = $("#composer-input");
   const text = input.value.trim();
-  const { text: ctxText, images } = buildPromptParts();
+  const { text: ctxText, images } = await buildPromptParts();
   if (!text && !ctxText) return;
   if (state.streaming) return;
 
@@ -365,14 +403,34 @@ async function sendMessageInner() {
   state.chips = [];
   renderChips();
 
-  addMessageEl("user", text + (images.length ? `\n[🖼 截图 ×${images.length}]` : "") + (ctxText ? "\n＋已附上阅读器上下文" : ""));
+  await streamPrompt(fullText, images, text + (images.length ? `\n[🖼 截图 ×${images.length}]` : "") + (ctxText ? "\n＋已附上阅读器上下文" : ""));
+}
+
+// Shared streaming core: ensures a session, renders the exchange, streams SSE.
+// Used by the composer and by the reader's box-annotation quick-ask.
+export async function streamPrompt(fullText, images = [], userPreview) {
+  if (state.streaming) {
+    toast("上一条还在回复中，稍候", true);
+    return;
+  }
+  if (!state.sessionId) {
+    try {
+      const r = await api.createSession(state.currentPaper?.id || null, state.projectId || null);
+      state.sessionId = r.id;
+      state.model = r.model;
+      $("#messages").replaceChildren();
+    } catch (e) {
+      toast("创建会话失败: " + e.message, true);
+      return;
+    }
+  }
+  addMessageEl("user", userPreview || fullText);
   const node = assistantSkeleton();
   $("#messages").append(node.root);
   liveNodes.length = 0;
   liveNodes.push(node);
   scrollBottom(true);
 
-  // stream over fetch
   state.streaming = true;
   setStreamingUI(true);
   sendAbortController = new AbortController();

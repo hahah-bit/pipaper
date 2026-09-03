@@ -1,6 +1,8 @@
 import * as pdfjsLib from "pdfjs-dist";
 import { renderMd } from "./chat.js";
+import { streamPrompt } from "./chat.js";
 import { api, state, $, el, toast, addChip } from "./app.js";
+import { getTemplates, saveTemplates } from "./templates.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.min.mjs";
 
@@ -130,7 +132,6 @@ function addBlockToChat(b, blkEl, paper) {
   if (b.type === "image") {
     const img = blkEl.querySelector("img");
     const chip = { kind: "block", tag: "图", label: `图 · ${b.caption || "figure"}${b.page ? ` (p.${b.page})` : ""}`, body: b.caption || "", dataUrl: null };
-    // convert image to dataURL for vision
     const c = document.createElement("canvas");
     const im = new Image();
     im.onload = () => {
@@ -141,19 +142,17 @@ function addBlockToChat(b, blkEl, paper) {
       renderChipsIf();
     };
     im.src = img.src;
-    addChip(chip);
-    toast("图片已加入对话上下文");
+    // open the annotation popup once the原图 is captured
+    im.addEventListener("load", () => showAnnotPopup({ dataUrl: chip.dataUrl, page: b.page || null, kind: "图", label: b.caption || "figure" }));
+    toast("已捕获原图 — 可选模板后提问或加入对话");
   } else if (b.type === "table") {
-    addChip({ kind: "block", tag: "表", label: `表格${b.page ? ` (p.${b.page})` : ""}`, body: b.md || stripTags(b.html) });
-    toast("表格已加入对话上下文");
+    showAnnotPopup({ dataUrl: null, page: b.page || null, kind: "表", label: `表格${b.page ? ` (p.${b.page})` : ""}`, body: b.md || stripTags(b.html) });
   } else if (b.type === "formula") {
-    addChip({ kind: "block", tag: "公式", label: `公式${b.page ? ` (p.${b.page})` : ""}`, body: `$$${b.latex}$$` });
-    toast("公式已加入对话上下文");
+    showAnnotPopup({ dataUrl: null, page: b.page || null, kind: "公式", label: `公式${b.page ? ` (p.${b.page})` : ""}`, body: `$$${b.latex}$$` });
   } else {
     const text = blkEl.innerText.trim();
     if (text) {
-      addChip({ kind: "text", tag: "段落", body: text.slice(0, 6000), page: b.page });
-      toast("段落已加入对话上下文");
+      showAnnotPopup({ dataUrl: null, page: b.page || null, kind: "段落", label: "段落", body: text.slice(0, 6000) });
     }
   }
 }
@@ -161,6 +160,130 @@ function addBlockToChat(b, blkEl, paper) {
 function stripTags(html) {
   const d = el("div", { html });
   return d.textContent || "";
+}
+
+// ================= 框选批注弹窗 + 提示词模板 =================
+
+let annotCtx = null; // {dataUrl, page, kind, label, body}
+
+function buildAnnotText() {
+  const tplName = $("#annot-tpl")?.value || "";
+  const note = $("#annot-input")?.value.trim() || "";
+  const tpl = getTemplates().find((t) => t.name === tplName);
+  const parts = [];
+  if (tpl) parts.push(tpl.content);
+  if (note) parts.push(`用户批注：${note}`);
+  return parts.join("\n");
+}
+
+function showAnnotPopup(ctx) {
+  annotCtx = ctx;
+  let pop = $("#annot-popup");
+  if (!pop) {
+    pop = el("div", { id: "annot-popup" });
+    document.body.append(pop);
+  }
+  pop.replaceChildren(
+    el("div", { class: "annot-title" }, `框选批注 · ${ctx.kind}${ctx.page ? ` (p.${ctx.page})` : ""}`),
+    el("select", { id: "annot-tpl" }, el("option", { value: "" }, "— 无模板，直接问 —"), ...getTemplates().map((t) => el("option", { value: t.name }, "模板: " + t.name))),
+    el("input", { id: "annot-input", type: "text", placeholder: "批注 / 追加要求（可选）" }),
+    el("div", { class: "annot-actions" },
+      el("button", { id: "annot-ask", class: "tool-btn primary", onclick: annotAsk }, "▶ 问 AI"),
+      el("button", { id: "annot-add", class: "tool-btn", onclick: annotAddToChat }, "＋ 加入对话"),
+      el("button", { id: "annot-tpl-edit", class: "icon-btn", title: "编辑模板", onclick: openTplEditor }, "⚙"),
+      el("button", { class: "icon-btn", onclick: () => pop.remove() }, "✕")
+    )
+  );
+  pop.style.display = "block";
+  // place near top-right of reader
+  const rr = $("#reader-pane").getBoundingClientRect();
+  pop.style.top = Math.max(80, rr.top + 90) + "px";
+  pop.style.left = Math.max(12, rr.right - 380) + "px";
+}
+
+async function annotAsk() {
+  if (!annotCtx) return;
+  const text = buildAnnotText() || "请解释这个选区的内容。";
+  const images = [];
+  let previewText = ($("#annot-tpl")?.value ? `【${$("#annot-tpl").value}】` : "") + ($("#annot-input")?.value.trim() ? " " + $("#annot-input").value.trim() : "") || text.slice(0, 40);
+  if (annotCtx.dataUrl) {
+    const data = annotCtx.dataUrl.split(",")[1];
+    if (data && data.length > 50) {
+      images.push({ mimeType: "image/png", data });
+      previewText += "\n[🖼 框选区域]";
+    }
+  }
+  let fullText = text;
+  if (annotCtx.body) fullText += `\n\n--- 选区内容（${annotCtx.kind}${annotCtx.page ? ` 第${annotCtx.page}页` : ""}） ---\n${annotCtx.body.slice(0, 6000)}\n--- 选区结束 ---`;
+  $("#annot-popup")?.remove();
+  // 切到会话面板视觉提示
+  import("./chat.js").then(() => {});
+  await streamPrompt(fullText, images, previewText);
+}
+
+function annotAddToChat() {
+  if (!annotCtx) return;
+  const tplName = $("#annot-tpl")?.value || "";
+  const note = $("#annot-input")?.value.trim() || "";
+  const tpl = getTemplates().find((t) => t.name === tplName);
+  if (annotCtx.dataUrl) {
+    addChip({ kind: "image", tag: "批注", body: note || tplName || annotCtx.label, dataUrl: annotCtx.dataUrl, mimeType: "image/png", page: annotCtx.page });
+  }
+  const textBits = [];
+  if (tpl) textBits.push(`【模板:${tpl.name}】${tpl.content}`);
+  if (note) textBits.push(`【批注】${note}`);
+  if (annotCtx.body) textBits.push(`【选区:${annotCtx.label}】\n${annotCtx.body.slice(0, 4000)}`);
+  if (textBits.length) addChip({ kind: "text", tag: "批注", body: textBits.join("\n"), page: annotCtx.page });
+  toast("已加入对话上下文");
+  $("#annot-popup")?.remove();
+}
+
+function openTplEditor() {
+  let back = document.getElementById("tpl-editor-backdrop");
+  if (!back) {
+    back = el("div", { id: "tpl-editor-backdrop" });
+    document.body.append(back);
+  }
+  back.hidden = false;
+  renderTplEditor(back);
+}
+
+function renderTplEditor(back) {
+  const templates = getTemplates();
+  const rows = el("div", {});
+  templates.forEach((t, i) => {
+    const name = el("input", { type: "text", value: t.name, style: { width: "120px", flex: "none" } });
+    const content = el("textarea", { rows: "2", style: { flex: "1" } });
+    content.value = t.content;
+    name.addEventListener("change", () => (templates[i].name = name.value.trim() || t.name));
+    content.addEventListener("change", () => (templates[i].content = content.value));
+    rows.append(el("div", { class: "res-row", style: { alignItems: "flex-start" } }, name, content, el("button", { class: "icon-btn", onclick: () => { templates.splice(i, 1); saveTemplates(templates); renderTplEditor(back); } }, "✕")));
+  });
+  back.replaceChildren(
+    el("div", { class: "modal" },
+      el("div", { class: "modal-head" }, el("span", {}, "提示词模板（可编辑）"), el("button", { class: "icon-btn", onclick: () => (back.hidden = true) }, "✕")),
+      el("div", { class: "modal-body" },
+        el("p", { class: "res-note" }, "模板用于框选批注：选区图片/内容 + 模板一起发给 AI。修改后立即保存到本地。"),
+        rows,
+        el("div", { style: { display: "flex", gap: "8px", marginTop: "10px" } },
+          el("button", {
+            class: "tool-btn", onclick: () => {
+              templates.push({ name: "新模板", content: "" });
+              saveTemplates(templates);
+              renderTplEditor(back);
+            }
+          }, "＋ 添加模板"),
+          el("button", {
+            class: "tool-btn", onclick: () => {
+              saveTemplates(templates);
+              toast("模板已保存");
+              back.hidden = true;
+            }
+          }, "保存")
+        )
+      )
+    )
+  );
 }
 
 // per-block translation via the self-hosted LibreTranslate service
@@ -353,8 +476,7 @@ function initBoxSelect() {
       toast("截图失败，请重试", true);
       return;
     }
-    addChip({ kind: "image", tag: "截图", body: `PDF 第${pageNum}页区域截图`, dataUrl, mimeType: "image/png", page: pageNum });
-    toast("截图已加入对话上下文");
+    showAnnotPopup({ dataUrl, page: pageNum, kind: "框选", label: `PDF 第${pageNum}页区域` });
   });
 }
 
