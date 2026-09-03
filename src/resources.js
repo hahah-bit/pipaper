@@ -137,9 +137,78 @@ function renderExtensions(body) {
 }
 
 function renderPackages(body) {
-  body.append(el("p", { class: "res-note" }, "pi 扩展包（settings.json 的 packages，全局生效，在 ~/.pi/agent/settings.json 管理）。"));
+  body.append(
+    el("p", { class: "res-note" },
+      "pi 扩展包商店：",
+      el("a", { href: "https://pi.dev/packages", target: "_blank", style: { color: "var(--accent)" } }, "pi.dev/packages"),
+      "（安装即调用本地 pi CLI）。全局安装写入 ~/.pi/agent/settings.json；项目安装通过 npm 装到本工作区，仅对绑定该项目的会话生效。")
+  );
+  // install form
+  const spec = el("input", { type: "text", placeholder: "包名，如 npm:pi-web-access 或 @scope/pkg", style: { flex: "1" } });
+  const scope = el("select", {},
+    el("option", { value: "global" }, "全局（~/.pi/agent）"),
+    el("option", { value: "project" }, "当前项目"),
+  );
+  const log = el("pre", { class: "parse-log", style: { maxHeight: "120px", marginTop: "8px", display: "none" } });
+  const btn = el("button", {
+    class: "tool-btn primary", onclick: async () => {
+      btn.disabled = true;
+      log.style.display = "block";
+      log.textContent = "安装中…";
+      try {
+        const r = await api.pkgInstall(spec.value.trim(), scope.value, state.projectId);
+        log.textContent = (r.ok ? "✓ 成功\n" : "✕ 失败\n") + (r.output || "") + (r.entries?.length ? "\n入口: \n" + r.entries.join("\n") : "");
+        if (r.ok) { spec.value = ""; loadResources(); }
+      } catch (e) {
+        log.textContent = "✕ " + e.message;
+      }
+      btn.disabled = false;
+    }
+  }, "安装");
+  body.append(el("div", { class: "res-row", style: { marginTop: "6px" } }, spec, scope, btn), log);
+
+  // global packages
+  body.append(el("div", { class: "dd-group", style: { paddingLeft: 0 } }, "全局已安装"));
   if (!resData.packages.length) body.append(el("p", { class: "res-note" }, "未安装包。"));
-  for (const p of resData.packages) body.append(el("div", { class: "res-row" }, el("span", { class: "res-name" }, p)));
+  for (const p of resData.packages) {
+    body.append(el("div", { class: "res-row" },
+      el("span", { class: "res-name" }, p),
+      el("button", {
+        class: "icon-btn", onclick: async () => {
+          if (!confirm(`移除全局包 ${p}？（执行 pi remove）`)) return;
+          const r = await api.pkgRemove(p);
+          toast(r.ok ? "已移除" : "移除失败: " + (r.output || "").slice(0, 120), !r.ok);
+          loadResources();
+        }
+      }, "移除")
+    ));
+  }
+  // project packages
+  const proj = currentProject();
+  body.append(el("div", { class: "dd-group", style: { paddingLeft: 0 } }, "当前项目已安装"));
+  const list = proj?.resources?.packages || [];
+  if (!proj) body.append(el("p", { class: "res-note" }, "未选择项目 — 选择后可把包装到项目里（仅该项目会话生效）。"));
+  else if (!list.length) body.append(el("p", { class: "res-note" }, "该项目尚未安装包。"));
+  for (const p of list) {
+    body.append(el("div", { class: "res-row" },
+      el("span", { class: "res-name" }, p),
+      el("button", {
+        class: "icon-btn", onclick: async () => {
+          const rest = list.filter((x) => x !== p);
+          proj.resources.packages = rest;
+          await api.updateProject(proj.id, { resources: { packages: rest } });
+          loadResources();
+        }
+      }, "移除")
+    ));
+  }
+}
+
+async function loadResources() {
+  try {
+    resData = await api.resources();
+  } catch {}
+  renderRes();
 }
 
 function renderMcp(body) {

@@ -62,9 +62,16 @@ function renderBlocks(paper, blocks, meta) {
     const addBtn = el("button", {
       class: "add-btn",
       title: "把该部分加入对话",
+      style: { right: "-6px" },
       onclick: (e) => { e.stopPropagation(); addBlockToChat(b, blk, paper); },
     }, "＋ 对话");
-    blk.append(addBtn);
+    const transBtn = el("button", {
+      class: "add-btn",
+      title: "翻译该段（LibreTranslate）",
+      style: { right: "58px" },
+      onclick: (e) => { e.stopPropagation(); translateBlock(blk); },
+    }, "译");
+    blk.append(addBtn, transBtn);
     switch (b.type) {
       case "heading": {
         const lv = Math.min(4, b.level || 1);
@@ -154,6 +161,32 @@ function addBlockToChat(b, blkEl, paper) {
 function stripTags(html) {
   const d = el("div", { html });
   return d.textContent || "";
+}
+
+// per-block translation via the self-hosted LibreTranslate service
+async function translateBlock(blkEl) {
+  let box = blkEl.querySelector(".trans-result");
+  if (box) {
+    box.remove();
+    return;
+  }
+  const text = blkEl.querySelector(".md-body, p, .tbl-wrap, .formula-blk")?.innerText?.trim() || blkEl.innerText.trim();
+  if (!text) return;
+  box = el("div", { class: "trans-result" }, "翻译中…");
+  blkEl.append(box);
+  try {
+    const res = await fetch("/api/translate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text.slice(0, 4500), target: "zh" }),
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
+    box.textContent = j.translated;
+    box.append(el("div", { class: "trans-meta" }, "LibreTranslate · 点击「译」收起"));
+  } catch (e) {
+    box.textContent = "翻译失败: " + e.message;
+  }
 }
 
 function renderChipsIf() { import("./app.js").then((m) => m.renderChips()); }

@@ -52,6 +52,41 @@ export function attachNaturalSize(blocks, parsedDir) {
   return blocks;
 }
 
+// ---------- MinerU content_list.json (API zip) ----------
+// Items: {type:'text'|'image'|'table'|'equation', page_idx(0-based), bbox,
+//         text, img:'images/x.jpg', table_body(html), text_level}
+export function parseContentList(cl) {
+  const flow = [];
+  const elements = [];
+  for (const it of Array.isArray(cl) ? cl : []) {
+    const page = (it.page_idx ?? 0) + 1;
+    const bbox = Array.isArray(it.bbox) ? it.bbox : null;
+    const text = String(it.text || "").trim();
+    const cap = (v) => (Array.isArray(v) ? v[0] : v) || "";
+    switch (it.type) {
+      case "text":
+      case "para":
+        if (text) {
+          if (it.text_level) flow.push({ type: "heading", level: Math.min(4, it.text_level + 0), text, page, bbox });
+          else flow.push({ type: "para", md: text, page, bbox });
+        }
+        break;
+      case "table":
+        elements.push({ type: "table", page, bbox, html: it.table_body || "", md: "", caption: cap(it.table_caption).slice(0, 300) || text.slice(0, 120) });
+        break;
+      case "image":
+        elements.push({ type: "image", page, bbox, src: it.img || it.img_path || it.image_path || "", caption: cap(it.image_caption).slice(0, 300) || text.slice(0, 120) });
+        break;
+      case "equation":
+        if (text) elements.push({ type: "formula", page, bbox, latex: text.replace(/^\$\$\s*\n?|\s*\n?\$\$$/g, "").trim() });
+        break;
+      default:
+        if (text) flow.push({ type: "para", md: text, page, bbox });
+    }
+  }
+  return { flow, elements };
+}
+
 // ---------- MinerU middle.json parsing ----------
 
 // magic-pdf / mineru middle.json: pdf_info[] -> preproc_blocks[] with bbox,

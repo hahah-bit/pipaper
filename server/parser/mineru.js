@@ -31,12 +31,13 @@ async function mineruApi(pdfPath, cfg, log) {
   const batchId = apply.data.batch_id;
   const uploadUrl = apply.data.file_urls?.[0];
   if (!uploadUrl) throw new Error("MinerU 未返回上传 URL");
+  log(`batch ${batchId}`);
 
   log(`上传 PDF (${(fs.statSync(pdfPath).size / 1e6).toFixed(1)} MB)…`);
+  // NOTE: the presigned URL is content-type sensitive — send the bare body
   const upRes = await fetch(uploadUrl, {
     method: "PUT",
     body: new Uint8Array(fs.readFileSync(pdfPath)),
-    headers: { "Content-Type": "application/octet-stream" },
   });
   if (!upRes.ok) throw new Error("PDF 上传失败: HTTP " + upRes.status);
 
@@ -44,37 +45,43 @@ async function mineruApi(pdfPath, cfg, log) {
   const started = Date.now();
   for (;;) {
     await sleep(5000);
-    const st = await fetch(`${base}/api/v4/extract-results/batch`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ batch_id: batchId }),
+    const st = await fetch(`${base}/api/v4/extract-results/batch/${batchId}`, {
+      headers: { Authorization: `Bearer ${token}` },
     });
+    if (!st.ok) {
+      if (Date.now() - started > 15 * 60 * 1000) throw new Error("MinerU 解析超时（15 分钟）");
+      log(`查询 ${st.status}，继续等待…`);
+      continue;
+    }
     const sj = await st.json();
     const r = sj.data?.extract_result?.[0];
-    if (!r) throw new Error("MinerU 查询失败: " + JSON.stringify(sj.msg || sj));
+    if (!r) throw new Error("MinerU 查询失败: " + JSON.stringify(sj.msg || sj).slice(0, 200));
     if (r.state === "done" && r.full_zip_url) {
       log("解析完成，下载结果包…");
       const zipRes = await fetch(r.full_zip_url);
       const zip = new AdmZip(Buffer.from(await zipRes.arrayBuffer()));
       let md = null;
       let middleJson = null;
+      let contentList = null;
       const assets = new Map();
       for (const e of zip.getEntries()) {
         if (e.isDirectory) continue;
         const entryName = e.entryName.split("/").pop();
         if (/\.md$/i.test(entryName) && !md) md = e.getData().toString("utf8");
-        else if (/middle.*\.json$/i.test(entryName) || /^layout\.json$/i.test(entryName)) {
+        else if (/content_list(_v2)?\.json$/i.test(entryName) && !/content_list_v2/.test(entryName)) contentList = JSON.parse(e.getData().toString("utf8"));
+        else if (/content_list(_v2)?\.json$/i.test(entryName) && !contentList) contentList = JSON.parse(e.getData().toString("utf8"));
+        else if (/middle.*\.json$/i.test(entryName)) {
           try {
             middleJson = JSON.parse(e.getData().toString("utf8"));
           } catch {}
         } else if (/\.(png|jpe?g|gif|svg|webp)$/i.test(entryName)) assets.set(entryName, e.getData());
       }
       if (!md) throw new Error("MinerU 结果包中没有 markdown");
-      return { md, assets, middleJson };
+      return { md, assets, middleJson, contentList };
     }
     if (r.state === "failed") throw new Error("MinerU 解析失败: " + (r.err_msg || ""));
     if (Date.now() - started > 15 * 60 * 1000) throw new Error("MinerU 解析超时（15 分钟）");
-    log(`解析中… ${Math.round((Date.now() - started) / 1000)}s`);
+    log(`解析中… ${Math.round((Date.now() - started) / 1000)}s（${r.state}）`);
   }
 }
 

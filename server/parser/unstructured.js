@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 
 // unstructured.io engine: same payload shape for the hosted API and a local
 // unstructured-api container (POST /general/v0/general).
@@ -35,8 +36,8 @@ export async function parseUnstructured(pdfPath, cfg, log = () => {}) {
   fd.append("strategy", "hi_res");
   fd.append("coordinates", "true");
   fd.append("include_page_breaks", "true");
+  fd.append("include_image_base64", "true");
   fd.append("output_formats", JSON.stringify(["json"]));
-  fd.append("parameters", JSON.stringify({ include_image_base64: true }));
   if (apiKey) fd.append("unstructured_api_key", apiKey);
 
   const res = await fetch(`${base}/general/v0/general`, { method: "POST", body: fd });
@@ -59,28 +60,37 @@ export function mapElements(elements) {
     const meta = el.metadata || {};
     const page = meta.page_number;
     const pageField = page != null ? { page } : {};
+    // coordinates: {points: [[x,y]x4], layout_width, layout_height} -> bbox
+    let bbox;
+    const pts = meta.coordinates?.points;
+    if (Array.isArray(pts) && pts.length) {
+      const xs = pts.map((p) => p[0]);
+      const ys = pts.map((p) => p[1]);
+      bbox = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map((v) => Math.round(v));
+    }
+    const bboxField = bbox ? { bbox } : {};
     if (kind === "heading") {
       const lvl = Math.min(4, (el.metadata?.category_depth || 0) + 1) || 1;
-      if (el.text) blocks.push({ type: "heading", level: lvl, text: el.text, ...pageField });
+      if (el.text) blocks.push({ type: "heading", level: lvl, text: el.text, ...pageField, ...bboxField });
       continue;
     }
     if (kind === "table") {
       const html = el.metadata?.text_as_html || "";
-      blocks.push({ type: "table", md: el.text || "", html, ...pageField });
+      blocks.push({ type: "table", md: el.text || "", html, ...pageField, ...bboxField });
       continue;
     }
     if (kind === "image") {
       const b64 = meta.image_base64;
       if (b64) {
         imgN++;
-        blocks.push({ type: "image", src: `__IMG__${imgN}__`, b64, caption: el.text || "", ...pageField });
+        blocks.push({ type: "image", src: `__IMG__${imgN}__`, b64, caption: el.text || "", ...pageField, ...bboxField });
       } else if (el.text) {
         blocks.push({ type: "para", md: el.text, ...pageField });
       }
       continue;
     }
     if (kind === "formula") {
-      if (el.text) blocks.push({ type: "formula", latex: el.text.replace(/^\$\$?|\$\$?$/g, "").trim(), ...pageField });
+      if (el.text) blocks.push({ type: "formula", latex: el.text.replace(/^\$\$?|\$\$?$/g, "").trim(), ...pageField, ...bboxField });
       continue;
     }
     if (kind === "caption") {
@@ -91,7 +101,7 @@ export function mapElements(elements) {
       }
       continue;
     }
-    if (el.text) blocks.push({ type: "para", md: el.text, ...pageField });
+    if (el.text) blocks.push({ type: "para", md: el.text, ...pageField, ...bboxField });
   }
   return blocks;
 }

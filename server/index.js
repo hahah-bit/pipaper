@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { APP_ROOT, PUBLIC_DIR, DATA_DIR, getConfig, saveConfig, redactedConfig } from "./config.js";
 import { listPapers, getPaper, importPdfFile, mergeZoteroSnapshot, getPapers, getParseState, readBlocks, allSessionMeta, listProjects, createProject, updateProject, deleteProject, parsedDir, attachHash, flushHashCache, fileHash, findByHash } from "./store.js";
@@ -421,6 +422,113 @@ api.get("/pi/resources", async (_req, res) => {
 api.get("/projects/resources/:id", (req, res) => {
   const p = listProjects().find((x) => x.id === req.params.id);
   res.json(p?.resources || {});
+});
+
+// ---- package management: pi install/remove + per-project npm packages ----
+
+const PKG_NPM_DIR = path.join(DATA_DIR, "npm");
+
+function runCmd(cmd, args, { timeoutMs = 10 * 60 * 1000 } = {}) {
+  return new Promise((resolve) => {
+    const p = spawn(cmd, args, { shell: true, cwd: APP_ROOT, env: process.env });
+    let out = "";
+    const t = setTimeout(() => {
+      out += "\n[超时]";
+      p.kill();
+    }, timeoutMs);
+    p.stdout.on("data", (d) => (out += d));
+    p.stderr.on("data", (d) => (out += d));
+    p.on("error", (e) => {
+      clearTimeout(t);
+      resolve({ code: -1, output: out + String(e) });
+    });
+    p.on("exit", (code) => {
+      clearTimeout(t);
+      resolve({ code, output: out.slice(-4000) });
+    });
+  });
+}
+
+// resolve pi extension entry files from an installed npm package
+function resolvePiEntries(pkgDir) {
+  const entries = [];
+  let manifest = null;
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
+  } catch {
+    return entries;
+  }
+  let declared = manifest?.pi?.extensions;
+  if (!declared && fs.existsSync(path.join(pkgDir, "extensions"))) declared = ["./extensions"];
+  for (const rel of declared || []) {
+    const full = path.resolve(pkgDir, rel);
+    if (fs.existsSync(full) && fs.statSync(full).isDirectory()) {
+      for (const f of fs.readdirSync(full)) {
+        if (/\.(ts|js|mjs)$/i.test(f)) entries.push(path.join(full, f));
+      }
+    } else if (fs.existsSync(full)) {
+      entries.push(full);
+    }
+  }
+  return entries;
+}
+
+api.post("/pi/packages/install", async (req, res) => {
+  const { spec, scope, projectId } = req.body || {};
+  const s = String(spec || "").trim();
+  if (!s) return res.status(400).json({ error: "请填写包名（如 npm:pi-web-access）" });
+  if (scope === "global") {
+    const r = await runCmd("pi", ["install", s]);
+    return res.json({ ok: r.code === 0, output: r.output, scope });
+  }
+  // project scope: npm install into our managed prefix, wire entry paths into
+  // the project's resources.extensions (per-project ResourceLoader picks them up)
+  if (!projectId) return res.status(400).json({ error: "未选择项目" });
+  const npmName = s.replace(/^npm:/, "");
+  if (!/^(@[\w.-]+\/)?[\w.-]+(@[\w.^~*-]*)?$/.test(npmName)) {
+    return res.status(400).json({ error: "项目级安装仅支持 npm 包名（git/URL 请用全局安装）" });
+  }
+  fs.mkdirSync(PKG_NPM_DIR, { recursive: true });
+  const r = await runCmd("npm", ["install", npmName, "--prefix", PKG_NPM_DIR, "--no-audit", "--no-fund"], { timeoutMs: 15 * 60 * 1000 });
+  if (r.code !== 0) return res.json({ ok: false, output: r.output, scope });
+  const pkgName = npmName.split("@")[0] && npmName.startsWith("@") ? npmName : npmName.replace(/@[^@]*$/, "");
+  const pkgDir = path.join(PKG_NPM_DIR, "node_modules", ...(npmName.startsWith("@") ? npmName.split("/") : [npmName]));
+  const entries = resolvePiEntries(pkgDir);
+  if (!entries.length) return res.json({ ok: false, output: "包内未找到 pi 扩展入口（package.json 的 pi.extensions 或 extensions/ 目录）" });
+  const proj = updateProject(projectId, {
+    resources: {
+      extensions: [...new Set([...(listProjects().find((x) => x.id === projectId)?.resources?.extensions || []), ...entries])],
+      packages: [...new Set([...(listProjects().find((x) => x.id === projectId)?.resources?.packages || []), s])],
+    },
+  });
+  res.json({ ok: true, output: r.output, scope, entries, project: proj });
+});
+
+api.post("/pi/packages/remove-global", async (req, res) => {
+  const spec = String(req.body?.spec || "").trim();
+  if (!spec) return res.status(400).json({ error: "缺少包名" });
+  const r = await runCmd("pi", ["remove", spec]);
+  res.json({ ok: r.code === 0, output: r.output });
+});
+
+// ---- translation (LibreTranslate from our docker stack) ----
+api.post("/translate", async (req, res) => {
+  const { text, target = "zh", source = "auto" } = req.body || {};
+  if (!text?.trim()) return res.status(400).json({ error: "空文本" });
+  const url = getConfig().translate?.url || "http://localhost:5001";
+  try {
+    const r = await fetch(`${url}/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q: String(text).slice(0, 5000), source, target, format: "text" }),
+      signal: AbortSignal.timeout(60000),
+    });
+    const j = await r.json();
+    if (!r.ok) return res.status(502).json({ error: j.error || `HTTP ${r.status}` });
+    res.json({ translated: j.translatedText, detected: j.detectedLanguage });
+  } catch (e) {
+    res.status(502).json({ error: "翻译服务不可用（docker compose up -d 启动 libretranslate）：" + String(e.message || e).slice(0, 160) });
+  }
 });
 
 app.use("/api", api);

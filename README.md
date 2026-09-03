@@ -58,6 +58,22 @@ npm start          # 直接启动（端口见 data/config.json，默认 4318）
 - **论文域工具**：`read_paper`（outline/section/search/full）、`list_library`、`search_library`、`get_paper_pages`（渲染论文页给视觉模型看）
 - **思考过程**：ZCode 式一行显示——思考中单行滚动尾部内容，输出后折叠为「✻ 已深度思考 Ns ▸」，点击展开
 
+## 自托管服务（docker compose）
+
+`docker-compose.yml` 统一管理自托管服务，后续新增服务都写进这一份：
+
+```bash
+docker compose up -d      # 启动 unstructured + libretranslate
+docker compose ps         # 状态
+```
+
+- **unstructured-api**（quay.io 官方镜像，自带 Poppler/Tesseract/模型）→ `http://localhost:8000`；设置里 unstructured 模式选「本地服务」即可
+- **libretranslate**（开源翻译，中英模型）→ `http://localhost:5001`；阅读器中每段悬停「译」按钮即时翻译
+
+## 插件 / 技能管理
+
+侧边栏 🧩 打开资源管理：Skills（项目级勾选）、扩展（项目级路径）、Packages（带 [pi.dev/packages](https://pi.dev/packages) 商店链接；填包名可全局 `pi install` 或装到当前项目，项目级经 npm 安装后自动接线到该项目会话）、MCP（pi 不内置，只读扫描说明）。
+
 ## 目录
 
 ```

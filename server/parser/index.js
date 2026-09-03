@@ -7,7 +7,7 @@ import { parseMineru } from "./mineru.js";
 import { parseUnstructured } from "./unstructured.js";
 import { parseFallbackText } from "./fallback.js";
 import { extractFigureElements, cropFigure } from "./elements-fallback.js";
-import { parseMiddleJson, attachPositions, mergeBlocks, attachNaturalSize } from "./merge.js";
+import { parseMiddleJson, parseContentList, attachPositions, mergeBlocks, attachNaturalSize } from "./merge.js";
 
 // Two-layer parse pipeline. The intermediate representation (blocks.json v2)
 // is a page-anchored stream of content blocks:
@@ -74,7 +74,7 @@ function assetSaver(paperId, used = new Set()) {
 // ---------------- engines: return {flow, elements} ----------------
 
 async function runMineru(paper, log) {
-  const { md, assets, middleJson } = await parseMineru(paper.pdfPath, getConfig().parse.mineru, log);
+  const { md, assets, middleJson, contentList } = await parseMineru(paper.pdfPath, getConfig().parse.mineru, log);
   const saveAsset = assetSaver(paper.id);
   const flow = mdToBlocks(md, { assetMap: {} });
   // rewrite asset paths in md blocks (md references images/<name>)
@@ -88,33 +88,34 @@ async function runMineru(paper, log) {
     }
   }
   let elements = [];
-  if (middleJson) {
+  let posFlow = null;
+  if (contentList) {
+    log("发现 content_list：启用第二层定位（块级坐标 + 元素插回）…");
+    const parsed = parseContentList(contentList);
+    posFlow = parsed.flow;
+    elements = parsed.elements;
+  } else if (middleJson) {
     log("发现 middle.json：启用第二层定位（块级坐标 + 元素插回）…");
-    const { flow: posFlow, elements: els } = parseMiddleJson(middleJson);
+    const parsed = parseMiddleJson(middleJson);
+    posFlow = parsed.flow;
+    elements = parsed.elements;
+  }
+  if (posFlow) {
     attachPositions(flow, posFlow);
-    // positioned elements reference images/<name> — save + rewrite src
-    for (const e of els) {
+    // save positioned element images into assets and rewrite src
+    for (const e of elements) {
       if (e.type === "image" && e.src) {
         const base = String(e.src).split("/").pop();
         if (assets.has(base)) e.src = saveAsset(base, assets.get(base));
-        else e.src = saveAsset(base); // file already on disk? try plain name
+        else e.src = saveAsset(base);
       }
     }
-    elements = els;
-    // drop md-layer image/table blocks that duplicate positioned elements
-    const dupSet = new Set(elements.map((e) => e.page + ":" + (e.bbox || []).join(",")));
-    const flowFiltered = flow.filter((b) => {
-      if (b.type === "image" || b.type === "table") {
-        // keep md version only if no positioned element on the same page overlaps
-        const overlap = elements.some((e) => e.page === b.page && e.bbox && b.bbox && rectsOverlap(e.bbox, b.bbox, 5));
-        return !overlap;
-      }
-      return true;
-    });
+    // the element layer supersedes the md layer for figures/tables/display
+    // formulas — drop those from the md flow to avoid duplicates
+    const flowFiltered = flow.filter((b) => !(b.type === "image" || b.type === "table" || b.type === "formula"));
     return { flow: flowFiltered, elements };
   }
-  log("无 middle.json（API 包未含定位信息）：按 md 内嵌元素单层输出");
-  // md already carries inline images/tables/formulas — treat as merged stream
+  log("无定位信息（API 包未含 content_list/middle）：按 md 内嵌元素单层输出");
   return { flow, elements: [], inline: true };
 }
 

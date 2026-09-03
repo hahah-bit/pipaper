@@ -1,0 +1,36 @@
+# PiPaper 自托管服务栈 —— 后续新增服务都写进这一份 compose
+#
+#   unstructured.io  : 元素级 PDF 解析（hi_res 策略，含表格 HTML / 图片 base64 / 坐标）
+#                      镜像自带 Poppler + Tesseract + 模型，无需本机装依赖
+#                      参考实现: E:\learn\rag\ragprojectgithub\rag-for-beginners (learn/8_multimodal_pdf_ingestion_review.py)
+#   libretranslate   : 开源翻译服务（默认端口 5000 映射到宿主机 5001，避开常用占用）
+#
+#   启动:  docker compose up -d
+#   状态:  docker compose ps
+#   日志:  docker compose logs -f unstructured
+
+services:
+  unstructured:
+    image: quay.io/unstructured-io/unstructured-api:latest
+    container_name: pipaper-unstructured
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    container_name: pipaper-libretranslate
+    ports:
+      - "5001:5000"
+    environment:
+      # 首次启动自动下载语言模型；如只需中英可加 --load-only zh,en
+      LT_LOAD_ONLY: "zh,en"
+      LT_UPDATE_MODELS: "true"
+    command: --load-only zh,en
+    restart: unless-stopped

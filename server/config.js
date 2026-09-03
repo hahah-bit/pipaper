@@ -21,6 +21,7 @@ const DEFAULTS = {
     mineru: { mode: "off", token: "", cmd: "mineru", apiBase: "https://mineru.net" },
     unstructured: { mode: "off", apiKey: "", url: "https://api.unstructured.io" },
   },
+  translate: { url: "http://localhost:5001" },
   chat: { thinkingLevel: "high" },
 };
 
