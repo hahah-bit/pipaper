@@ -1,4 +1,5 @@
 import { api, state, $, el, toast, updateZoteroFoot } from "./app.js";
+import { refreshSessions } from "./chat.js";
 
 let activeCollection = null; // collection id or null = all
 let searchQ = "";
@@ -23,6 +24,21 @@ export function initSidebar() {
       }
     }
   });
+  // project controls
+  $("#btn-new-project").addEventListener("click", async () => {
+    const name = prompt("项目名称：");
+    if (!name?.trim()) return;
+    try {
+      const p = await api.createProject(name.trim());
+      state.projects.push(p);
+      state.projectId = p.id;
+      renderProjects();
+      renderPapers();
+      toast(`项目「${p.name}」已创建`);
+    } catch (e) {
+      toast("创建失败: " + e.message, true);
+    }
+  });
 }
 
 export async function loadPapers(refresh = false) {
@@ -36,8 +52,45 @@ export async function loadPapers(refresh = false) {
 export async function reloadPapers(refresh = false) {
   await loadPapers(refresh);
   renderCollections();
+  renderProjects();
   renderPapers();
   updateZoteroFoot();
+}
+
+// ---- projects ----
+
+export function renderProjects() {
+  const sel = $("#project-select");
+  if (!sel) return;
+  sel.replaceChildren();
+  sel.append(el("option", { value: "" }, "会话分组：全部"));
+  for (const p of state.projects) {
+    sel.append(el("option", { value: p.id }, `项目：${p.name} (${p.paperIds.length}篇)`));
+  }
+  sel.value = state.projectId || "";
+}
+
+export async function switchProject(id) {
+  state.projectId = id || null;
+  renderProjects();
+  renderPapers();
+  // refresh session list so dropdown regroups
+  const { refreshSessions } = await import("./chat.js");
+  await refreshSessions();
+}
+
+async function togglePaperInProject(paperId) {
+  if (!state.projectId) return toast("先在顶部选择或新建一个项目", true);
+  try {
+    const p = state.projects.find((x) => x.id === state.projectId);
+    const has = p.paperIds.includes(paperId);
+    await api.updateProject(state.projectId, has ? { removePaper: paperId } : { addPaper: paperId });
+    has ? p.paperIds = p.paperIds.filter((x) => x !== paperId) : p.paperIds.push(paperId);
+    renderPapers();
+    toast(has ? "已从项目移除" : "已加入项目");
+  } catch (e) {
+    toast("操作失败: " + e.message, true);
+  }
 }
 
 export function renderCollections() {
@@ -73,8 +126,11 @@ function collectionName(id) {
 export function renderPapers() {
   const wrap = $("#paper-list");
   wrap.replaceChildren();
+  const proj = state.projects.find((x) => x.id === state.projectId);
   let list = state.papers;
-  if (activeCollection != null) {
+  if (proj) {
+    list = list.filter((p) => proj.paperIds.includes(p.id));
+  } else if (activeCollection != null) {
     list = list.filter((p) => (p.collectionIds || []).includes(activeCollection));
   }
   if (searchQ) {
@@ -85,19 +141,26 @@ export function renderPapers() {
   }
   list = [...list].sort((a, b) => String(b.added || "").localeCompare(String(a.added || "")));
   if (!list.length) {
-    wrap.append(el("div", { style: { color: "var(--fg2)", fontSize: "13px", padding: "12px 8px" } }, "没有论文 — 导入 PDF 或同步 Zotero"));
+    wrap.append(el("div", { style: { color: "var(--fg2)", fontSize: "13px", padding: "12px 8px" } },
+      proj ? "项目里还没有论文 — 在「全部」里点击论文条目上的 📁 加入" : "没有论文 — 导入 PDF 或同步 Zotero"));
     return;
   }
   for (const p of list) {
     const status = p.parse?.status || "none";
     const authors = (p.creators || []).slice(0, 2).join(", ");
+    const inProject = proj?.paperIds.includes(p.id);
     const item = el(
       "div",
       { class: "paper-item" + (state.currentPaper?.id === p.id ? " active" : ""), onclick: () => selectPaper(p) },
       el("div", { class: "t" }, p.title || "(无标题)"),
       el("div", { class: "m" },
         el("span", { class: "dot " + status, title: "解析状态: " + status }),
-        el("span", {}, [authors, p.year, p.source === "zotero" ? collectionName((p.collectionIds || [])[0]) || "Zotero" : "本地导入"].filter(Boolean).join(" · "))
+        el("span", { class: "m-text" }, [authors, p.year, p.source === "zotero" ? collectionName((p.collectionIds || [])[0]) || "Zotero" : "本地导入"].filter(Boolean).join(" · ")),
+        el("button", {
+          class: "p-proj" + (inProject ? " in" : ""),
+          title: proj ? (inProject ? "从项目中移除" : "加入当前项目") : "加入项目（先在顶部选择项目）",
+          onclick: (e) => { e.stopPropagation(); togglePaperInProject(p.id); },
+        }, inProject ? "✓" : "📁")
       )
     );
     wrap.append(item);

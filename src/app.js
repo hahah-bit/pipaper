@@ -3,8 +3,8 @@ import "./sidebar.js";
 import "./chat.js";
 import "./reader.js";
 import { initSettings } from "./settings.js";
-import { initSidebar, renderPapers, renderCollections } from "./sidebar.js";
-import { initChat, refreshSessions } from "./chat.js";
+import { initSidebar, renderPapers, renderCollections, renderProjects } from "./sidebar.js";
+import { initChat, refreshSessions, loadCommands } from "./chat.js";
 import { initReader } from "./reader.js";
 
 export const state = {
@@ -18,6 +18,8 @@ export const state = {
   model: null,              // {provider,id} active for current session
   chips: [],                // context chips: {kind:'text'|'image'|'block', tag, body, dataUrl?, mimeType?, page?}
   streaming: false,
+  projects: [],             // [{id,name,paperIds}]
+  projectId: null,          // active project (null = 全部)
 };
 
 // ---------------- api ----------------
@@ -49,11 +51,19 @@ export const api = {
   parse: (id, engine) => jfetch(`/api/papers/${id}/parse`, { method: "POST", body: { engine } }),
   job: (id) => jfetch(`/api/jobs/${id}`),
   models: () => jfetch("/api/models"),
+  commands: () => jfetch("/api/pi/commands"),
+  files: (q) => jfetch("/api/files?q=" + encodeURIComponent(q || "")),
+  file: (path) => jfetch("/api/file?path=" + encodeURIComponent(path)),
+  projects: () => jfetch("/api/projects"),
+  createProject: (name) => jfetch("/api/projects", { method: "POST", body: { name } }),
+  updateProject: (id, body) => jfetch(`/api/projects/${id}`, { method: "PUT", body }),
+  deleteProject: (id) => jfetch(`/api/projects/${id}`, { method: "DELETE" }),
   sessions: () => jfetch("/api/sessions"),
-  createSession: (paperId, title) => jfetch("/api/sessions", { method: "POST", body: { paperId, title } }),
+  createSession: (paperId, projectId, title) => jfetch("/api/sessions", { method: "POST", body: { paperId, projectId, title } }),
   history: (id) => jfetch(`/api/sessions/${id}`),
   delSession: (id) => jfetch(`/api/sessions/${id}`, { method: "DELETE" }),
   setModel: (id, body) => jfetch(`/api/sessions/${id}/model`, { method: "POST", body }),
+  compact: (id) => jfetch(`/api/sessions/${id}/compact`, { method: "POST", body: {} }),
   abort: (id) => jfetch(`/api/sessions/${id}/abort`, { method: "POST" }),
 };
 
@@ -127,14 +137,17 @@ async function boot() {
   initReader();
   initSettings();
   try {
-    const [paperData, models] = await Promise.all([api.papers(), api.models()]);
+    const [paperData, models, projects] = await Promise.all([api.papers(), api.models(), api.projects()]);
     state.papers = paperData.papers;
     state.collections = paperData.collections;
     state.zotero = paperData.zotero;
     state.models = models;
+    state.projects = projects.projects || [];
     renderPapers();
     renderCollections();
+    renderProjects();
     updateZoteroFoot();
+    await loadCommands();
     await refreshSessions();
     if (!state.sessionId) {
       // show welcome state; session is created on first message

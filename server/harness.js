@@ -81,6 +81,29 @@ export async function modelList() {
   };
 }
 
+// Slash commands: pi prompt templates (global/project .md), pi skills, and
+// app built-ins. All pass through session.prompt() which expands them natively.
+export async function listCommands() {
+  await ensureInit();
+  const out = { prompts: [], skills: [] };
+  try {
+    const pr = sharedLoader.getPrompts();
+    for (const p of pr.prompts || []) out.prompts.push({ name: p.name, description: p.description || "", source: p.source || "" });
+  } catch {}
+  try {
+    const sk = sharedLoader.getSkills();
+    for (const s of sk.skills || []) out.skills.push({ name: s.name, description: s.description || "", source: s.source || "" });
+  } catch {}
+  return out;
+}
+
+export async function compactSession(sessionId, customInstructions) {
+  const c = chat(sessionId);
+  if (c.busy) throw new Error("会话正在回复中，稍后再压缩");
+  const r = await c.session.compact(customInstructions);
+  return { ok: true, summary: String(r?.summary || "").slice(0, 400) };
+}
+
 // ---------------- agent tools (paper domain) ----------------
 
 function clamp(s, n) {
@@ -200,12 +223,49 @@ function buildPaperTools(idHolder) {
     },
   });
 
-  return [list_library, search_library, read_paper];
+  const get_paper_pages = defineTool({
+    name: "get_paper_pages",
+    label: "论文页面截图",
+    description:
+      "把论文的若干页渲染成图片供视觉查看（看图表/排版/公式的原始样子）。pages 用页码如 \"3\" 或 \"3-4\"（最多 4 页）。不带 paper_id 时读当前论文。",
+    parameters: Type.Object({
+      paper_id: Type.Optional(Type.String()),
+      pages: Type.String({ description: '页码范围，例如 "3" 或 "3-4"' }),
+    }),
+    execute: async (_id, { paper_id, pages }) => {
+      const paper = paper_id ? getPaper(paper_id) : currentPaper();
+      if (!paper) return { content: [{ type: "text", text: "未找到论文，请确认 paper_id 或让用户选择论文。" }], details: {} };
+      if (!paper.pdfPath || !fs.existsSync(paper.pdfPath)) return { content: [{ type: "text", text: "该论文没有 PDF 文件。" }], details: {} };
+      const m = String(pages || "").match(/(\d+)\s*(?:-\s*(\d+))?/);
+      if (!m) return { content: [{ type: "text", text: 'pages 参数格式如 "3" 或 "3-4"。' }], details: {} };
+      let p1 = Number(m[1]);
+      let p2 = m[2] ? Number(m[2]) : p1;
+      p2 = Math.min(p2, p1 + 3);
+      const { renderPage, openDocument, closeDocument } = await import("./parser/render.js");
+      const doc = await openDocument(paper.pdfPath);
+      const content = [{ type: "text", text: `《${paper.title}》第 ${p1}-${p2} 页截图：` }];
+      try {
+        for (let p = p1; p <= Math.min(p2, doc.numPages); p++) {
+          const r = await renderPage(doc, p, 1.6);
+          const png = r.toPngBuffer();
+          r.cleanup();
+          content.push({ type: "image", mimeType: "image/png", data: png.toString("base64") });
+        }
+      } catch (e) {
+        content.push({ type: "text", text: `(渲染失败: ${e.message})` });
+      } finally {
+        closeDocument(doc);
+      }
+      return { content, details: {} };
+    },
+  });
+
+  return [list_library, search_library, read_paper, get_paper_pages];
 }
 
 // ---------------- session lifecycle ----------------
 
-const PAPER_TOOL_NAMES = ["list_library", "search_library", "read_paper"];
+const PAPER_TOOL_NAMES = ["list_library", "search_library", "read_paper", "get_paper_pages"];
 
 function makeSessionOpts(sm, idHolder) {
   return {
@@ -220,12 +280,12 @@ function makeSessionOpts(sm, idHolder) {
   };
 }
 
-async function newChat({ paperId } = {}) {
+async function newChat({ paperId, projectId } = {}) {
   await ensureInit();
   const idHolder = { id: null };
   const { session } = await createAgentSession(makeSessionOpts(SessionManager.create(APP_ROOT), idHolder));
   idHolder.id = session.sessionId;
-  if (paperId) setSessionMeta(idHolder.id, { paperId });
+  setSessionMeta(idHolder.id, { paperId: paperId || null, projectId: projectId || null });
   chats.set(idHolder.id, { session, busy: false });
   return session;
 }
@@ -313,6 +373,7 @@ export async function listSessions() {
       path: info.path,
       title: meta.title || (info.firstMessage || "").slice(0, 60) || "(空会话)",
       paperId: meta.paperId || null,
+      projectId: meta.projectId || null,
       createdAt: meta.createdAt,
       updatedAt: mtime,
       messageCount: info.messageCount,
@@ -322,10 +383,10 @@ export async function listSessions() {
   return out;
 }
 
-export async function createChat({ paperId, title } = {}) {
-  const session = await newChat({ paperId });
+export async function createChat({ paperId, projectId, title } = {}) {
+  const session = await newChat({ paperId, projectId });
   const id = session.sessionId;
-  setSessionMeta(id, { paperId: paperId || null, title: title || null });
+  setSessionMeta(id, { paperId: paperId || null, projectId: projectId || null, title: title || null });
   return { id, model: session.model ? { provider: session.model.provider, id: session.model.id } : null };
 }
 
@@ -370,11 +431,11 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
-export async function promptChat(sessionId, { text, images = [], paperId }, send) {
+export async function promptChat(sessionId, { text, images = [], paperId, projectId }, send) {
   const c = chats.has(sessionId) ? chats.get(sessionId) : { session: await openChat(sessionId), busy: false };
   if (c.busy) throw new Error("该会话正在回复中，请稍候或另开会话");
   c.busy = true;
-  if (paperId) setSessionMeta(sessionId, { paperId });
+  if (paperId || projectId) setSessionMeta(sessionId, { ...(paperId ? { paperId } : {}), ...(projectId ? { projectId } : {}) });
   if (!sessionMeta(sessionId)?.title && text) setSessionMeta(sessionId, { title: text.slice(0, 60) });
   setSessionMeta(sessionId, { updatedAt: new Date().toISOString() });
 

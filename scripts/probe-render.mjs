@@ -1,0 +1,21 @@
+import * as napi from "@napi-rs/canvas";
+globalThis.Path2D = napi.Path2D;
+globalThis.ImageData = napi.ImageData;
+globalThis.DOMMatrix = napi.DOMMatrix;
+globalThis.Image = napi.Image;
+const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const data = new Uint8Array(fs.readFileSync("library/DynamoLLM - Energy-adaptive LLM Serving (Stojkovic et al., 2024).pdf"));
+const fontsUrl = pathToFileURL(path.join(process.cwd(), "node_modules", "pdfjs-dist", "standard_fonts") + path.sep).href;
+const doc = await pdfjs.getDocument({ data, useSystemFonts: true, isEvalSupported: false, standardFontDataUrl: fontsUrl }).promise;
+const page = await doc.getPage(1);
+const vp = page.getViewport({ scale: 1.5 });
+const canvas = napi.createCanvas(Math.ceil(vp.width), Math.ceil(vp.height));
+const ctx = canvas.getContext("2d");
+ctx.fillStyle = "#fff";
+ctx.fillRect(0, 0, canvas.width, canvas.height);
+await page.render({ canvasContext: ctx, viewport: vp }).promise;
+console.log("rendered:", canvas.width, "x", canvas.height, "png KB:", Math.round(canvas.toBuffer("image/png").length / 1024));

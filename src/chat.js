@@ -1,7 +1,7 @@
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import renderMathInElement from "katex/contrib/auto-render";
-import { api, state, $, el, toast, renderWelcome, renderChips } from "./app.js";
+import { api, state, $, el, toast, renderWelcome, renderChips, addChip } from "./app.js";
 
 let sendAbortController = null;
 let autoScroll = true;
@@ -40,7 +40,7 @@ export async function refreshSessions(keepCurrent = true) {
 
 async function createSession() {
   try {
-    const r = await api.createSession(state.currentPaper?.id || null);
+    const r = await api.createSession(state.currentPaper?.id || null, state.projectId || null);
     state.sessionId = r.id;
     state.model = r.model;
     await refreshSessions();
@@ -79,6 +79,7 @@ export async function openSession(id) {
           else if (p.type === "toolCall") addToolCard(node, p.id, p.name, p.args);
         }
         flushAssistant(node, textAcc, thinkingAcc, false);
+        collapseThinking(node);
         addMeta(node, m.usage, m.model);
         if (m.error) markError(node, m.error);
       } else if (m.role === "toolResult") {
@@ -101,16 +102,28 @@ function renderSessionMenu() {
     el("div", {
       class: "dd-item dd-new",
       onclick: () => { menu.classList.remove("open"); createSession(); },
-    }, "＋ 新会话（绑定当前论文）")
+    }, "＋ 新会话" + (state.projectId ? "（当前项目）" : "（绑定当前论文）"))
   );
-  for (const s of state.sessions) {
-    menu.append(
-      el("div", { class: "dd-item", onclick: () => { menu.classList.remove("open"); openSession(s.id); } },
-        el("div", { class: "t" }, s.title || "(未命名会话)"),
-        el("div", { class: "s" }, [s.paperId ? (state.papers.find((p) => p.id === s.paperId)?.title || s.paperId) : "未绑定论文", s.updatedAt ? new Date(s.updatedAt).toLocaleString() : ""].join(" · "))
-      )
-    );
+  const proj = state.projects.find((p) => p.id === state.projectId);
+  const inProject = state.sessions.filter((s) => state.projectId && s.projectId === state.projectId);
+  const others = state.sessions.filter((s) => !state.projectId || s.projectId !== state.projectId);
+  if (state.projectId && inProject.length) {
+    menu.append(el("div", { class: "dd-group" }, `项目「${proj?.name || ""}」`));
+    for (const s of inProject) menu.append(sessionRow(s, menu));
   }
+  if (others.length) {
+    menu.append(el("div", { class: "dd-group" }, inProject.length || state.projectId ? "其他会话" : ""));
+    for (const s of others) menu.append(sessionRow(s, menu));
+  }
+  if (!state.sessions.length) menu.append(el("div", { class: "dd-item", style: { color: "var(--fg2)" } }, "暂无会话"));
+}
+
+function sessionRow(s, menu) {
+  const projName = s.projectId ? (state.projects.find((p) => p.id === s.projectId)?.name || "") : "";
+  return el("div", { class: "dd-item", onclick: () => { menu.classList.remove("open"); openSession(s.id); } },
+    el("div", { class: "t" }, (projName ? `[${projName}] ` : "") + (s.title || "(未命名会话)")),
+    el("div", { class: "s" }, [s.paperId ? (state.papers.find((p) => p.id === s.paperId)?.title || s.paperId) : "未绑定论文", s.updatedAt ? new Date(s.updatedAt).toLocaleString() : ""].join(" · "))
+  );
 }
 
 // ---------------- message rendering ----------------
@@ -118,7 +131,14 @@ function assistantSkeleton() {
   const mdDiv = el("div", { class: "md-body" });
   const bubble = el("div", { class: "bubble md" }, mdDiv);
   const root = el("div", { class: "msg assistant" }, bubble);
-  return { root, bubble, mdDiv, toolCards: new Map(), textAcc: "", thinkAcc: "", thinkEl: null, thinkBody: null, renderTimer: null };
+  return {
+    root, bubble, mdDiv,
+    toolCards: new Map(),
+    textAcc: "",
+    thinkAcc: "",
+    think: null, // {line, tail, body, startedAt, collapsed, timer}
+    renderTimer: null,
+  };
 }
 
 function addMessageEl(role, text) {
@@ -128,23 +148,74 @@ function addMessageEl(role, text) {
   return node;
 }
 
+// ZCode-style thinking: one live line while thinking, collapses to a single
+// dim line once output starts; click to expand the full text.
 function ensureThinking(node) {
-  if (!node.thinkEl) {
-    node.thinkBody = el("div", { class: "th-body" });
-    node.thinkEl = el("details", { class: "thinking" }, el("summary", {}, "思考过程"), node.thinkBody);
-    node.bubble.insertBefore(node.thinkEl, node.mdDiv);
+  if (node.think) return node.think;
+  const body = el("div", { class: "think-body" });
+  const tail = el("div", { class: "think-tail" });
+  const status = el("span", { class: "t-status" }, "思考中");
+  const time = el("span", { class: "t-time" });
+  const line = el(
+    "div",
+    {
+      class: "think-line streaming",
+      onclick: () => {
+        if (line.classList.contains("streaming")) return;
+        const open = line.classList.toggle("open");
+        line.querySelector(".t-toggle").textContent = open ? "▾" : "▸";
+        body.style.display = open ? "block" : "none";
+      },
+    },
+    el("div", { class: "think-head" }, el("span", { class: "t-glyph" }, "✻"), status, time, el("span", { class: "t-toggle" })),
+    tail,
+    body
+  );
+  body.style.display = "none";
+  node.think = { line, tail, body, status, time, startedAt: Date.now(), collapsed: false, timer: null };
+  node.bubble.insertBefore(line, node.mdDiv);
+  return node.think;
+}
+
+function thinkTail(t) {
+  t = t.replace(/\s+/g, " ").trim();
+  return t.length > 110 ? "…" + t.slice(-110) : t;
+}
+
+function setThinking(node, text, streaming) {
+  const th = ensureThinking(node);
+  th.body.textContent = text;
+  th.tail.textContent = " " + thinkTail(text);
+  if (streaming && !th.collapsed) {
+    if (!th.timer) {
+      th.timer = setInterval(() => {
+        const s = ((Date.now() - th.startedAt) / 1000).toFixed(1);
+        th.time.textContent = " " + s + "s";
+      }, 100);
+      node.bubble.classList.add("thinking-active");
+    }
   }
-  return node.thinkBody;
+}
+
+function collapseThinking(node) {
+  if (!node.think || node.think.collapsed) return;
+  const th = node.think;
+  th.collapsed = true;
+  clearInterval(th.timer);
+  th.timer = null;
+  const secs = ((Date.now() - th.startedAt) / 1000).toFixed(1);
+  th.line.classList.remove("streaming");
+  th.status.textContent = secs >= 0.5 ? `已深度思考 ${secs}s` : "已思考";
+  th.time.textContent = "";
+  th.tail.style.display = "none";
+  th.line.querySelector(".t-toggle").textContent = "▸";
+  node.bubble.classList.remove("thinking-active");
 }
 
 function flushAssistant(node, text, thinking, streaming) {
   node.textAcc = text;
-  // thinking
-  if (thinking) {
-    ensureThinking(node).textContent = thinking;
-    node.thinkEl.open = streaming ? false : node.thinkEl.open;
-  }
-  // text (throttled markdown render into the dedicated md body)
+  if (thinking) setThinking(node, thinking, streaming);
+  if (text && thinking) collapseThinking(node); // output started → collapse
   if (!node.renderTimer) {
     node.renderTimer = setTimeout(() => {
       node.renderTimer = null;
@@ -155,15 +226,25 @@ function flushAssistant(node, text, thinking, streaming) {
   }
 }
 
+// Tool calls: one-line cards that expand on click (ZCode style)
 function addToolCard(node, id, name, args) {
-  const card = el("div", { class: "tool-card" },
-    el("div", { class: "th" },
-      el("span", { class: "spin" }),
-      el("span", { class: "tname" }, toolLabel(name)),
-      el("span", { class: "targs" }, argsPreview(args))
-    )
+  const status = el("span", { class: "tl-status" }, "");
+  const glyph = el("span", { class: "tl-glyph" }, "⚙");
+  const card = el(
+    "div",
+    { class: "tool-card" },
+    el("div", { class: "tool-line" }, glyph, el("span", { class: "tname" }, toolLabel(name)), el("span", { class: "targs" }, argsPreview(args)), status)
   );
-  node.toolCards.set(id, card);
+  const tout = el("div", { class: "tout" });
+  tout.style.display = "none";
+  card.append(tout);
+  card.addEventListener("click", () => {
+    if (!tout.dataset.has) return;
+    const open = tout.style.display !== "none";
+    tout.style.display = open ? "none" : "block";
+  });
+  node.toolCards.set(id, { card, tout, glyph, status, startedAt: Date.now() });
+  status.textContent = "…";
   node.bubble.append(card);
   scrollBottom();
   return card;
@@ -171,13 +252,16 @@ function addToolCard(node, id, name, args) {
 
 function fillToolCard(id, name, text, isError) {
   for (const node of liveNodes) {
-    const card = node.toolCards.get(id);
-    if (card) {
-      card.classList.toggle("err", !!isError);
-      const spin = card.querySelector(".spin");
-      if (spin) spin.remove();
-      if (text) {
-        card.append(el("div", { class: "tout" }, text.slice(0, 800)));
+    const tc = node.toolCards.get(id);
+    if (tc) {
+      tc.card.classList.toggle("err", !!isError);
+      tc.glyph.textContent = isError ? "✕" : "✓";
+      const dur = ((Date.now() - tc.startedAt) / 1000).toFixed(1);
+      tc.status.textContent = dur + "s";
+      if (text && text.trim()) {
+        tc.tout.textContent = text.slice(0, 2500);
+        tc.tout.dataset.has = "1";
+        tc.card.classList.add("has-out");
       }
       return;
     }
@@ -265,7 +349,7 @@ async function sendMessageInner() {
 
   if (!state.sessionId) {
     try {
-      const r = await api.createSession(state.currentPaper?.id || null);
+      const r = await api.createSession(state.currentPaper?.id || null, state.projectId || null);
       state.sessionId = r.id;
       state.model = r.model;
       $("#messages").replaceChildren();
@@ -294,13 +378,12 @@ async function sendMessageInner() {
   sendAbortController = new AbortController();
   let acc = "";
   let think = "";
-  const pendingToolCards = new Map();
 
   try {
     const res = await fetch(`/api/sessions/${state.sessionId}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: fullText, images, paperId: state.currentPaper?.id || null }),
+      body: JSON.stringify({ text: fullText, images, paperId: state.currentPaper?.id || null, projectId: state.projectId || null }),
       signal: sendAbortController.signal,
     });
     if (!res.ok || !res.body) {
@@ -329,18 +412,11 @@ async function sendMessageInner() {
             think += ev.text;
             break;
           case "tool_start": {
-            const card = addToolCard(node, ev.id, ev.name, ev.args);
-            pendingToolCards.set(ev.id, card);
+            addToolCard(node, ev.id, ev.name, ev.args);
             break;
           }
           case "tool_end": {
-            const card = pendingToolCards.get(ev.id) || node.toolCards.get(ev.id);
-            if (card) {
-              card.classList.toggle("err", !!ev.isError);
-              const spin = card.querySelector(".spin");
-              if (spin) spin.remove();
-              if (ev.preview) card.append(el("div", { class: "tout" }, ev.preview));
-            }
+            fillToolCard(ev.id, ev.name, ev.preview, ev.isError);
             break;
           }
           case "usage":
@@ -448,12 +524,23 @@ export function initChat() {
   });
 
   const input = $("#composer-input");
-  input.addEventListener("input", autoSizeInput);
+  input.addEventListener("input", () => {
+    autoSizeInput();
+    onComposerInput();
+  });
   input.addEventListener("keydown", (e) => {
+    if (handleComposerKeys(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
+      if (input.value.trim().startsWith("/")) closeMenu();
       sendMessage();
     }
+  });
+  input.addEventListener("click", () => {
+    if (input.value.startsWith("/")) onComposerInput();
+  });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#cmd-menu") && !e.target.closest("#composer-input")) closeMenu();
   });
   $("#btn-send").addEventListener("click", sendMessage);
   $("#btn-stop").addEventListener("click", async () => {
@@ -485,4 +572,180 @@ export function syncModelSelect() {
     sel.append(g);
   }
   if (cur) sel.value = `${cur.provider}|${cur.id}`;
+}
+
+// ================= / 命令 与 @ 文件 =================
+
+let piCommands = { prompts: [], skills: [] };
+let menuState = null; // {type:'slash'|'at', items, sel, anchorStart}
+
+const BUILTIN_COMMANDS = [
+  { name: "/model", desc: "切换模型（打开模型选择器）", builtin: true, run: () => $("#model-select").focus() },
+  { name: "/thinking", desc: "切换思考深度", builtin: true, run: () => { const s = $("#think-select"); s.focus(); } },
+  { name: "/new", desc: "新建会话", builtin: true, run: () => createSession() },
+  { name: "/compact", desc: "压缩当前会话上下文", builtin: true, run: () => runCompact() },
+  { name: "/paper", desc: "把当前论文绑定到本会话", builtin: true, run: () => { if (state.currentPaper) toast("发送消息时将绑定《" + state.currentPaper.title.slice(0, 30) + "》"); } },
+];
+
+export async function loadCommands() {
+  try {
+    piCommands = await api.commands();
+  } catch {}
+}
+function slashItems(q) {
+  const items = [
+    ...BUILTIN_COMMANDS,
+    ...piCommands.prompts.map((p) => ({ name: "/" + p.name, desc: p.description || "pi 提示模板", template: true })),
+    ...piCommands.skills.map((s) => ({ name: "/skill:" + s.name, desc: s.description || "pi 技能", skill: true })),
+  ];
+  if (!q) return items.slice(0, 12);
+  return items.filter((i) => i.name.toLowerCase().includes(q)).slice(0, 12);
+}
+
+async function runCompact() {
+  if (!state.sessionId) return toast("没有活动会话", true);
+  toast("压缩上下文中…");
+  try {
+    await api.compact(state.sessionId);
+    toast("上下文已压缩 ✓");
+  } catch (e) {
+    toast("压缩失败: " + e.message, true);
+  }
+}
+
+function menuEl() {
+  let m = $("#cmd-menu");
+  if (!m) {
+    m = el("div", { id: "cmd-menu" });
+    $("#composer-wrap").prepend(m);
+  }
+  return m;
+}
+
+function closeMenu() {
+  menuState = null;
+  const m = $("#cmd-menu");
+  if (m) {
+    m.classList.remove("open");
+    m.replaceChildren();
+  }
+}
+
+function openMenu(type, items, anchorStart) {
+  menuState = { type, items, sel: 0, anchorStart: anchorStart || 0 };
+  const m = menuEl();
+  m.replaceChildren();
+  items.forEach((it, i) => {
+    const row = el(
+      "div",
+      {
+        class: "cmd-item" + (i === 0 ? " sel" : ""),
+        "data-i": i,
+        onclick: () => pickMenuItem(i),
+      },
+      el("span", { class: "ci-name" }, it.name || it.label),
+      el("span", { class: "ci-desc" }, it.desc || "")
+    );
+    m.append(row);
+  });
+  m.classList.add("open");
+  markSel();
+}
+
+function markSel() {
+  if (!menuState) return;
+  const m = $("#cmd-menu");
+  [...m.children].forEach((c, i) => c.classList.toggle("sel", i === menuState.sel));
+  m.children[menuState.sel]?.scrollIntoView({ block: "nearest" });
+}
+
+function pickMenuItem(i) {
+  if (!menuState) return;
+  const it = menuState.items[i];
+  const input = $("#composer-input");
+  if (menuState.type === "slash") {
+    closeMenu();
+    input.value = it.name + " ";
+    input.focus();
+    if (it.run) {
+      it.run();
+      input.value = "";
+    }
+  } else {
+    // @ file
+    closeMenu();
+    input.value = input.value.replace(/@[^\s@]*$/, "");
+    attachFile(it);
+    input.focus();
+  }
+}
+
+async function attachFile(f) {
+  try {
+    const r = await api.file(f.path);
+    if (r.kind === "image") {
+      addChip({ kind: "image", tag: "文件", body: r.label || f.label, dataUrl: r.dataUrl, mimeType: r.mimeType });
+    } else if (r.kind === "text" || r.kind === "pdf") {
+      addChip({ kind: "text", tag: "文件", body: `【文件:${r.label || f.label}】\n` + (r.content || "").slice(0, 12000) });
+    }
+    toast("已加入上下文");
+  } catch (e) {
+    toast("读取文件失败: " + e.message, true);
+  }
+}
+
+function handleComposerKeys(e) {
+  const m = $("#cmd-menu");
+  if (menuState && m?.classList.contains("open")) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      menuState.sel = Math.min(menuState.items.length - 1, menuState.sel + 1);
+      markSel();
+      return true;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      menuState.sel = Math.max(0, menuState.sel - 1);
+      markSel();
+      return true;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      pickMenuItem(menuState.sel);
+      return true;
+    }
+    if (e.key === "Escape") {
+      closeMenu();
+      return true;
+    }
+  }
+  return false;
+}
+
+function onComposerInput() {
+  const input = $("#composer-input");
+  const v = input.value;
+  const caret = input.selectionStart ?? v.length;
+  const before = v.slice(0, caret);
+  // slash menu: text starts with '/' and has no space yet
+  const sm = v.match(/^\/([\w:-]*)$/);
+  if (sm) {
+    openMenu("slash", slashItems(sm[1].toLowerCase()), 0);
+    return;
+  }
+  // at menu: '@token' right before caret
+  const am = before.match(/(^|\s)@([^\s@]*)$/);
+  if (am) {
+    const q = am[2].toLowerCase();
+    fetch("/api/files?q=" + encodeURIComponent(q))
+      .then((r) => r.json())
+      .then((d) => {
+        const items = (d.files || []).map((f) => ({ name: "@" + f.label, label: f.label, desc: f.kind, path: f.path }));
+        if (items.length) openMenu("at", items.slice(0, 10), caret - am[2].length - 1);
+        else closeMenu();
+      })
+      .catch(() => closeMenu());
+    return;
+  }
+  closeMenu();
 }

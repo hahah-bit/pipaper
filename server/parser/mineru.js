@@ -57,15 +57,20 @@ async function mineruApi(pdfPath, cfg, log) {
       const zipRes = await fetch(r.full_zip_url);
       const zip = new AdmZip(Buffer.from(await zipRes.arrayBuffer()));
       let md = null;
+      let middleJson = null;
       const assets = new Map();
       for (const e of zip.getEntries()) {
         if (e.isDirectory) continue;
         const entryName = e.entryName.split("/").pop();
         if (/\.md$/i.test(entryName) && !md) md = e.getData().toString("utf8");
-        else if (/\.(png|jpe?g|gif|svg|webp)$/i.test(entryName)) assets.set(entryName, e.getData());
+        else if (/middle.*\.json$/i.test(entryName) || /^layout\.json$/i.test(entryName)) {
+          try {
+            middleJson = JSON.parse(e.getData().toString("utf8"));
+          } catch {}
+        } else if (/\.(png|jpe?g|gif|svg|webp)$/i.test(entryName)) assets.set(entryName, e.getData());
       }
       if (!md) throw new Error("MinerU 结果包中没有 markdown");
-      return { md, assets };
+      return { md, assets, middleJson };
     }
     if (r.state === "failed") throw new Error("MinerU 解析失败: " + (r.err_msg || ""));
     if (Date.now() - started > 15 * 60 * 1000) throw new Error("MinerU 解析超时（15 分钟）");
@@ -93,13 +98,15 @@ async function mineruLocal(pdfPath, cfg, log) {
     p.on("error", reject);
     p.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`mineru 退出码 ${code}: ${tail}`))));
   });
-  // locate output md + images
+  // locate output md + middle.json + images
   let found = null;
+  let middleFile = null;
   const walk = (dir) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, e.name);
       if (e.isDirectory()) walk(full);
       else if (/\.md$/i.test(e.name) && (!found || full.includes("full"))) found = full;
+      else if (/middle.*\.json$/i.test(e.name)) middleFile = full;
     }
   };
   walk(outDir);
@@ -112,7 +119,13 @@ async function mineruLocal(pdfPath, cfg, log) {
       assets.set(e.name, fs.readFileSync(path.join(imgDir, e.name)));
     }
   }
-  return { md, assets };
+  let middleJson = null;
+  if (middleFile) {
+    try {
+      middleJson = JSON.parse(fs.readFileSync(middleFile, "utf8"));
+    } catch {}
+  }
+  return { md, assets, middleJson };
 }
 
 export async function parseMineru(pdfPath, cfg, log = () => {}) {

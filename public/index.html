@@ -19,6 +19,10 @@
         <button id="btn-settings" class="icon-btn" title="设置">⚙</button>
       </div>
     </div>
+    <div class="project-bar">
+      <select id="project-select" title="项目（会话分组）"></select>
+      <button id="btn-new-project" class="icon-btn" title="新建项目">＋</button>
+    </div>
     <input id="paper-search" type="search" placeholder="搜索标题 / 作者 / 年份…" />
     <div id="collections"></div>
     <div id="paper-list" class="paper-list"></div>
@@ -48,6 +52,7 @@
     </header>
     <div id="messages"></div>
     <div id="composer-wrap">
+      <div id="cmd-menu"></div>
       <div id="chips"></div>
       <div id="quick-actions"></div>
       <div id="composer">

@@ -5,9 +5,11 @@ import { DATA_DIR, LIBRARY_DIR, PARSED_DIR, TMP_DIR } from "./config.js";
 
 const PAPERS_FILE = path.join(DATA_DIR, "papers.json");
 const SESSIONS_FILE = path.join(DATA_DIR, "sessions-index.json");
+const PROJECTS_FILE = path.join(DATA_DIR, "projects.json");
 
 let papers = { papers: [], zoteroSyncedAt: null, collections: [] };
 let sessionIndex = {};
+let projects = [];
 let saveTimer = null;
 
 function load() {
@@ -17,6 +19,9 @@ function load() {
   try {
     sessionIndex = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8"));
   } catch {}
+  try {
+    projects = JSON.parse(fs.readFileSync(PROJECTS_FILE, "utf8"));
+  } catch {}
 }
 load();
 
@@ -25,6 +30,7 @@ function persist() {
   saveTimer = setTimeout(() => {
     fs.writeFileSync(PAPERS_FILE, JSON.stringify(papers, null, 2));
     fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessionIndex, null, 2));
+    fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2));
   }, 150);
 }
 
@@ -32,6 +38,35 @@ export function flushStore() {
   clearTimeout(saveTimer);
   fs.writeFileSync(PAPERS_FILE, JSON.stringify(papers, null, 2));
   fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessionIndex, null, 2));
+  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2));
+}
+
+// ---- projects (paper sets; sessions are grouped by project) ----
+
+export function listProjects() {
+  return projects;
+}
+
+export function createProject(name) {
+  const p = { id: "prj_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name, paperIds: [], createdAt: new Date().toISOString() };
+  projects.push(p);
+  persist();
+  return p;
+}
+
+export function updateProject(id, { name, addPaper, removePaper } = {}) {
+  const p = projects.find((x) => x.id === id);
+  if (!p) return null;
+  if (name) p.name = name;
+  if (addPaper && !p.paperIds.includes(addPaper)) p.paperIds.push(addPaper);
+  if (removePaper) p.paperIds = p.paperIds.filter((x) => x !== removePaper);
+  persist();
+  return p;
+}
+
+export function deleteProject(id) {
+  projects = projects.filter((x) => x.id !== id);
+  persist();
 }
 
 export function getPapers() {

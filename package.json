@@ -1,12 +1,12 @@
 {
   "name": "pipaper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "PiPaper — 论文精读工作台：以 pi agent 为内核的论文阅读 / 对话 UI",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "start": "node server/index.js",
+    "start": "node scripts/build.mjs && node server/index.js",
     "dev": "node scripts/build.mjs && node server/index.js"
   },
   "dependencies": {
