@@ -1,4 +1,4 @@
-import { api, state, $, el, toast, updateZoteroFoot } from "./app.js";
+import { api, state, $, el, toast, updateZoteroFoot, askText, askConfirm } from "./app.js";
 
 let activeCollection = null; // collection id or null = all
 let searchQ = "";
@@ -29,7 +29,7 @@ export function initSidebar() {
   $("#btn-del-project").addEventListener("click", async () => {
     const p = state.projects.find((x) => x.id === state.projectId);
     if (!p) return;
-    if (!confirm(`删除项目「${p.name}」？（论文不会被删除，只解除分组）`)) return;
+    if (!(await askConfirm({ title: "删除项目", message: `删除项目「${p.name}」？\n论文不会被删除，只解除分组。`, okText: "删除", danger: true }))) return;
     try {
       await api.deleteProject(p.id);
       state.projects = state.projects.filter((x) => x.id !== p.id);
@@ -42,9 +42,13 @@ export function initSidebar() {
     }
   });
   $("#btn-new-project").addEventListener("click", async () => {
-    const name = prompt("项目名称：");
-    if (!name?.trim()) return;
-    const asZotero = confirm(`「${name.trim()}」是否作为 Zotero 联动项目？\n\n确定 = Zotero 联动（会话自动加载论文综合技能组，工具栏出现打开 Zotero 按钮）\n取消 = 临时文献项目`);
+    const name = (await askText({ title: "新建项目", message: "项目名称：", placeholder: "例如：路由优化调研", okText: "创建" }))?.trim();
+    if (!name) return;
+    const asZotero = await askConfirm({
+      title: "项目类型",
+      message: `「${name}」是否作为 Zotero 联动项目？\n\n确定 = Zotero 联动（会话自动加载论文综合技能组，工具栏出现打开 Zotero 按钮）\n取消 = 临时文献项目`,
+      okText: "Zotero 联动",
+    });
     try {
       const p = await api.createProject(name.trim(), asZotero ? "zotero" : "temp");
       p.type = asZotero ? "zotero" : "temp";

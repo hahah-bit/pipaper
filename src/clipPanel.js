@@ -1,4 +1,4 @@
-import { $, el, toast, addChip } from "./app.js";
+import { $, el, toast, addChip, askConfirm } from "./app.js";
 
 // Clipboard manager: floating panel — collapsible + draggable + resizable.
 // Captures copies/selections inside the app; entries expire server-side (2 days).
@@ -30,7 +30,7 @@ function buildPanel() {
   body.append(
     el("div", { class: "clip-tools" },
       el("button", { class: "tool-btn", title: "清空全部", onclick: async () => {
-        if (!confirm("清空剪贴板历史？")) return;
+        if (!(await askConfirm({ title: "清空剪贴板", message: "清空全部剪贴板历史？", okText: "清空", danger: true }))) return;
         await fetch("/api/clip/clear", { method: "POST" });
         refresh();
       } }, "清空"),

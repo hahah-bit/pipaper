@@ -1,7 +1,7 @@
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import renderMathInElement from "katex/contrib/auto-render";
-import { api, state, $, el, toast, renderWelcome, renderChips, addChip } from "./app.js";
+import { api, state, $, el, toast, renderWelcome, renderChips, addChip, askText, askConfirm } from "./app.js";
 import { createUserInputUI } from "./userInput.js";
 import { composerAction } from "./chatKeys.js";
 import { connectSessionEvents, closeSessionEvents, waitOperation } from "./sessionTransport.js";
@@ -361,7 +361,7 @@ function addReaskButton(node, entryId, originalText) {
     onclick: async (ev) => {
       ev.stopPropagation();
       if (state.streaming) return toast("当前任务执行中，请等待完成后再重问", true);
-      const edited = prompt("编辑问题后重问 — 将新建分支会话，原对话不受影响：", originalText || "");
+      const edited = await askText({ title: "编辑后重问", message: "编辑问题后重问 — 将新建分支会话，原对话不受影响：", initial: originalText || "", okText: "重问" });
       if (edited == null) return;
       const t = edited.trim();
       if (!t) return toast("内容为空，已取消", true);
@@ -900,7 +900,7 @@ export function initChat() {
   $("#btn-new-session").addEventListener("click", createSession);
   $("#btn-del-session").addEventListener("click", async () => {
     if (!state.sessionId) return;
-    if (!confirm("删除当前会话（含 pi 会话文件）？")) return;
+    if (!(await askConfirm({ title: "删除会话", message: "删除当前会话（含 pi 会话文件）？", okText: "删除", danger: true }))) return;
     try {
       await api.delSession(state.sessionId);
       closeSessionEvents();
@@ -1025,7 +1025,7 @@ async function runCompact() {
   if (!state.sessionId) return toast("没有活动会话", true);
   toast("压缩上下文中…");
   try {
-    const instructions = prompt("压缩时需要保留哪些信息？（可留空）", "");
+    const instructions = await askText({ title: "压缩会话", message: "压缩时需要保留哪些信息？（可留空）", okText: "开始压缩" });
     if (instructions === null) return;
     const op = await api.sessionAction(state.sessionId, "compact", { instructions });
     await waitOperation(op.operationId);

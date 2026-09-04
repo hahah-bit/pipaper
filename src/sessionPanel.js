@@ -1,4 +1,4 @@
-import { api, state, $, el, toast, renderChips } from "./app.js";
+import { api, state, $, el, toast, renderChips, askText } from "./app.js";
 import { waitOperation } from "./sessionTransport.js";
 
 let metrics, extensions, toolbar, queueControls, draftsBox;
@@ -22,9 +22,9 @@ export function initSessionPanel() {
   metrics = el("div", { id: "native-metrics", role: "status", class: "native-metrics" }, "会话尚未连接");
   extensions = el("div", { class: "native-extension-ui" });
   toolbar = el("div", { class: "native-toolbar" },
-    button("改名", async () => { const name = prompt("会话名称", state.nativeSession?.name || ""); if (name !== null) await action("name", { name }); }),
+    button("改名", async () => { const name = await askText({ title: "会话名称", initial: state.nativeSession?.name || "", okText: "保存" }); if (name !== null) await action("name", { name }); }),
     button("会话树", showTree), button("工具", showTools),
-    button("压缩", async () => { const instructions = prompt("压缩时需要保留的信息（可留空）", ""); if (instructions !== null) await action("compact", { instructions }); }),
+    button("压缩", async () => { const instructions = await askText({ title: "压缩会话", message: "压缩时需要保留的信息（可留空）", okText: "开始压缩" }); if (instructions !== null) await action("compact", { instructions }); }),
     button("重载资源", () => action("reload")),
     button("导出 HTML", () => download("html")), button("导出 JSONL", () => download("jsonl")));
   const top = $("#messages"); top.before(toolbar, metrics, extensions);

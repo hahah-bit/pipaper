@@ -1,4 +1,4 @@
-import { api, state, $, el, toast } from "./app.js";
+import { api, state, $, el, toast, askConfirm } from "./app.js";
 
 // Resource manager: visual entry for pi skills / extensions / packages / MCP,
 // with per-project skill & extension scoping for sessions bound to a project.
@@ -77,6 +77,39 @@ function p_resources_fallback() {
 function renderSkills(body) {
   const project = currentProject();
   const resources = project?.resources || resData.selection || {};
+  body.append(el("p", { class: "res-note" }, "技能来源（pi 原生）：① 安装技能包（npm / Git / 本地路径，包可携带技能，下方安装）；② 把技能文件夹放入 ~/.pi/agent/skills（全局）或应用目录 .pi/skills；③ 项目包安装后技能自动进入候选列表。"));
+  // 新增技能：与 Packages 页共用 pi 原生 DefaultPackageManager
+  const spec = el("input", { type: "text", placeholder: "新增技能：npm:包名 / npm:@scope/pkg@版本 / Git / 本地绝对路径", style: { flex: "1" } });
+  const scope = el("select", {},
+    el("option", { value: "project" }, "装到当前项目"),
+    el("option", { value: "global" }, "全局（~/.pi/agent）"),
+  );
+  scope.disabled = !project;
+  const installLog = el("pre", { class: "parse-log", style: { maxHeight: "110px", marginTop: "6px", display: "none" } });
+  const installBtn = el("button", {
+    class: "tool-btn primary", onclick: async () => {
+      const v = spec.value.trim();
+      if (!v) return toast("请填写包来源", true);
+      if (scope.value === "project" && !project) return toast("先在侧边栏选择项目", true);
+      installBtn.disabled = true;
+      installLog.style.display = "block";
+      installLog.textContent = "安装中…（npm/Git 来源需要网络）";
+      try {
+        const r = await api.pkgInstall(v, scope.value, project?.id);
+        installLog.textContent = (r.ok ? "✓ 成功\n" : "✕ 失败\n") + (r.output || "") + (r.entries?.length ? "\n入口:\n" + r.entries.join("\n") : "");
+        if (r.ok) {
+          if (r.project && project) project.resources = r.project.resources;
+          spec.value = "";
+          toast("已安装；技能将出现在下方列表（空闲会话自动更新）");
+          await loadResources();
+        }
+      } catch (e) {
+        installLog.textContent = "✕ " + e.message;
+      }
+      installBtn.disabled = false;
+    }
+  }, "安装");
+  body.append(el("div", { class: "res-row", style: { marginTop: "4px" } }, spec, scope, installBtn), installLog);
   const mode = el("select", {}, el("option", { value: "inherit" }, "继承默认技能"), el("option", { value: "selected" }, "只启用勾选技能"));
   mode.value = resources.skillsMode || "inherit"; mode.disabled = !project;
   mode.onchange = async () => { try { await saveResources({ skillsMode: mode.value, legacyGated: false, skillsEnabled: resData.skills.filter(s => s.enabled).map(s => s.name) }); } catch(e) { toast(e.message,true); } };
@@ -187,7 +220,7 @@ function renderPackages(body) {
       el("span", { class: "res-name" }, typeof p === "string" ? p : p.source),
       el("button", {
         class: "icon-btn", onclick: async () => {
-          if (!confirm(`移除全局包 ${p}？（执行 pi remove）`)) return;
+          if (!(await askConfirm({ title: "移除全局包", message: `移除全局包 ${p}？（执行 pi remove）`, okText: "移除", danger: true }))) return;
           const r = await api.pkgRemove(p);
           toast(r.ok ? "已移除" : "移除失败: " + (r.output || "").slice(0, 120), !r.ok);
           loadResources();
