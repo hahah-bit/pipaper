@@ -120,6 +120,19 @@ async function doSearch() {
 export function initSearchPanel() {
   window.__schInit = true;
   renderSources();
+  // rightbar tabs: search / video switch (+ reopen when collapsed)
+  document.querySelectorAll(".rt-tab").forEach((t) =>
+    t.addEventListener("click", () => {
+      document.querySelectorAll(".rt-tab").forEach((x) => x.classList.remove("active"));
+      t.classList.add("active");
+      document.querySelector("#stab-search").hidden = t.dataset.tab !== "search";
+      document.querySelector("#stab-video").hidden = t.dataset.tab !== "video";
+      const rb = document.getElementById("rightbar");
+      rb.classList.remove("collapsed");
+      localStorage.setItem("pipaper.rightCollapsed", "0");
+      window.dispatchEvent(new Event("resize"));
+    })
+  );
   $("#btn-search").addEventListener("click", doSearch);
   $("#sch-q").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); doSearch(); }

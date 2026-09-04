@@ -137,7 +137,7 @@ input, select, textarea { font-family: inherit; }
   background: var(--bg1); border-left: 1px solid var(--border);
   display: flex; flex-direction: column; gap: 8px; padding: 12px 10px;
 }
-#rightbar.collapsed { display: none; }
+
 #rightbar .side-tabs { align-items: center; }
 .rt-tab { flex: 1; border: 0; background: none; color: var(--fg1); padding: 6px 4px; border-radius: 7px; font-size: 12.5px; cursor: pointer; }
 .rt-tab.active { background: var(--bg3); color: var(--fg0); }
@@ -610,3 +610,17 @@ select, #model-select, #think-select {
 .msg-block.tbl table { border-collapse: collapse; background: var(--bg2); color: var(--fg0); font-size: 12.5px; }
 .msg-block.tbl th, .msg-block.tbl td { border: 1px solid var(--table-border); padding: 4px 9px; }
 .msg-block.md { padding: 8px 12px; background: var(--panel); border-radius: 8px; font-size: 13px; color: var(--fg1); }
+
+/* rightbar collapsed = slim rail (tabs stay clickable to reopen) */
+#rightbar.collapsed { min-width: 46px !important; width: 46px !important; padding: 8px 4px; }
+#rightbar.collapsed .stab { display: none; }
+#rightbar.collapsed .side-tabs { flex-direction: column; gap: 6px; }
+#rightbar.collapsed .rt-tab { padding: 8px 2px; font-size: 15px; }
+#rightbar.collapsed #btn-rightbar-close { display: none; }
+
+
+/* clipboard collapsed = 左下角小圆钮 */
+#clip-panel.mini { border-radius: 50%; cursor: pointer; padding: 0; }
+#clip-panel.mini .clip-head { justify-content: center; cursor: pointer; height: 100%; align-items: center; border-bottom: 0; }
+#clip-panel.mini .clip-title, #clip-panel.mini .clip-tools, #clip-panel.mini .clip-expand, #clip-panel.mini .clip-body, #clip-panel.mini .clip-rz { display: none; }
+#clip-panel.mini::before { content: "📋"; font-size: 19px; }

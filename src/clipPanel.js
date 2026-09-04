@@ -23,7 +23,7 @@ function buildPanel() {
   if ($("#clip-panel")) return;
   const savedOpen = localStorage.getItem(LS_OPEN) === "1";
   const size = JSON.parse(localStorage.getItem(LS_SIZE) || '{"w":300,"h":360}');
-  const pos = JSON.parse(localStorage.getItem(LS_POS) || "null") || { right: 16, bottom: 90 };
+  const pos = JSON.parse(localStorage.getItem(LS_POS) || "null") || { left: 12, bottom: 12 };
 
   const body = el("div", { class: "clip-body" });
   const list = el("div", { class: "clip-list" });
@@ -40,10 +40,11 @@ function buildPanel() {
   body.append(list);
 
   const head = el("div", { class: "clip-head" },
-    el("span", {}, "📋 剪贴板"),
-    el("span", { class: "clip-expand", title: "展开", style: { display: "none" }, onclick: () => toggle(true) }, "📋 剪贴板 ▴"),
+    el("span", { class: "clip-title" }, "📋 剪贴板"),
+    el("span", { class: "clip-expand", title: "展开", onclick: () => toggle(true) }, "📋"),
   );
-  head.addEventListener("dblclick", () => toggle(true));
+  head.addEventListener("click", () => { if (panel.classList.contains("mini")) toggle(true); });
+  head.addEventListener("dblclick", () => toggle(false));
 
   const panel = el("div", { id: "clip-panel" }, head, body);
 
@@ -59,7 +60,7 @@ function buildPanel() {
     top: pos.top != null ? pos.top + "px" : "auto",
     bottom: pos.top != null ? "auto" : pos.bottom + "px",
   });
-  if (!savedOpen) toggle(false);
+  toggle(savedOpen);
 
   // drag (head) + resize (rz)
   head.addEventListener("mousedown", (e) => {
@@ -96,7 +97,23 @@ function buildPanel() {
   });
 
   function toggle(open) {
+    if (open) {
+      try {
+        const size = JSON.parse(localStorage.getItem(LS_SIZE) || '{"w":300,"h":360}');
+        panel.style.width = size.w + "px";
+        panel.style.height = size.h + "px";
+      } catch {}
+    }
     panel.classList.toggle("collapsed", !open);
+    panel.classList.toggle("mini", !open);
+    if (!open) {
+      panel.style.width = "44px";
+      panel.style.height = "44px";
+      panel.style.left = "12px";
+      panel.style.bottom = "12px";
+      panel.style.top = "auto";
+      panel.style.right = "auto";
+    }
     localStorage.setItem(LS_OPEN, open ? "1" : "0");
   }
 }
