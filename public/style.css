@@ -619,8 +619,15 @@ select, #model-select, #think-select {
 #rightbar.collapsed #btn-rightbar-close { display: none; }
 
 
-/* clipboard collapsed = 左下角小圆钮 */
-#clip-panel.mini { border-radius: 50%; cursor: pointer; padding: 0; }
-#clip-panel.mini .clip-head { justify-content: center; cursor: pointer; height: 100%; align-items: center; border-bottom: 0; }
-#clip-panel.mini .clip-title, #clip-panel.mini .clip-tools, #clip-panel.mini .clip-expand, #clip-panel.mini .clip-body, #clip-panel.mini .clip-rz { display: none; }
-#clip-panel.mini::before { content: "📋"; font-size: 19px; }
+/* clipboard collapsed = 左下角小胶囊 */
+#clip-panel.mini {
+  width: auto !important; height: auto !important; min-width: 0 !important; min-height: 0 !important;
+  border-radius: 999px; padding: 0; background: var(--bg2);
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+#clip-panel.mini .clip-head { padding: 8px 16px; cursor: pointer; border-bottom: 0; }
+#clip-panel.mini .clip-title { font-size: 12.5px; color: var(--fg1); font-weight: 600; }
+#clip-panel.mini .clip-tools, #clip-panel.mini .clip-expand,
+#clip-panel.mini .clip-body, #clip-panel.mini .clip-rz { display: none !important; }
+#clip-panel.mini:hover { border-color: var(--accent); }
+#clip-panel.mini:hover .clip-title { color: var(--accent); }

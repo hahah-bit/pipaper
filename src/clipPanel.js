@@ -107,10 +107,10 @@ function buildPanel() {
     panel.classList.toggle("collapsed", !open);
     panel.classList.toggle("mini", !open);
     if (!open) {
-      panel.style.width = "44px";
-      panel.style.height = "44px";
-      panel.style.left = "12px";
-      panel.style.bottom = "12px";
+      panel.style.width = "auto";
+      panel.style.height = "auto";
+      panel.style.left = "14px";
+      panel.style.bottom = "14px";
       panel.style.top = "auto";
       panel.style.right = "auto";
     }
