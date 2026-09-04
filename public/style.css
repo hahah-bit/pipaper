@@ -194,14 +194,14 @@ select, #model-select, #think-select {
   max-width: 92%; border-radius: 14px; padding: 9px 13px; font-size: 14px; line-height: 1.65;
   white-space: pre-wrap; word-break: break-word;
 }
-.msg.user .bubble { background: #232a47; border-radius: 14px 14px 4px 14px; }
+.msg.user .bubble { background: var(--bubble-user); border: 1px solid var(--bubble-user-border); color: var(--fg0); border-radius: 14px 14px 4px 14px; }
 .msg.assistant { align-items: stretch; }
 /* mature reader-chat style: assistant text is flat, no bubble-in-box noise */
 .msg.assistant .bubble {
   background: transparent; border: 0; width: 100%; max-width: 100%;
   white-space: normal; padding: 2px 2px;
 }
-.msg .meta { font-size: 10.5px; color: #565d78; margin-top: 6px; display: flex; gap: 10px; justify-content: flex-start; }
+.msg .meta { font-size: 10.5px; color: var(--fg2); margin-top: 6px; display: flex; gap: 10px; justify-content: flex-start; }
 .msg.error .bubble { background: #3a2126; border-color: #5c3038; color: #f2b8bb; border-radius: 10px; padding: 8px 12px; }
 
 /* markdown in assistant bubbles */
@@ -352,7 +352,7 @@ select, #model-select, #think-select {
 .blk th, .blk td { border: 1px solid var(--table-border); padding: 5px 10px; }
 .blk th { background: var(--bg2); }
 .blk .formula-blk { overflow-x: auto; padding: 4px 0; }
-.page-mark { font-size: 11px; color: #4a5170; text-align: right; margin: 14px 0 2px; user-select: none; }
+.page-mark { font-size: 11px; color: var(--fg2); opacity:.7; text-align: right; margin: 14px 0 2px; user-select: none; }
 
 /* pdf view */
 #pdf-view { padding: 18px 0 120px; }
@@ -417,8 +417,8 @@ select, #model-select, #think-select {
 
 /* ================= 统一活动折叠（思考+工具） ================= */
 .activity {
-  border-left: 2px solid #333c66; border-radius: 6px; padding: 4px 10px; margin: 4px 0 8px;
-  font-size: 12.5px; color: var(--fg2); background: rgba(20, 24, 40, .6);
+  border-left: 2px solid var(--border); border-radius: 6px; padding: 4px 10px; margin: 4px 0 8px;
+  font-size: 12.5px; color: var(--fg2); background: var(--panel);
 }
 .activity .act-head { display: flex; align-items: center; gap: 7px; }
 .activity.streaming .t-glyph { animation: spin 1.2s linear infinite; display: inline-block; color: var(--accent2); }
@@ -429,7 +429,7 @@ select, #model-select, #think-select {
 .activity .t-toggle { margin-left: auto; color: var(--fg2); }
 .activity .act-tail {
   margin-top: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  color: #5d6584; font-style: italic; animation: shimmer 1.6s ease-in-out infinite;
+  color: var(--fg2); font-style: italic; animation: shimmer 1.6s ease-in-out infinite;
 }
 .activity .act-think { display: none; }
 .activity.open .act-think {
@@ -603,3 +603,10 @@ select, #model-select, #think-select {
 #clip-panel.collapsed .clip-head .clip-expand { display: inline; }
 #clip-panel.collapsed .clip-head { cursor: pointer; }
 #clip-panel.collapsed .clip-tools { display: none; }
+
+/* 对话中的原元素（表/公式/段落） */
+.msg-block { margin: 8px 0; }
+.msg-block.tbl { overflow-x: auto; }
+.msg-block.tbl table { border-collapse: collapse; background: var(--bg2); color: var(--fg0); font-size: 12.5px; }
+.msg-block.tbl th, .msg-block.tbl td { border: 1px solid var(--table-border); padding: 4px 9px; }
+.msg-block.md { padding: 8px 12px; background: var(--panel); border-radius: 8px; font-size: 13px; color: var(--fg1); }
