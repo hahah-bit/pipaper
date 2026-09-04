@@ -6,10 +6,16 @@ import { fileURLToPath } from "node:url";
 import { APP_ROOT, PUBLIC_DIR, DATA_DIR, getConfig, saveConfig, redactedConfig } from "./config.js";
 import { listPapers, getPaper, importPdfFile, mergeZoteroSnapshot, getPapers, getParseState, readBlocks, allSessionMeta, listProjects, createProject, updateProject, deleteProject, parsedDir, attachHash, flushHashCache, fileHash, findByHash } from "./store.js";
 import { syncZotero } from "./zotero.js";
-import { startParse, getJob, paperWithParseStatus } from "./parser/index.js";
+import { startParse, getJob, paperWithParseStatus, isParsing } from "./parser/index.js";
+import { listVersions, readVersion, activateVersion } from "./parser/versions.js";
+import { blocksToContext } from "./parser/mdblocks.js";
+import { sourceBounds } from "./parser/regions.js";
+import { renderPageCrop } from "./parser/render.js";
 import { aggregateSearch, DEFAULT_SOURCES, tierOf } from "./search/engines.js";
 import { clipAdd, clipList, clipDelete, clipClear } from "./clip.js";
 import * as harness from "./harness.js";
+
+const UA = "PiPaper/0.5 (academic reader; local app)";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -96,29 +102,63 @@ api.get("/papers/:id/pdf", (req, res) => {
   res.sendFile(p.pdfPath);
 });
 
-api.get("/papers/:id/blocks", (req, res) => {
+api.get("/papers/:id/blocks", async (req, res) => {
   const p = getPaper(req.params.id);
   if (!p) return res.status(404).json({ error: "论文不存在" });
-  const parsed = readBlocks(p.id); // v1: array | v2: {v:2, meta, blocks}
+  const parsed = readBlocks(p.id);
   const state = getParseState(p.id);
+  const rawBlocks = Array.isArray(parsed) ? parsed : parsed?.blocks || null;
   res.json({
     paper: paperWithParseStatus(p),
-    status: state?.status || (parsed ? "done" : "none"),
-    engine: state?.engine || null,
+    status: state?.status === "running" ? "running" : parsed ? "done" : state?.status || "none",
+    engine: parsed?.meta?.engine || state?.engine || null,
     error: state?.error || null,
     v: parsed?.v || 1,
     meta: parsed?.meta || null,
-    blocks: parsed?.v === 2 ? parsed.blocks : parsed || null,
+    blocks: rawBlocks,
+    pages: parsed?.pages || null,
+    sections: parsed?.sections || null,
+    quality: parsed?.quality || null,
   });
 });
 
 api.post("/papers/:id/parse", (req, res) => {
   try {
-    const job = startParse(req.params.id, req.body?.engine || "auto");
+    const job = startParse(req.params.id, req.body?.engine || "hybrid", req.body?.sourceVersion);
     res.json({ jobId: job.id, engine: job.engine });
   } catch (e) {
     res.status(400).json({ error: String(e.message || e) });
   }
+});
+
+api.get("/papers/:id/versions", (req, res) => {
+  if (!getPaper(req.params.id)) return res.status(404).json({ error: "论文不存在" });
+  res.json(listVersions(req.params.id));
+});
+api.get("/papers/:id/versions/:version", (req, res) => {
+  if (!getPaper(req.params.id)) return res.status(404).json({ error: "论文不存在" });
+  try { res.json(readVersion(req.params.id, req.params.version)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+api.post("/papers/:id/versions/:version/activate", (req, res) => {
+  if (!getPaper(req.params.id)) return res.status(404).json({ error: "论文不存在" });
+  if (isParsing(req.params.id)) return res.status(409).json({ error: "解析期间暂不能切换版本" });
+  try { res.json(activateVersion(req.params.id, req.params.version)); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+api.get("/papers/:id/regions/:block", async (req, res) => {
+  const paper = getPaper(req.params.id);
+  if (!paper) return res.status(404).end();
+  try {
+    const doc = req.query.version ? readVersion(paper.id, String(req.query.version)) : readBlocks(paper.id);
+    const block = doc?.blocks?.find((b) => b.id === req.params.block);
+    if (!block?.bbox || !block.page || doc.v !== 4) return res.status(404).end();
+    const bounds = sourceBounds(block, doc.blocks);
+    const crop = await renderPageCrop(paper.pdfPath, block.page, bounds);
+    if (!crop) return res.status(404).end();
+    res.type("png").send(crop.buffer);
+  } catch { res.status(500).end(); }
 });
 
 api.get("/jobs/:id", (req, res) => {
@@ -131,7 +171,7 @@ api.get("/papers/:id/file/*", (req, res) => {
   const rel = req.params[0] || "";
   const base = parsedDir(req.params.id);
   const target = path.resolve(base, rel);
-  if (!target.startsWith(path.resolve(base))) return res.status(403).end();
+  if (!safeJoin(base, rel)) return res.status(403).end();
   if (!fs.existsSync(target)) return res.status(404).end();
   res.sendFile(target);
 });
@@ -155,10 +195,42 @@ api.get("/sessions", async (_req, res) => {
 
 api.post("/sessions", async (req, res) => {
   try {
-    const r = await harness.createChat({ paperId: req.body?.paperId || null, projectId: req.body?.projectId || null, title: req.body?.title || null });
+    const r = await harness.createChat({
+      paperId: req.body?.paperId || null,
+      projectId: req.body?.projectId || null,
+      title: req.body?.title || null,
+    });
     res.json(r);
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// steer: 会话回复期间"追加"新消息 — pi Enter 打断语义,
+// 当前回合工具结算后立即注入,结果继续走原 SSE 连接
+api.post("/sessions/:id/steer", async (req, res) => {
+  try {
+    res.json(await harness.steerChat(req.params.id, { text: req.body?.text, images: req.body?.images, mode: req.body?.mode }));
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
+
+// fork(编辑重问/重定向): 在某条历史问题之前切出新的分支会话,
+// 原会话文件与列表项原样保留
+api.post("/sessions/:id/ui/:requestId", (req, res) => {
+  try {
+    res.json(harness.answerUserInput(req.params.id, req.params.requestId, req.body));
+  } catch (e) {
+    res.status(e.status || 400).json({ error: String(e.message || e) });
+  }
+});
+
+api.post("/sessions/:id/fork", async (req, res) => {
+  try {
+    res.json(await harness.forkChat(req.params.id, { entryId: req.body?.entryId, title: req.body?.title }));
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
   }
 });
 
@@ -213,14 +285,18 @@ api.post("/sessions/:id/prompt", async (req, res) => {
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
   });
-  const send = (s) => res.write(s);
-  const ping = setInterval(() => res.write(": ping\n\n"), 15000);
+  const controller = new AbortController();
+  const onClose = () => controller.abort();
+  res.on("close", onClose);
+  const send = (s) => { if (!res.destroyed && !res.writableEnded) res.write(s); };
+  const ping = setInterval(() => send(": ping\n\n"), 15000);
   try {
-    await harness.promptChat(req.params.id, { text, images, paperId, projectId }, send);
+    await harness.promptChat(req.params.id, { text, images, paperId, projectId }, send, controller.signal);
   } catch (e) {
     send(`data: ${JSON.stringify({ t: "error", message: String(e.message || e) })}\n\n`);
   } finally {
     clearInterval(ping);
+    res.off("close", onClose);
     res.end();
   }
 });
@@ -237,7 +313,8 @@ api.get("/pi/commands", async (_req, res) => {
 
 function safeJoin(base, rel) {
   const target = path.resolve(base, rel);
-  return target.startsWith(path.resolve(base)) ? target : null;
+  const relative = path.relative(path.resolve(base), target);
+  return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative) ? target : null;
 }
 
 api.get("/files", (req, res) => {
@@ -246,11 +323,11 @@ api.get("/files", (req, res) => {
   // virtual: parsed papers
   for (const p of listPapers()) {
     const parsed = readBlocks(p.id);
-    const blocks = parsed?.v === 2 ? parsed.blocks : parsed;
-    if (blocks) out.push({ label: `《${p.title}》· 解析全文`, path: `paper:${p.id}/full.md`, kind: "text" });
+    const blocks = Array.isArray(parsed) ? parsed : parsed?.blocks;
+    if (blocks) out.push({ label: `《${p.title}》· 解析全文`, path: `paper:${p.id}/${parsed.meta?.versionId ? "version/" + parsed.meta.versionId + "/" : ""}full.md`, kind: "text" });
     for (const b of blocks || []) {
       if (b.type === "image" && b.src) {
-        out.push({ label: `《${p.title}》· ${b.caption || "插图"}`, path: `paper:${p.id}/asset/${String(b.src).replace(/^file\/assets\//, "")}`, kind: "image" });
+        out.push({ label: `《${p.title}》· ${b.caption || "插图"}`, path: `paper:${p.id}/asset/${String(b.src).replace(/^file\//, "")}`, kind: "image" });
       }
     }
   }
@@ -293,15 +370,18 @@ api.get("/file", async (req, res) => {
       if (!m) return res.status(400).json({ error: "bad path" });
       const paper = getPaper(m[1]);
       if (!paper) return res.status(404).json({ error: "论文不存在" });
-      if (m[2] === "full.md") {
-        const { readParsedText } = await import("./store.js");
-        const text = readParsedText(paper.id);
-        if (!text) return res.status(404).json({ error: "未解析" });
-        return res.json({ kind: "text", label: `《${paper.title}》解析全文`, content: text.slice(0, 80000) });
+      const version = m[2].match(/^version\/(v_[a-zA-Z0-9_-]+)\/full\.md$/)?.[1];
+      if (m[2] === "full.md" || version) {
+        const doc = version ? readVersion(paper.id, version) : readBlocks(paper.id);
+        if (!doc) return res.status(404).json({ error: "未解析" });
+        const blocks = Array.isArray(doc) ? doc : doc.blocks;
+        const text = `[解析版本 ${doc.meta?.versionId || "legacy"}]\n` + blocksToContext(blocks);
+        return res.json({ kind: "text", label: `《${paper.title}》解析全文`, versionId: doc.meta?.versionId, content: text.slice(0, 80000) });
       }
       if (m[2].startsWith("asset/")) {
         const name = path.basename(m[2]);
-        const file = safeJoin(parsedDir(paper.id), path.join("assets", name));
+        const relative = m[2].slice("asset/".length);
+        const file = safeJoin(parsedDir(paper.id), relative.includes("/") ? relative : path.join("assets", name));
         if (!file || !fs.existsSync(file)) return res.status(404).json({ error: "资源不存在" });
         const ext = path.extname(file).toLowerCase();
         const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" }[ext];
@@ -705,9 +785,13 @@ api.get("/search", async (req, res) => {
     const f = path.join(DATA_DIR, "search-sources.json");
     if (fs.existsSync(f)) sources = (JSON.parse(fs.readFileSync(f, "utf8")) || []).filter((s) => s.enabled).map((s) => s.id);
   } catch {}
+  const requestedSources = String(req.query.sources || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   try {
     const r = await aggregateSearch(q, {
-      sources,
+      sources: requestedSources.length ? requestedSources : sources,
       yearFrom: req.query.yearFrom,
       yearTo: req.query.yearTo,
       oa: req.query.oa === "1",

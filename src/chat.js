@@ -2,20 +2,33 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import renderMathInElement from "katex/contrib/auto-render";
 import { api, state, $, el, toast, renderWelcome, renderChips, addChip } from "./app.js";
+import { createUserInputUI } from "./userInput.js";
+import { composerAction } from "./chatKeys.js";
 
 let sendAbortController = null;
 let autoScroll = true;
+const userInputUI = createUserInputUI(
+  (sessionId, requestId, answer) => api.answerUserInput(sessionId, requestId, answer),
+  async (sessionId) => { sendAbortController?.abort(); await api.abort(sessionId); }
+);
+let streamSessionId = null;
+let sendingQueuedMessage = false;
+const pendingBranchJobs = [];
+let drainingBranchJobs = false;
 
 // ---------------- markdown / math rendering ----------------
 marked.setOptions({ gfm: true, breaks: false });
 
 export function renderMd(mdText, container) {
-  const html = marked.parse(mdText || "");
+  const { text, math } = protectMath(mdText || "");
+  const html = marked.parse(text);
   container.innerHTML = DOMPurify.sanitize(html, { ADD_ATTR: ["target"] });
+  restoreMath(container, math);
   try {
     renderMathInElement(container, {
       delimiters: [
         { left: "$$", right: "$$", display: true },
+        { left: "$", right: "$", display: false },
         { left: "\\(", right: "\\)", display: false },
         { left: "\\[", right: "\\]", display: true },
       ],
@@ -23,6 +36,39 @@ export function renderMd(mdText, container) {
       throwOnError: false,
     });
   } catch {}
+}
+
+// Markdown treats underscores and dollar signs as formatting before KaTeX can
+// see them. Replace complete math spans with inert ASCII tokens, then restore
+// them as text nodes so the math renderer receives the original delimiters.
+function protectMath(source) {
+  const math = [];
+  const text = String(source || "").replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+(?<!\\)\$)/g, (part) => {
+    const i = math.push(part) - 1;
+    return `MATHTOKEN${i}END`;
+  });
+  return { text, math };
+}
+
+function restoreMath(container, math) {
+  if (!math.length) return;
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const value = node.nodeValue || "";
+    if (!/MATHTOKEN\d+END/.test(value)) continue;
+    const frag = document.createDocumentFragment();
+    let cursor = 0;
+    value.replace(/MATHTOKEN(\d+)END/g, (token, index, offset) => {
+      frag.append(document.createTextNode(value.slice(cursor, offset)));
+      frag.append(document.createTextNode(math[Number(index)] || token));
+      cursor = offset + token.length;
+      return token;
+    });
+    frag.append(document.createTextNode(value.slice(cursor)));
+    node.replaceWith(frag);
+  }
 }
 
 // ---------------- sessions ----------------
@@ -39,6 +85,7 @@ export async function refreshSessions(keepCurrent = true) {
 }
 
 async function createSession() {
+  if (state.streaming) return toast("请先停止当前回复，再新建会话");
   try {
     const r = await api.createSession(state.currentPaper?.id || null, state.projectId || null);
     state.sessionId = r.id;
@@ -51,7 +98,8 @@ async function createSession() {
   }
 }
 
-export async function openSession(id) {
+export async function openSession(id, { force = false } = {}) {
+  if (state.streaming && !force) return toast("请先停止当前回复，再切换会话");
   state.sessionId = id;
   $("#messages").replaceChildren();
   liveNodes.length = 0;
@@ -66,7 +114,8 @@ export async function openSession(id) {
       if (m.role === "user") {
         const text = m.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
         const nImgs = m.parts.filter((p) => p.type === "image").length;
-        addMessageEl("user", text + (nImgs ? `\n[🖼 截图 ×${nImgs}]` : ""));
+        const node = addMessageEl("user", text + (nImgs ? `\n[🖼 截图 ×${nImgs}]` : ""));
+        if (m.entryId) addReaskButton(node, m.entryId, text);
       } else if (m.role === "assistant") {
         const node = assistantSkeleton();
         $("#messages").append(node.root);
@@ -76,7 +125,7 @@ export async function openSession(id) {
         for (const p of m.parts || []) {
           if (p.type === "text") textAcc += p.text;
           else if (p.type === "thinking") thinkingAcc += p.text;
-          else if (p.type === "toolCall") addToolCard(node, p.id, p.name, p.args);
+          else if (p.type === "toolCall") addToolCard(node, p.id, p.name, p.args, true);
         }
         flushAssistant(node, textAcc, thinkingAcc, false);
         collapseThinking(node);
@@ -98,6 +147,12 @@ function renderSessionMenu() {
   menu.replaceChildren();
   const cur = state.sessions.find((s) => s.id === state.sessionId);
   $("#session-title").textContent = cur ? cur.title || "(未命名会话)" : "发送消息时自动创建";
+  const branchLabel = $("#session-branch");
+  if (branchLabel) {
+    const isBranch = !!(cur?.parentId || cur?.parentSession);
+    branchLabel.textContent = isBranch ? "↳ Pi 分支" : "";
+    branchLabel.title = isBranch ? "当前会话由 Pi 原生会话树分支而来" : "";
+  }
   menu.append(
     el("div", {
       class: "dd-item dd-new",
@@ -109,20 +164,47 @@ function renderSessionMenu() {
   const others = state.sessions.filter((s) => !state.projectId || s.projectId !== state.projectId);
   if (state.projectId && inProject.length) {
     menu.append(el("div", { class: "dd-group" }, `项目「${proj?.name || ""}」`));
-    for (const s of inProject) menu.append(sessionRow(s, menu));
+    appendSessionTree(menu, inProject);
   }
   if (others.length) {
     menu.append(el("div", { class: "dd-group" }, inProject.length || state.projectId ? "其他会话" : ""));
-    for (const s of others) menu.append(sessionRow(s, menu));
+    appendSessionTree(menu, others);
   }
   if (!state.sessions.length) menu.append(el("div", { class: "dd-item", style: { color: "var(--fg2)" } }, "暂无会话"));
 }
 
-function sessionRow(s, menu) {
+function appendSessionTree(menu, sessions) {
+  const byParent = new Map();
+  for (const s of sessions) {
+    const key = s.parentId && sessions.some((p) => p.id === s.parentId) ? s.parentId : null;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(s);
+  }
+  const seen = new Set();
+  const walk = (nodes, depth) => {
+    for (const s of nodes || []) {
+      if (seen.has(s.id)) continue;
+      seen.add(s.id);
+      menu.append(sessionRow(s, menu, depth));
+      walk(byParent.get(s.id), depth + 1);
+    }
+  };
+  walk(byParent.get(null), 0);
+  // A malformed/foreign parent path should still be visible in the menu.
+  walk(sessions.filter((s) => !seen.has(s.id)), 0);
+}
+
+function sessionRow(s, menu, depth = 0) {
   const projName = s.projectId ? (state.projects.find((p) => p.id === s.projectId)?.name || "") : "";
-  return el("div", { class: "dd-item", onclick: () => { menu.classList.remove("open"); openSession(s.id); } },
-    el("div", { class: "t" }, (projName ? `[${projName}] ` : "") + (s.title || "(未命名会话)")),
-    el("div", { class: "s" }, [s.paperId ? (state.papers.find((p) => p.id === s.paperId)?.title || s.paperId) : "未绑定论文", s.updatedAt ? new Date(s.updatedAt).toLocaleString() : ""].join(" · "))
+  const isBranch = !!(s.parentId || s.parentSession);
+  return el("div", {
+    class: "dd-item" + (isBranch ? " dd-branch" : ""),
+    style: { paddingLeft: `${12 + depth * 18}px` },
+    title: isBranch ? "Pi 原生分支会话" : "Pi 主会话",
+    onclick: () => { menu.classList.remove("open"); openSession(s.id); },
+  },
+    el("div", { class: "t" }, (depth ? "↳ " : isBranch ? "↳ " : "") + (projName ? `[${projName}] ` : "") + (s.title || "(未命名会话)")),
+    el("div", { class: "s" }, [(isBranch ? "Pi 分支" : "主会话"), s.paperId ? (state.papers.find((p) => p.id === s.paperId)?.title || s.paperId) : "未绑定论文", s.updatedAt ? new Date(s.updatedAt).toLocaleString() : ""].join(" · "))
   );
 }
 
@@ -161,20 +243,48 @@ function addMessageEl(role, text, thumbs = [], displayBlocks = []) {
   return node;
 }
 
+// 编辑重问(fork): 修改历史问题并在新分支会话中重答,原会话原样保留
+function addReaskButton(node, entryId, originalText) {
+  const btn = el("button", {
+    class: "msg-edit",
+    title: "编辑该问题并在新分支中重答（原对话保留）",
+    onclick: async (ev) => {
+      ev.stopPropagation();
+      if (state.streaming) return toast("当前任务执行中，请等待完成后再重问", true);
+      const edited = prompt("编辑问题后重问 — 将新建分支会话，原对话不受影响：", originalText || "");
+      if (edited == null) return;
+      const t = edited.trim();
+      if (!t) return toast("内容为空，已取消", true);
+      try {
+        const r = await api.fork(state.sessionId, entryId, t.slice(0, 60));
+        state.sessionId = r.id;
+        state.model = r.model || state.model;
+        await refreshSessions();
+        await openSession(r.id);
+        await streamPrompt(t, [], t);
+      } catch (e) {
+        toast("重问失败: " + e.message, true);
+      }
+    },
+  }, "✎");
+  node.querySelector(".bubble")?.append(btn);
+}
+
 function makeActivity() {
   const thinkText = el("div", { class: "act-think" });
   const tail = el("div", { class: "act-tail" });
   const status = el("span", { class: "act-status" }, "思考中");
   const time = el("span", { class: "act-time" });
   const body = el("div", { class: "act-body" }, thinkText);
-  const root = el(
+  const act = { root: null, status, time, tail, thinkText, body, startedAt: Date.now(), collapsed: false, timer: null, steps: 0, thinkShown: false, running: new Map(), autoOpened: false, userToggled: false, toolTimer: null };
+  act.root = el(
     "div",
     {
       class: "activity streaming",
       onclick: () => {
-        if (root.classList.contains("streaming")) return;
-        const open = root.classList.toggle("open");
-        root.querySelector(".t-toggle").textContent = open ? "▾" : "▸";
+        act.userToggled = true;
+        const open = act.root.classList.toggle("open");
+        act.root.querySelector(".t-toggle").textContent = open ? "▾" : "▸";
         body.style.display = open ? "block" : "none";
       },
     },
@@ -183,7 +293,7 @@ function makeActivity() {
     body
   );
   body.style.display = "none";
-  return { root, status, time, tail, thinkText, body, startedAt: Date.now(), collapsed: false, timer: null, steps: 0, thinkShown: false };
+  return act;
 }
 
 function ensureActivity(node) {
@@ -217,11 +327,17 @@ function setThinking(node, text, streaming) {
 function collapseActivity(node) {
   if (!node.activity || node.activity.collapsed) return;
   const act = node.activity;
+  if (act.running?.size) return; // tools still running — keep the header live
   act.collapsed = true;
   clearInterval(act.timer);
   act.timer = null;
+  clearInterval(act.toolTimer);
+  act.toolTimer = null;
   const secs = ((Date.now() - act.startedAt) / 1000).toFixed(0);
   act.root.classList.remove("streaming");
+  act.root.classList.remove("open");
+  act.body.style.display = "none";
+  act.status.classList.remove("live");
   const bits = [];
   if (act.thinkShown) bits.push("深度思考");
   if (act.steps) bits.push(`${act.steps} 次工具调用`);
@@ -234,10 +350,70 @@ function collapseActivity(node) {
 
 const collapseThinking = collapseActivity; // history renderer alias
 
+// Live header while tools execute — the "agent is working" signal.
+// Keeps the collapsed one-liner honest: shows which tool is running, its
+// args and elapsed time; without it a tool that starts after text output
+// would run completely invisible inside the collapsed timeline.
+function updateActivityLive(node) {
+  const act = node.activity;
+  if (!act || act.collapsed) return;
+  if (act.running.size) {
+    clearInterval(act.timer);
+    act.timer = null;
+    let last = null;
+    for (const v of act.running.values()) last = v;
+    act.status.textContent = `⚙ ${toolLabel(last.name)} 运行中`;
+    act.status.classList.add("live");
+    act.tail.style.display = "block";
+    act.tail.textContent = " " + thinkTail(last.args || "");
+    if (!act.toolTimer) {
+      const t0 = last.startedAt;
+      act.toolTimer = setInterval(() => {
+        act.time.textContent = " " + ((Date.now() - t0) / 1000).toFixed(0) + "s";
+      }, 500);
+    }
+  } else {
+    clearInterval(act.toolTimer);
+    act.toolTimer = null;
+    act.status.classList.remove("live");
+    if (act.thinkShown && !node.textAcc) {
+      act.status.textContent = "深度思考中";
+      act.tail.textContent = " " + thinkTail(act.thinkText.textContent || "");
+      act.tail.style.display = "block";
+    }
+  }
+}
+
+// Turn settled (done/error/abort): clear live state and fold auto-opened
+// timelines back into the one-line summary.
+function finalizeActivity(node) {
+  const act = node.activity;
+  if (!act) return;
+  act.running.clear();
+  if (act.collapsed) return;
+  clearInterval(act.toolTimer);
+  act.toolTimer = null;
+  if (act.autoOpened && !act.userToggled) {
+    collapseActivity(node);
+    return;
+  }
+  const secs = ((Date.now() - act.startedAt) / 1000).toFixed(0);
+  act.root.classList.remove("streaming");
+  act.status.classList.remove("live");
+  const bits = [];
+  if (act.thinkShown) bits.push("深度思考");
+  if (act.steps) bits.push(`${act.steps} 次工具调用`);
+  act.status.textContent = bits.length ? bits.join(" · ") : "已分析";
+  act.time.textContent = Number(secs) > 0 ? ` ${secs}s` : "";
+  act.tail.style.display = "none";
+  act.root.querySelector(".t-toggle").textContent = act.root.classList.contains("open") ? "▾" : "▸";
+  node.bubble.classList.remove("thinking-active");
+}
+
 function flushAssistant(node, text, thinking, streaming) {
   node.textAcc = text;
   if (thinking) setThinking(node, thinking, streaming);
-  if (text && node.activity && !node.activity.collapsed) collapseActivity(node);
+  if (text && node.activity && !node.activity.collapsed && !node.activity.running.size) collapseActivity(node);
   if (!node.renderTimer) {
     node.renderTimer = setTimeout(() => {
       node.renderTimer = null;
@@ -249,10 +425,26 @@ function flushAssistant(node, text, thinking, streaming) {
 }
 
 // Tool calls: one-line cards INSIDE the activity timeline
-function addToolCard(node, id, name, args) {
+// fromHistory: history render has no live tools — never register it into the
+// running set (that would wedge the header on "运行中" after reload).
+function addToolCard(node, id, name, args, fromHistory = false) {
   const act = ensureActivity(node);
   act.steps++;
-  if (!act.thinkShown) act.status.textContent = "调用工具中";
+  // Text already streamed and the timeline folded → pop it back open so the
+  // running tool (and its live output) is actually visible. History render
+  // has no live tools: no running tracking, no auto-open (it would wedge the
+  // header on "运行中" after reload).
+  if (!fromHistory) {
+    if (!act.userToggled && !act.root.classList.contains("open")) {
+      act.collapsed = false;
+      act.autoOpened = true;
+      act.root.classList.add("streaming", "open");
+      act.body.style.display = "block";
+      act.root.querySelector(".t-toggle").textContent = "▾";
+    }
+    act.running.set(id, { name, args: argsPreview(args), startedAt: Date.now() });
+  }
+  if (!act.thinkShown && act.running.size === 1) act.status.textContent = "调用工具中";
   const status = el("span", { class: "tl-status" }, "…");
   const glyph = el("span", { class: "tl-glyph" }, "⚙");
   const card = el(
@@ -261,6 +453,7 @@ function addToolCard(node, id, name, args) {
     el("div", { class: "tool-line" }, glyph, el("span", { class: "tname" }, toolLabel(name)), el("span", { class: "targs" }, argsPreview(args)), status)
   );
   const tout = el("div", { class: "tout" });
+  if (name === "bash" || name === "powershell") tout.classList.add("tout-term");
   tout.style.display = "none";
   card.append(tout);
   card.addEventListener("click", (e) => {
@@ -269,36 +462,78 @@ function addToolCard(node, id, name, args) {
     const open = tout.style.display !== "none";
     tout.style.display = open ? "none" : "block";
   });
-  node.toolCards.set(id, { card, tout, glyph, status, startedAt: Date.now() });
+  node.toolCards.set(id, { card, tout, glyph, status, startedAt: Date.now(), text: "", live: false, timer: null });
   act.body.append(card);
+  if (!fromHistory) updateActivityLive(node);
   scrollBottom();
   return card;
+}
+
+// cap long terminal-ish output: keep the tail (bash prints newest lines last)
+const OUT_MAX = 6000;
+function clipOut(s, head = false) {
+  if (s.length <= OUT_MAX) return s;
+  return head ? s.slice(0, OUT_MAX) + `\n…[截断，共 ${s.length} 字符]` : `…[前段省略，共 ${s.length} 字符]\n` + s.slice(-OUT_MAX);
+}
+
+// SSE tool_update: pi streams bash output as cumulative snapshots (~100ms)
+function liveToolText(node, id, text) {
+  const tc = node.toolCards.get(id);
+  if (!tc || !text) return;
+  tc.text = text;
+  if (!tc.live) {
+    tc.live = true;
+    tc.card.classList.add("run");
+    tc.status.textContent = "运行中";
+    tc.timer = setInterval(() => {
+      tc.status.textContent = ((Date.now() - tc.startedAt) / 1000).toFixed(0) + "s 运行中";
+    }, 1000);
+  }
+  tc.tout.textContent = clipOut(text);
+  tc.tout.style.display = "block";
+  tc.tout.dataset.has = "1";
+  tc.card.classList.add("has-out");
+  tc.tout.scrollTop = tc.tout.scrollHeight;
 }
 
 function fillToolCard(id, name, text, isError) {
   for (const node of liveNodes) {
     const tc = node.toolCards.get(id);
     if (tc) {
+      clearInterval(tc.timer);
+      tc.timer = null;
+      node.activity?.running?.delete(id);
+      const secs = ((Date.now() - tc.startedAt) / 1000).toFixed(1);
       tc.card.classList.toggle("err", !!isError);
+      tc.card.classList.remove("run");
       tc.glyph.textContent = isError ? "✕" : "✓";
-      tc.status.textContent = ((Date.now() - tc.startedAt) / 1000).toFixed(1) + "s";
-      if (text && text.trim()) {
-        tc.tout.textContent = text.slice(0, 2500);
+      const final = tc.live && tc.text.length >= String(text || "").length ? tc.text : String(text || "");
+      tc.status.textContent = secs + "s" + (isError ? " ·错误" : tc.live ? " ·已结束" : "");
+      if (final.trim()) {
+        tc.tout.textContent = clipOut(final, !tc.live);
         tc.tout.dataset.has = "1";
         tc.card.classList.add("has-out");
       }
+      updateActivityLive(node);
       return;
     }
   }
 }
 
-const TOOL_LABELS = { read_paper: "读论文", list_library: "文献库列表", search_library: "检索文献库", read: "读文件", grep: "搜索", ls: "列目录" };
+const TOOL_LABELS = {
+  read_paper: "读论文", list_library: "文献库列表", search_library: "检索文献库", search_papers: "学术检索", get_paper_pages: "论文截图",
+  read: "读文件", grep: "搜索", ls: "列目录",
+  bash: "shell 命令", powershell: "PowerShell", edit: "编辑文件", write: "写文件", find: "查找文件",
+};
 const toolLabel = (n) => TOOL_LABELS[n] || n;
 
 function argsPreview(args) {
   try {
     const o = typeof args === "string" ? JSON.parse(args) : args || {};
-    const bits = Object.entries(o).map(([k, v]) => `${k}=${typeof v === "string" ? v.slice(0, 40) : JSON.stringify(v)?.slice(0, 40)}`);
+    const bits = Object.entries(o).map(([k, v]) => {
+      const s = typeof v === "string" ? v : JSON.stringify(v);
+      return `${k}=${s.slice(0, k === "command" ? 120 : 40)}`;
+    });
     return bits.join("  ");
   } catch {
     return String(args || "").slice(0, 60);
@@ -387,21 +622,37 @@ async function buildPromptParts(chipsIn) {
   return { text: extracted.text, images: [...images, ...extracted.images] };
 }
 
-export async function sendMessage() {
+export async function sendMessage(mode = "steer") {
   try {
-    await sendMessageInner();
+    await sendMessageInner(mode);
   } catch (e) {
     toast("发送失败: " + (e.message || e), true);
   }
 }
 
-async function sendMessageInner() {
+async function sendMessageInner(mode) {
+  if (userInputUI.pending) return toast("请先回答或取消小窗里的问题");
+  if (sendingQueuedMessage) return;
   const input = $("#composer-input");
   const text = input.value.trim();
   const { text: ctxText, images } = await buildPromptParts();
   if (!text && !ctxText) return;
-  if (state.streaming) return;
-
+  const fullText = [text, ctxText].filter(Boolean).join("\n\n");
+  if (state.streaming) {
+    // Keep the draft and attachments if the server rejects the queued message.
+    sendingQueuedMessage = true;
+    const originalValue = input.value;
+    const originalChips = [...state.chips];
+    try {
+      await api.steer(streamSessionId, { text: fullText, images, mode });
+      if (input.value === originalValue) input.value = "";
+      state.chips = state.chips.filter((chip) => !originalChips.includes(chip));
+      autoSizeInput();
+      renderChips();
+      toast(mode === "followUp" ? "已排队，当前任务完成后处理" : "已插队，将在当前轮工具结束后介入");
+    } finally { sendingQueuedMessage = false; }
+    return;
+  }
   if (!state.sessionId) {
     try {
       const r = await api.createSession(state.currentPaper?.id || null, state.projectId || null);
@@ -414,7 +665,6 @@ async function sendMessageInner() {
     }
   }
 
-  const fullText = [text, ctxText].filter(Boolean).join("\n\n");
   input.value = "";
   autoSizeInput();
   state.chips = [];
@@ -425,6 +675,65 @@ async function sendMessageInner() {
 
 // Shared streaming core: ensures a session, renders the exchange, streams SSE.
 // Used by the composer and by the reader's box-annotation quick-ask.
+async function drainBranchJobs() {
+  if (drainingBranchJobs || state.streaming) return;
+  drainingBranchJobs = true;
+  try {
+    while (pendingBranchJobs.length && !state.streaming) {
+      const job = pendingBranchJobs.shift();
+      try { await job(); } catch (e) { toast("分支任务失败: " + e.message, true); }
+    }
+  } finally {
+    drainingBranchJobs = false;
+  }
+}
+
+async function forkPoint(sessionId) {
+  try {
+    const h = await api.history(sessionId);
+    return [...(h.messages || [])].reverse().find((m) => m.role === "user" && m.entryId)?.entryId || null;
+  } catch {
+    return null;
+  }
+}
+
+// Run a prompt in a native Pi branch. When the source conversation is busy,
+// the branch is created immediately and its prompt waits until the active SSE
+// turn settles. This preserves Pi's append-only tree and gives the user a
+// visible branch in the session selector instead of mixing two transcripts.
+export async function streamPromptInBranch(fullText, images = [], userPreview, displayBlocks = [], onDone) {
+  const sourceId = streamSessionId || state.sessionId;
+  if (!sourceId) return streamPrompt(fullText, images, userPreview, displayBlocks, onDone);
+  const entryId = await forkPoint(sourceId);
+  const title = (userPreview || fullText || "视频分析").replace(/\s+/g, " ").slice(0, 60);
+  let branch = null;
+  if (entryId) {
+    try {
+      branch = await api.fork(sourceId, entryId, title);
+    } catch (e) {
+      toast("Pi 分支创建失败，将使用独立会话: " + e.message, true);
+    }
+  }
+  const job = async () => {
+    if (!branch) {
+      const r = await api.createSession(state.currentPaper?.id || null, state.projectId || null, title);
+      branch = r;
+    }
+    state.sessionId = branch.id;
+    state.model = branch.model || state.model;
+    await refreshSessions();
+    await openSession(branch.id, { force: true });
+    await streamPrompt(fullText, images, userPreview, displayBlocks, onDone);
+  };
+  await refreshSessions();
+  if (state.streaming) {
+    pendingBranchJobs.push(job);
+    toast(branch ? "已创建 Pi 分支；当前任务结束后自动开始视频分析" : "已排入独立会话；当前任务结束后自动开始视频分析");
+    return;
+  }
+  await job();
+}
+
 export async function streamPrompt(fullText, images = [], userPreview, displayBlocks = [], onDone) {
   if (state.streaming) {
     toast("上一条还在回复中，稍候", true);
@@ -447,20 +756,25 @@ export async function streamPrompt(fullText, images = [], userPreview, displayBl
     images.map((im) => `data:${im.mimeType};base64,${im.data}`),
     displayBlocks
   );
-  const node = assistantSkeleton();
+  let node = assistantSkeleton();
   $("#messages").append(node.root);
   liveNodes.length = 0;
   liveNodes.push(node);
   scrollBottom(true);
 
   state.streaming = true;
+  streamSessionId = state.sessionId;
+  const sessionId = streamSessionId;
   setStreamingUI(true);
   sendAbortController = new AbortController();
   let acc = "";
   let think = "";
+  let seenInitialUser = false;
+  let seenAssistant = false;
+  let streamCompleted = false;
 
   try {
-    const res = await fetch(`/api/sessions/${state.sessionId}/prompt`, {
+    const res = await fetch(`/api/sessions/${sessionId}/prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text: fullText, images, paperId: state.currentPaper?.id || null, projectId: state.projectId || null }),
@@ -485,6 +799,41 @@ export async function streamPrompt(fullText, images = [], userPreview, displayBl
         let ev;
         try { ev = JSON.parse(line.slice(6)); } catch { continue; }
         switch (ev.t) {
+          case "ui_request":
+            userInputUI.show(sessionId, ev.request);
+            break;
+          case "ui_resolved":
+            userInputUI.resolve(ev.id);
+            if (ev.reason === "timeout") toast("提问已超时，已取消");
+            break;
+          case "queue": {
+            const queue = $("#chat-queue");
+            const lines = [
+              ...(ev.steering || []).map((text) => "待插队：" + text.slice(0, 100)),
+              ...(ev.followUp || []).map((text) => "已排队：" + text.slice(0, 100)),
+            ];
+            queue.textContent = lines.join("\n");
+            queue.hidden = !lines.length;
+            break;
+          }
+          case "user_start":
+            if (seenInitialUser) {
+              flushAssistant(node, acc, think, false);
+              addMessageEl("user", ev.text, (ev.images || []).map((im) => `data:${im.mimeType};base64,${im.data}`));
+            }
+            seenInitialUser = true;
+            break;
+          case "assistant_start":
+            if (seenAssistant) {
+              flushAssistant(node, acc, think, false);
+              node = assistantSkeleton();
+              $("#messages").append(node.root);
+              liveNodes.push(node);
+              acc = "";
+              think = "";
+            }
+            seenAssistant = true;
+            break;
           case "delta":
             acc += ev.text;
             break;
@@ -493,6 +842,10 @@ export async function streamPrompt(fullText, images = [], userPreview, displayBl
             break;
           case "tool_start": {
             addToolCard(node, ev.id, ev.name, ev.args);
+            break;
+          }
+          case "tool_update": {
+            liveToolText(node, ev.id, ev.text);
             break;
           }
           case "tool_end": {
@@ -505,19 +858,22 @@ export async function streamPrompt(fullText, images = [], userPreview, displayBl
             toast(ev.note || "自动重试中…");
             break;
           case "notice":
-            toast(ev.note);
+            toast(ev.note, ev.isError);
             break;
           case "done":
+            streamCompleted = true;
             if (ev.errorMessage) markError(node, ev.errorMessage);
             addMeta(node, ev.usage, ev.model ? `${ev.model.provider}/${ev.model.id}` : null);
             break;
           case "error":
+            streamCompleted = true;
             markError(node, ev.message);
             break;
         }
         flushAssistant(node, acc, think, true);
       }
     }
+    if (!streamCompleted) throw new Error("连接已断开，当前任务已停止，请重新发送。");
   } catch (e) {
     if (e.name === "AbortError") {
       markError(node, "已停止");
@@ -525,18 +881,30 @@ export async function streamPrompt(fullText, images = [], userPreview, displayBl
       markError(node, e.message);
     }
   } finally {
+    userInputUI.clear();
+    for (const n of liveNodes) finalizeActivity(n);
     flushAssistant(node, acc, think, false);
     state.streaming = false;
     setStreamingUI(false);
     sendAbortController = null;
+    streamSessionId = null;
+    $("#chat-queue").hidden = true;
+    $("#chat-queue").textContent = "";
     try { onDone?.(acc); } catch {}
     refreshSessions();
+    void drainBranchJobs();
   }
 }
 
 function setStreamingUI(on) {
-  $("#btn-send").hidden = on;
+  $("#btn-send").hidden = false;
+  $("#btn-send").textContent = on ? "插队" : "➤";
+  $("#btn-send").title = on ? "插队：Enter（当前轮工具结束后介入）" : "发送：Enter";
+  $("#btn-queue").hidden = !on;
   $("#btn-stop").hidden = !on;
+  $("#composer-keys").textContent = on ? "Enter 插队 · Alt+Enter / Ctrl+Q 排队 · Shift+Enter 换行" : "Enter 发送 · Shift+Enter 换行";
+  $("#composer-input").placeholder = on ? "补充要求…（Enter 插队，Alt+Enter 排队）" : "问点什么…（Enter 发送，Shift+Enter 换行）";
+  for (const id of ["#btn-new-session", "#btn-del-session", "#session-btn", "#project-select", "#model-select", "#think-select"]) $(id).disabled = on;
 }
 
 export function updateComposerHint() {
@@ -610,11 +978,13 @@ export function initChat() {
     onComposerInput();
   });
   input.addEventListener("keydown", (e) => {
-    if (handleComposerKeys(e)) return;
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    if (e.isComposing || e.keyCode === 229) return;
+    const action = composerAction(e);
+    if (!e.altKey && !e.ctrlKey && !e.metaKey && handleComposerKeys(e)) return;
+    if (action) {
       e.preventDefault();
       if (input.value.trim().startsWith("/")) closeMenu();
-      sendMessage();
+      sendMessage(action);
     }
   });
   input.addEventListener("click", () => {
@@ -623,10 +993,13 @@ export function initChat() {
   document.addEventListener("click", (e) => {
     if (!e.target.closest("#cmd-menu") && !e.target.closest("#composer-input")) closeMenu();
   });
-  $("#btn-send").addEventListener("click", sendMessage);
+  $("#btn-send").addEventListener("click", () => sendMessage("steer"));
+  $("#btn-queue").addEventListener("click", () => sendMessage("followUp"));
   $("#btn-stop").addEventListener("click", async () => {
+    const sessionId = streamSessionId;
     sendAbortController?.abort();
-    try { if (state.sessionId) await api.abort(state.sessionId); } catch {}
+    userInputUI.clear();
+    try { if (sessionId) await api.abort(sessionId); } catch {}
   });
 
   const box = $("#messages");

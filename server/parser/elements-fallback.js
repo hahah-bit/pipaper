@@ -32,8 +32,56 @@ export async function pageLines(page) {
       lines.push({ text: it.str, x0: vx, x1: vx + w, top, bottom, h });
     }
   }
-  lines.sort((a, b) => a.top - b.top);
-  return { lines, pageW: base.width, pageH: base.height };
+  lines.sort((a, b) => a.top - b.top || a.x0 - b.x0);
+  return { lines: orderPageLines(lines, base.width), pageW: base.width, pageH: base.height };
+}
+
+function orderPageLines(lines, pageW) {
+  const contentMin = Math.min(...lines.map((l) => l.x0));
+  const contentMax = Math.max(...lines.map((l) => l.x1));
+  const contentW = Math.max(1, contentMax - contentMin);
+  const eligible = lines.filter((l) => l.text.length >= 25 && (l.x1 - l.x0) < contentW * 0.72);
+  const centers = eligible.map((l) => (l.x0 + l.x1) / 2).sort((a, b) => a - b);
+  let gap = 0;
+  let at = -1;
+  for (let i = 1; i < centers.length; i++) {
+    if (centers[i] - centers[i - 1] > gap) {
+      gap = centers[i] - centers[i - 1];
+      at = i;
+    }
+  }
+  if (at < 0 || gap < pageW * 0.16) return lines.map((l) => ({ ...l, column: "single" }));
+  const split = (centers[at - 1] + centers[at]) / 2;
+  const columnOf = (l) => {
+    const tolerance = pageW * 0.025;
+    if (l.x1 <= split + tolerance) return "left";
+    if (l.x0 >= split - tolerance) return "right";
+    return "span";
+  };
+  const tagged = lines.map((l) => ({ l, column: columnOf(l) }));
+  const left = tagged.filter((x) => x.column === "left").sort(linePosition);
+  const right = tagged.filter((x) => x.column === "right").sort(linePosition);
+  const spans = tagged.filter((x) => x.column === "span").sort((a, b) => linePosition(a.l, b.l));
+  const substantive = (x) => x.column !== "span" && !/^published as a conference paper/i.test(x.l.text) && !/^\d+$/.test(x.l.text.trim()) && (x.l.text.length >= 28 || x.l.h >= 13);
+  const leftBody = left.filter(substantive);
+  const rightBody = right.filter(substantive);
+  const body = leftBody.concat(rightBody);
+  const firstY = body.length ? Math.min(...body.map((x) => x.l.top)) : Math.min(...tagged.map((x) => x.l.top));
+  const rightEnd = right.length ? Math.max(...right.map((x) => x.l.bottom)) : -Infinity;
+  // A short final line of a full-width paragraph can look like a left-column
+  // line. Keep it with the span above until the first real column paragraph.
+  const corrected = tagged.map((x) => x.column !== "span" && x.l.top < firstY ? { ...x, column: "span" } : x);
+  const correctedLeft = corrected.filter((x) => x.column === "left").sort((a, b) => linePosition(a.l, b.l));
+  const correctedRight = corrected.filter((x) => x.column === "right").sort((a, b) => linePosition(a.l, b.l));
+  const correctedSpans = corrected.filter((x) => x.column === "span").sort((a, b) => linePosition(a.l, b.l));
+  const pre = correctedSpans.filter((x) => x.l.top < firstY);
+  const post = correctedSpans.filter((x) => rightEnd > -Infinity && x.l.top > rightEnd - 12);
+  const middle = correctedSpans.filter((x) => !post.includes(x) && x.l.top >= firstY);
+  return [...pre, ...correctedLeft, ...middle, ...correctedRight, ...post].map((x) => ({ ...x.l, column: x.column }));
+}
+
+function linePosition(a, b) {
+  return a.top - b.top || a.x0 - b.x0;
 }
 
 export async function extractFigureElements(pdfPath, log = () => {}) {
@@ -53,7 +101,7 @@ export async function extractFigureElements(pdfPath, log = () => {}) {
           const l = lines[i];
           const m = l.text.match(CAPTION_RE);
           if (!m) continue;
-          const col = colOf(l);
+          const col = l.column === "single" ? colOf(l) : l.column === "span" ? -1 : l.column === "left" ? 0 : 1;
           const x0 = col === 1 ? mid : Math.max(0, l.x0 - 20);
           const x1 = col === 0 ? mid : col === -1 ? pageW : Math.min(pageW, l.x1 + 20);
           // top = bottom of nearest dense paragraph line above the caption

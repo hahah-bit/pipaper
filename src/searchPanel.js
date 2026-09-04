@@ -73,6 +73,33 @@ function resultCard(r) {
     ) : null,
     el("div", { class: "sr-actions" },
       r.pdfUrl ? el("a", { class: "tool-btn", href: r.pdfUrl, target: "_blank", rel: "noreferrer", title: "打开/下载 PDF 链接" }, "PDF") : null,
+      r.pdfUrl ? el("button", {
+        class: "tool-btn",
+        title: "下载开放 PDF 并加入当前文献库",
+        onclick: async () => {
+          try {
+            const res = await fetch("/api/search/import", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pdfUrl: r.pdfUrl, title: r.title, projectId: state.projectId || null }),
+            });
+            const j = await res.json();
+            if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
+            toast(j.reused ? "文献已在库中，已复用解析状态" : "文献已加入库");
+            const data = await api.papers();
+            state.papers = data.papers;
+            state.collections = data.collections;
+            state.zotero = data.zotero;
+            state.projects = data.projects || state.projects;
+            const side = await import("./sidebar.js");
+            side.renderProjects();
+            side.renderCollections();
+            side.renderPapers();
+          } catch (e) {
+            toast("入库失败: " + e.message, true);
+          }
+        },
+      }, "入库") : null,
       r.url ? el("a", { class: "tool-btn", href: r.url, target: "_blank", rel: "noreferrer", title: "打开原文链接" }, "原文") : null,
       el("button", {
         class: "tool-btn", title: "复制 BibTeX",

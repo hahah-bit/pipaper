@@ -7,7 +7,6 @@
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const PDFJS_ENTRY = require.resolve("pdfjs-dist/legacy/build/pdf.mjs");
@@ -41,7 +40,8 @@ let fontsUrl;
 function getFontsUrl() {
   if (fontsUrl === undefined) {
     const dir = path.join(process.cwd(), "node_modules", "pdfjs-dist", "standard_fonts");
-    fontsUrl = fs.existsSync(dir) ? pathToFileURL(dir + path.sep).href : null;
+    // NodeStandardFontDataFactory reads filesystem paths, not file:// strings.
+    fontsUrl = fs.existsSync(dir) ? dir + path.sep : null;
   }
   return fontsUrl;
 }
@@ -53,7 +53,8 @@ export async function openDocument(pdfPath) {
   const data = new Uint8Array(fs.readFileSync(pdfPath));
   const doc = await pdfjs.getDocument({
     data,
-    useSystemFonts: true,
+    useSystemFonts: false,
+    disableFontFace: true,
     isEvalSupported: false,
     standardFontDataUrl: getFontsUrl(),
   }).promise;

@@ -260,7 +260,7 @@ export function writeParseState(paperId, state) {
 
 export function readBlocks(paperId) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(parsedDir(paperId), "blocks.json"), "utf8"));
+    return JSON.parse(fs.readFileSync(path.join(activeParsedDir(paperId), "blocks.json"), "utf8"));
   } catch {
     return null;
   }
@@ -268,10 +268,19 @@ export function readBlocks(paperId) {
 
 export function readParsedText(paperId) {
   try {
-    return fs.readFileSync(path.join(parsedDir(paperId), "full.md"), "utf8");
+    return fs.readFileSync(path.join(activeParsedDir(paperId), "full.md"), "utf8");
   } catch {
     return null;
   }
+}
+
+export function activeParsedDir(paperId) {
+  const root = parsedDir(paperId);
+  const pointer = path.join(root, "current.json");
+  if (!fs.existsSync(pointer)) return root;
+  const { versionId } = JSON.parse(fs.readFileSync(pointer, "utf8"));
+  if (!/^v_[a-zA-Z0-9_-]+$/.test(versionId || "")) throw new Error("无效的当前解析版本");
+  return path.join(root, "versions", versionId);
 }
 
 // ---- session index (UI metadata over pi sessions) ----

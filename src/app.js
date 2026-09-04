@@ -58,7 +58,10 @@ export const api = {
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
   },
-  parse: (id, engine) => jfetch(`/api/papers/${id}/parse`, { method: "POST", body: { engine } }),
+  parse: (id, engine, sourceVersion) => jfetch(`/api/papers/${id}/parse`, { method: "POST", body: { engine, sourceVersion } }),
+  parseVersions: (id) => jfetch(`/api/papers/${id}/versions`),
+  parseVersion: (id, version) => jfetch(`/api/papers/${id}/versions/${version}`),
+  activateParseVersion: (id, version) => jfetch(`/api/papers/${id}/versions/${version}/activate`, { method: "POST", body: {} }),
   job: (id) => jfetch(`/api/jobs/${id}`),
   models: () => jfetch("/api/models"),
   commands: () => jfetch("/api/pi/commands"),
@@ -76,6 +79,9 @@ export const api = {
   createSession: (paperId, projectId, title) => jfetch("/api/sessions", { method: "POST", body: { paperId, projectId, title } }),
   history: (id) => jfetch(`/api/sessions/${id}`),
   delSession: (id) => jfetch(`/api/sessions/${id}`, { method: "DELETE" }),
+  steer: (id, body) => jfetch(`/api/sessions/${id}/steer`, { method: "POST", body }),
+  answerUserInput: (id, requestId, body) => jfetch(`/api/sessions/${id}/ui/${requestId}`, { method: "POST", body }),
+  fork: (id, entryId, title) => jfetch(`/api/sessions/${id}/fork`, { method: "POST", body: { entryId, title } }),
   setModel: (id, body) => jfetch(`/api/sessions/${id}/model`, { method: "POST", body }),
   compact: (id) => jfetch(`/api/sessions/${id}/compact`, { method: "POST", body: {} }),
   abort: (id) => jfetch(`/api/sessions/${id}/abort`, { method: "POST" }),

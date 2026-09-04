@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PiPaper · 论文精读工作台</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
-<link rel="stylesheet" href="/style.css?v=a3013cda48" />
+<link rel="stylesheet" href="/style.css?v=2e70ddcbc5" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -14,6 +14,7 @@
   <aside id="sidebar">
     <div class="side-head">
       <span id="btn-theme-slot" style="display:flex"></span>
+      <button id="btn-sidebar-toggle" class="pane-toggle" title="折叠文献库" aria-label="折叠文献库">‹</button>
       <div class="brand"><span class="logo">π</span><span>PiPaper</span></div>
       <div class="side-actions">
         <button id="btn-import" class="icon-btn" title="导入本地 PDF">＋导入</button>
@@ -37,7 +38,9 @@
   </aside>
 
   <!-- ============ Chat ============ -->
-  <div class="gutter" id="gutter-1" title="拖拽调整宽度"></div>
+  <div class="gutter" id="gutter-1" title="拖拽调整宽度">
+    <button class="pane-reopen" data-pane="sidebar" title="展开文献库" aria-label="展开文献库">›</button>
+  </div>
   <section id="chat-pane">
     <header id="chat-head">
       <div class="session-row">
@@ -47,6 +50,9 @@
         </div>
         <button id="btn-new-session" class="icon-btn" title="新会话">＋</button>
         <button id="btn-del-session" class="icon-btn" title="删除当前会话">🗑</button>
+        <span id="session-branch" class="session-branch" aria-live="polite"></span>
+        <button id="btn-chat-float" class="pane-toggle" title="悬浮对话" aria-label="悬浮对话">⤢</button>
+        <button id="btn-chat-toggle" class="pane-toggle" title="折叠对话" aria-label="折叠对话">›</button>
         <div class="spacer"></div>
         <select id="model-select" title="模型"></select>
         <select id="think-select" title="思考深度">
@@ -65,14 +71,19 @@
       <div id="composer">
         <textarea id="composer-input" rows="1" placeholder="问点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
         <button id="btn-send" title="发送">➤</button>
+        <button id="btn-queue" class="tool-btn" title="排队：Alt+Enter / Ctrl+Q（当前任务完成后处理）" hidden>排队</button>
         <button id="btn-stop" title="停止" hidden>■</button>
       </div>
+      <div id="chat-queue" aria-live="polite" hidden></div>
+      <div id="composer-keys">Enter 发送 · Shift+Enter 换行</div>
       <div id="composer-hint"></div>
     </div>
   </section>
 
   <!-- ============ Reader ============ -->
-  <div class="gutter" id="gutter-2" title="拖拽调整宽度"></div>
+  <div class="gutter" id="gutter-2" title="拖拽调整宽度">
+    <button class="pane-reopen" data-pane="chat" title="展开对话" aria-label="展开对话">‹</button>
+  </div>
   <section id="reader-pane">
     <header id="reader-head">
       <div class="tabs">
@@ -84,11 +95,13 @@
       <button id="btn-parse" class="tool-btn">解析</button>
       <button id="btn-rightbar-toggle" class="tool-btn active" title="检索/视频面板">🔍</button>
       <button id="btn-boxselect" class="tool-btn" title="在 PDF 上框选截图加入对话">⬚ 框选</button>
+      <button id="btn-reader-toggle" class="pane-toggle" title="折叠阅读器" aria-label="折叠阅读器">›</button>
     </header>
     <div id="parse-panel" hidden>
       <div class="parse-panel-head">
         <span id="parse-title">解析</span>
         <select id="parse-engine">
+          <option value="hybrid">复合解析</option>
           <option value="auto">自动选择引擎</option>
           <option value="mineru">MinerU（公式/表格/图片）</option>
           <option value="unstructured">unstructured.io</option>
@@ -98,6 +111,14 @@
         <div class="spacer"></div>
         <button id="btn-parse-close" class="icon-btn">✕</button>
       </div>
+      <div class="parse-panel-head parse-history">
+        <select id="parse-version" aria-label="解析版本"><option value="">当前结果</option></select>
+        <button id="btn-version-preview" class="tool-btn">预览</button>
+        <button id="btn-version-compare" class="tool-btn">对比当前</button>
+        <button id="btn-version-activate" class="tool-btn">采用版本</button>
+        <button id="btn-version-replay" class="tool-btn">本地重建</button>
+      </div>
+      <div id="parse-quality" role="status"></div>
       <pre id="parse-log" class="parse-log"></pre>
     </div>
     <div id="reader-body">
@@ -115,7 +136,10 @@
   </section>
 
   <!-- ============ Right panel: 检索 / 视频 ============ -->
-  <div class="gutter" id="gutter-3" title="拖拽调整宽度"></div>
+  <div class="gutter" id="gutter-3" title="拖拽调整宽度">
+    <button class="pane-reopen reopen-reader" data-pane="reader" title="展开阅读器" aria-label="展开阅读器">‹</button>
+    <button class="pane-reopen reopen-right" data-pane="right" title="展开检索/视频面板" aria-label="展开检索/视频面板">›</button>
+  </div>
   <aside id="rightbar">
     <div class="side-tabs">
       <button class="rt-tab active" data-tab="search">🔍 检索</button>
@@ -267,6 +291,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=a3013cda48"></script>
+<script src="/app.js?v=2e70ddcbc5"></script>
 </body>
 </html>

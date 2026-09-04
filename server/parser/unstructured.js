@@ -25,7 +25,7 @@ const GROUPS = {
   Caption: "caption",
 };
 
-export async function parseUnstructured(pdfPath, cfg, log = () => {}) {
+export async function parseUnstructured(pdfPath, cfg, log = () => {}, capture = () => {}) {
   const apiKey = cfg.apiKey;
   const base = (cfg.url || "https://api.unstructured.io").replace(/\/$/, "");
   if (cfg.mode === "api" && !apiKey) throw new Error("unstructured API key 未配置（设置 → 解析 → unstructured）");
@@ -47,6 +47,7 @@ export async function parseUnstructured(pdfPath, cfg, log = () => {}) {
   }
   log("解析完成，整理元素…");
   const json = await res.json();
+  capture(json);
   return mapElements(json);
 }
 
@@ -55,7 +56,7 @@ export function mapElements(elements) {
   let imgN = 0;
   for (const el of elements || []) {
     const cat = el.type;
-    const kind = GROUPS[cat] ?? "para";
+    const kind = Object.hasOwn(GROUPS, cat) ? GROUPS[cat] : "para";
     if (kind === null) continue;
     const meta = el.metadata || {};
     const page = meta.page_number;
@@ -68,7 +69,7 @@ export function mapElements(elements) {
       const ys = pts.map((p) => p[1]);
       bbox = [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)].map((v) => Math.round(v));
     }
-    const bboxField = bbox ? { bbox } : {};
+    const bboxField = { ...(bbox ? { bbox } : {}), coordinateSize: [meta.coordinates?.layout_width, meta.coordinates?.layout_height], provenance: { engine: "unstructured", sourceIndex: elements.indexOf(el), rawId: el.element_id } };
     if (kind === "heading") {
       const lvl = Math.min(4, (el.metadata?.category_depth || 0) + 1) || 1;
       if (el.text) blocks.push({ type: "heading", level: lvl, text: el.text, ...pageField, ...bboxField });

@@ -5,12 +5,14 @@
   "type": "module",
   "description": "PiPaper — 论文精读工作台：以 pi agent 为内核的论文阅读 / 对话 UI",
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "build": "node scripts/build.mjs",
     "start": "node scripts/build.mjs && node server/index.js",
     "dev": "node scripts/build.mjs && node server/index.js"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.4",
+    "@xmldom/xmldom": "^0.9.12",
     "adm-zip": "^0.5.16",
     "express": "^4.21.2",
     "markmap-lib": "^0.18.12",

@@ -175,7 +175,7 @@ async function searchArxiv(q, o) {
   if (o.yearFrom) items = items.filter((i) => i.year >= o.yearFrom);
   if (o.yearTo) items = items.filter((i) => i.year <= o.yearTo);
   if (o.sort === "citations") items = items.slice().reverse();
-  return items.map((i) => ({ ...i, oa: true, keywords: [] }));
+  return items.map((i) => ({ ...i, source: "arxiv", oa: true, keywords: [] }));
 }
 
 async function searchCrossref(q, o) {

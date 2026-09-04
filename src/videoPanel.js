@@ -1,5 +1,5 @@
-import { $, el, toast, addChip } from "./app.js";
-import { streamPrompt } from "./chat.js";
+import { $, el, toast, addChip, state } from "./app.js";
+import { streamPrompt, streamPromptInBranch } from "./chat.js";
 
 // Self-contained video module (right panel tab): manager list + inline player
 // + AI analysis (timeline / mindmap via markmap) + batch analysis + PiP with
@@ -11,6 +11,11 @@ let listCollapsed = false;
 const selected = new Set();
 
 const srcOf = (v) => v.playSrc || (v.remote ? "/api/video/proxy?url=" + encodeURIComponent(v.url) : v.url);
+
+// Keep the video result in the conversation context. If that conversation is
+// already executing, reuse Pi's native fork/tree and start the analysis when
+// the active turn settles.
+const streamVideoPrompt = (...args) => state.streaming ? streamPromptInBranch(...args) : streamPrompt(...args);
 
 export function initVideoPanel() {
   $("#btn-video-pick").addEventListener("click", () => $("#video-input").click());
@@ -258,10 +263,12 @@ function parseAnalysis(text) {
 }
 
 async function analyzeOne(v, mode) {
+  const startedBusy = state.streaming;
+  const streamVideo = (...args) => (startedBusy || state.streaming) ? streamPromptInBranch(...args) : streamPrompt(...args);
   if (v.iframe && v.meta) {
     setVaStatus("AI 基于元数据总结（该源无法抽帧）…");
     const m = v.meta;
-    await streamPrompt(
+    await streamVideo(
       `请总结这个 B 站视频的预期内容脉络：标题《${m.title}》，UP主：${m.owner}，时长 ${fmt(m.duration)}，简介：${(m.desc || "无").slice(0, 800)}。基于以上信息归纳主题、可能的知识结构与观看价值，注明这是基于元数据的推断。`,
       [],
       `🎬 AI 解析《${v.name}》`,
@@ -280,7 +287,7 @@ async function analyzeOne(v, mode) {
   }
   setVaStatus(`AI 分析中（${frames.length} 帧）…`);
   const prompt = analysisPrompt(v.name, dur, frames, mode);
-  await streamPrompt(
+  await streamVideo(
     prompt,
     frames.map((f) => ({ mimeType: "image/jpeg", data: f.dataUrl.split(",")[1] })),
     `🎬 AI 解析《${v.name}》`,
@@ -290,6 +297,8 @@ async function analyzeOne(v, mode) {
 }
 
 async function analyzeBatch(list) {
+  const startedBusy = state.streaming;
+  const streamVideo = (...args) => (startedBusy || state.streaming) ? streamPromptInBranch(...args) : streamPrompt(...args);
   const all = [];
   for (const v of list) {
     setVaStatus(`抽取《${v.name}》关键帧…`);
@@ -310,7 +319,7 @@ async function analyzeBatch(list) {
     for (const f of frames) images.push({ mimeType: "image/jpeg", data: f.dataUrl.split(",")[1] });
   }
   setVaStatus(`AI 综合分析中（${images.length} 帧）…`);
-  await streamPrompt(
+  await streamVideo(
     parts.join("\n"),
     images.slice(0, 12),
     `🧠 批量解析 ${all.length} 个视频`,
@@ -443,7 +452,7 @@ function bindFrameButtons() {
     const ts = fmt(video.currentTime);
     const name = current?.name || "video";
     if (ask) {
-      await streamPrompt(
+      await streamVideoPrompt(
         `这是视频《${name}》在 ${ts} 处的一帧。请描述并分析画面内容（若是讲解/演示视频，解释当前讲到的要点）。`,
         [{ mimeType: "image/jpeg", data: dataUrl.split(",")[1] }],
         `📸 视频截帧 @${ts}（《${name}》）`
@@ -454,4 +463,3 @@ function bindFrameButtons() {
     }
   });
 }
-

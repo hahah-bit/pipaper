@@ -13,7 +13,7 @@ export async function parseFallbackText(pdfPath, _cfg, log = () => {}) {
   const doc = await openDocument(pdfPath);
   const blocks = [];
   const H1 = /^(abstract|introduction|background|related work|methods?|materials and methods|results?|discussion|conclusions?|references|acknowledg(e)ments?|supplementary|appendix|conclusion and (?:future|outlook))\b/i;
-  const H2 = /^(\d+(\.\d+)*[.)]?\s+\S.{2,90}|^[IVX]+\.\s+\S.{2,90})$/;
+  const H2 = /^(\d{1,3}(\.\d+)*[.)]?\s+\S.{2,90}|^[IVX]+\.\s+\S.{2,90})$/;
 
   for (let p = 1; p <= doc.numPages; p++) {
     let page;
@@ -30,7 +30,7 @@ export async function parseFallbackText(pdfPath, _cfg, log = () => {}) {
         para = null;
       };
       const pushPara = (t, l) => {
-        if (!para) para = { text: t, x0: l.x0, x1: l.x1, top: l.top, bottom: l.bottom };
+        if (!para) para = { text: t, x0: l.x0, x1: l.x1, top: l.top, bottom: l.bottom, column: l.column };
         else {
           para.text += " " + t;
           para.x1 = Math.max(para.x1, l.x1);
@@ -44,6 +44,7 @@ export async function parseFallbackText(pdfPath, _cfg, log = () => {}) {
           flush();
           continue;
         }
+        if (para && (para.column !== ln.column || ln.top - para.bottom > Math.max(14, ln.h * 2))) flush();
         const big = ln.h >= 13;
         const headingOf = (t2) => {
           if (big && t2.length < 120) return ln.h >= 16 ? 1 : 2;

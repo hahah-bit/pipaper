@@ -52,6 +52,8 @@ npm start          # 直接启动（端口见 data/config.json，默认 4318）
 ## pi 深度复用
 
 - **会话**：原生 pi JSONL 会话（树状分支 / compaction / 自动重试全保留），按**项目**分组管理（侧边栏顶部切换，会话下拉按项目分组）
+- **交互提问**：Agent 通过 `request_user_input` 发起确认、选择或文本提问；Pi 扩展的 `ctx.ui.confirm/select/input/editor` 同样显示网页小窗。提交后继续执行，Esc 取消；选择题支持扩展原始选项，模型提问还可填写其他答案。普通回复文字不会自动转换成弹窗。停止、关闭页面或连接断开会取消等待。
+- **排队 / 插队**：回复过程中 `Enter`（或“插队”按钮）在当前轮工具结束后介入；`Alt+Enter` / `Ctrl+Q`（或“排队”按钮）等当前任务完成后处理。`Shift+Enter` 换行；空闲时 Enter 发送。待处理消息显示在输入框下方；回答小窗中的问题后才能继续排队。
 - **模型认证**：`ModelRuntime` 直接用你 `~/.pi/agent` 的 auth.json / models.json，pi 里能用这里就能用
 - **技能 / 提示模板 / 扩展**：DefaultResourceLoader 自动发现 `~/.pi/agent/skills`、prompts、扩展（含 settings.json 里的 packages）；输入框打 `/` 弹出全部命令（内置 /model /thinking /new /compact /paper + pi 模板 + /skill:xxx）
 - **@ 文件**：输入 `@` 弹出文件列表（论文解析全文、论文插图、工作区文件、library PDF），选中即加入对话上下文

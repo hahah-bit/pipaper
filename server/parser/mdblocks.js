@@ -167,6 +167,7 @@ export function blocksToMd(blocks) {
         out.push(b.md, "");
         break;
       case "table":
+        if (b.caption) out.push(b.caption, "");
         out.push(b.html || b.md, "");
         break;
       case "image":
@@ -176,9 +177,18 @@ export function blocksToMd(blocks) {
         out.push("$$\n" + b.latex + "\n$$", "");
         break;
       case "code":
+        if (b.caption) out.push(b.caption, "");
         out.push("```" + (b.lang || "") + "\n" + b.text + "\n```", "");
         break;
     }
   }
   return out.join("\n");
+}
+
+export function blocksToContext(blocks) {
+  return blocks.map((b) => {
+    const source = `[p.${b.page ?? "?"} | ${b.id || "legacy"}${b.sectionPath?.length ? " | " + b.sectionPath.join(" > ") : ""}]`;
+    const review = b.issues?.length ? "\n[此块为待核对候选: " + b.issues.join(", ") + "; 必须用 get_paper_pages 对照原页后引用公式或表格数值，勿猜测缺失符号]" + (b.nativeText ? "\n[PDF 文字层参照，可能不含完整数学结构]\n" + b.nativeText + "\n[结构化识别候选]" : "") : "";
+    return source + review + "\n" + blocksToMd([b]);
+  }).join("\n\n");
 }

@@ -11,7 +11,9 @@ import {
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { APP_ROOT, getConfig } from "./config.js";
-import { listPapers, getPaper, sessionMeta, setSessionMeta, deleteSessionMeta, readParsedText, readBlocks, writeParseState, getProject } from "./store.js";
+import { listPapers, getPaper, sessionMeta, setSessionMeta, deleteSessionMeta, readBlocks, getProject } from "./store.js";
+import { blocksToContext } from "./parser/mdblocks.js";
+import { UserInputBroker, userInputTool } from "./user-input.js";
 
 // ---------------------------------------------------------------------------
 // PiPaper harness: embeds the pi agent SDK as the conversation kernel.
@@ -37,7 +39,9 @@ const SYSTEM_PROMPT = `你是 PiPaper 论文精读工作台中的研究助手（
 - 会话绑定论文或 Zotero 项目时，你还会加载"论文综合"技能组（zotero 文献管理、nature 系列学术技能）。zotero_search / zotero_item 用于管理用户 Zotero 库。
 - 用户消息里可能出现"引用块"（以【选中】或【截图】开头的附件上下文），那是用户从阅读器里框选或划选的内容，优先围绕这些内容回答。
 - 回答用中文（用户使用英文提问时可用英文），公式用 LaTeX（$...$ 行内、$$...$$ 独立），重要结论注明来源章节/页码。
+- 你的工具面与 pi 原版一致：read/bash/edit/write 以及已安装的扩展插件工具（web_search 等）都在，需要时可直接用。bash 的工作目录是 PiPaper 安装根目录；执行会改动文件的命令前先向用户说明后果。
 - 涉及事实性内容必须基于论文原文，不要编造；论文里没有的就明说。
+- 确实需要用户选择、确认是否继续或补充必要信息时，调用 request_user_input 工具，在网页小窗中收集答案后继续；不要只写一句问题然后等待。已有明确授权的操作直接执行。用户取消或拒绝不等于同意。
 - 简洁直接，避免空话；适合学术讨论的严谨语气。`;
 
 async function ensureInit() {
@@ -218,7 +222,7 @@ function clamp(s, n) {
   return s.length > n ? s.slice(0, n) + `\n…[截断，共 ${s.length} 字符]` : s;
 }
 
-function buildPaperTools(idHolder) {
+export function buildPaperTools(idHolder) {
   // idHolder: {id: string|null} — resolved after the AgentSession exists
   const currentPaper = () => {
     const meta = idHolder.id ? sessionMeta(idHolder.id) : null;
@@ -275,7 +279,10 @@ function buildPaperTools(idHolder) {
           details: {},
         };
       }
-      let md = readParsedText(paper.id);
+      const parsed = readBlocks(paper.id) || [];
+      const rawBlocks = Array.isArray(parsed) ? parsed : parsed.blocks || parsed.readingBlocks || [];
+      const versionNote = parsed.meta?.versionId ? `[解析版本 ${parsed.meta.versionId}; 内容指纹 ${parsed.meta.contentHash || "legacy"}]\n` : "[旧解析结果，尚未通过新版结构校验]\n";
+      const md = rawBlocks.length ? versionNote + blocksToContext(rawBlocks) : "";
       if (!md) {
         return {
           content: [{ type: "text", text: `《${paper.title}》尚未完成解析。请让用户在阅读器中点击"解析"按钮，之后再读取。` }],
@@ -287,25 +294,24 @@ function buildPaperTools(idHolder) {
       if (mode === "full") {
         return { content: [{ type: "text", text: clamp(`《${paper.title}》全文：\n\n` + md, maxChars) }], details: {} };
       }
-      const blocks = readBlocks(paper.id) || [];
+      const blocks = rawBlocks;
       if (mode === "outline") {
         const heads = blocks
-          .filter((b) => b.type === "heading")
-          .map((b, i) => `${"  ".repeat(Math.max(0, (b.level || 1) - 1))}- [${i}] ${b.text}${b.page ? ` (p.${b.page})` : ""}`);
-        return { content: [{ type: "text", text: `《${paper.title}》结构（[i] 为块索引，read_paper section 的 query 按标题匹配）：\n` + heads.join("\n") }], details: {} };
+          .flatMap((b, i) => b.type === "heading" ? [`${"  ".repeat(Math.max(0, (b.level || 1) - 1))}- [${i}] ${b.text}${b.page ? ` (p.${b.page})` : ""}`] : []);
+        return { content: [{ type: "text", text: versionNote + `《${paper.title}》结构（[i] 为块索引，read_paper section 的 query 按标题匹配）：\n` + heads.join("\n") }], details: {} };
       }
       if (mode === "search" && params.query) {
         const q = params.query.toLowerCase();
         const hits = [];
         blocks.forEach((b, i) => {
-          const t = b.text || b.md || "";
+          const t = b.text || b.md || b.latex || b.html || b.caption || "";
           if (t.toLowerCase().includes(q)) hits.push({ b, i });
         });
         const lines = hits.slice(0, 40).map(({ b, i }) => {
-          const t = (b.text || b.md || b.latex || "").replace(/\s+/g, " ");
-          return `- [块${i}${b.type === "heading" ? "·标题" : ""}${b.page ? ` p.${b.page}` : ""}] ${t.slice(0, 220)}`;
+          const t = (b.text || b.md || b.latex || b.html || b.caption || "").replace(/\s+/g, " ");
+          return `- [块${i} ${b.id || "legacy"}${b.page ? ` p.${b.page}` : ""}${b.issues?.length ? " 待核对:" + b.issues.join(",") : ""}] ${t.slice(0, 220)}`;
         });
-        return { content: [{ type: "text", text: hits.length ? `“${params.query}” 命中 ${hits.length} 处：\n` + lines.join("\n") : "无命中。" }], details: {} };
+        return { content: [{ type: "text", text: versionNote + (hits.length ? `“${params.query}” 命中 ${hits.length} 处：\n` + lines.join("\n") : "无命中。") }], details: {} };
       }
       // section
       const q = (params.query || "").toLowerCase();
@@ -324,7 +330,7 @@ function buildPaperTools(idHolder) {
         }
       }
       const sec = blocks.slice(start, end);
-      const text = sec.map((b) => (b.type === "heading" ? "#".repeat(b.level || 1) + " " + b.text : b.md || b.html || b.latex || (b.src ? `[图片:${b.caption || b.src}]` : ""))).join("\n\n");
+      const text = versionNote + blocksToContext(sec);
       const pg = blocks[start].page ? `\n\n(起始页码 p.${blocks[start].page})` : "";
       return { content: [{ type: "text", text: clamp(`《${paper.title}》§${blocks[start].text}：\n\n` + text + pg, maxChars) }], details: {} };
     },
@@ -475,25 +481,28 @@ const PAPER_TOOL_NAMES = ["list_library", "search_library", "read_paper", "get_p
 
 function makeSessionOpts(sm, idHolder, projectId) {
   const paperBound = !!(idHolder.paperId || projectTypeOf(projectId) === "zotero");
+  idHolder.ui = new UserInputBroker();
   return {
     cwd: APP_ROOT,
     agentDir: getAgentDir(),
     modelRuntime,
     settingsManager: SettingsManager.create(APP_ROOT, getAgentDir()),
     resourceLoader: loaderKey(projectId, { paperBound }),
-    tools: ["read", "grep", "ls", ...PAPER_TOOL_NAMES],
-    customTools: buildPaperTools(idHolder),
+    // No allowlist = the pi-native tool surface: read/bash/edit/write plus all
+    // extension-registered tools plus the paper tools below (same as pi CLI).
+    tools: undefined,
+    customTools: [...buildPaperTools(idHolder), userInputTool(idHolder.ui)],
     sessionManager: sm,
   };
 }
 
-async function newChat({ paperId, projectId } = {}) {
+async function newChat({ paperId, projectId, title = null } = {}) {
   await ensureInit();
   const idHolder = { id: null, paperId };
   const { session } = await createAgentSession(makeSessionOpts(SessionManager.create(APP_ROOT), idHolder, projectId));
   idHolder.id = session.sessionId;
-  setSessionMeta(idHolder.id, { paperId: paperId || null, projectId: projectId || null });
-  chats.set(idHolder.id, { session, busy: false });
+  setSessionMeta(idHolder.id, { paperId: paperId || null, projectId: projectId || null, title });
+  chats.set(idHolder.id, { session, ui: idHolder.ui, busy: false });
   return session;
 }
 
@@ -507,7 +516,7 @@ async function openChat(sessionId) {
   const { session } = await createAgentSession(makeSessionOpts(SessionManager.open(info.path), idHolder, sessionMeta(sessionId)?.projectId));
   const id = session.sessionId;
   idHolder.id = id;
-  chats.set(id, { session, busy: false });
+  chats.set(id, { session, ui: idHolder.ui, busy: false });
   return session;
 }
 
@@ -518,6 +527,41 @@ function chat(sessionId) {
 }
 
 // ---------------- history mapping ----------------
+
+// AgentMessage objects don't carry their JSONL entry id (fork targets need it),
+// so pair each mapped history message with its file entry by role+content.
+function resolveEntryIds(session, msgs) {
+  const entries = (session.sessionManager?.getEntries?.() || []).filter((e) => e.type === "message");
+  if (!entries.length) return msgs;
+  // mapped history msgs expose parts; file entries expose raw message content
+  const textOf = (m) => {
+    if (Array.isArray(m.parts)) return m.parts.filter((p) => p.type === "text").map((p) => p.text || "").join(" ");
+    if (typeof m.content === "string") return m.content;
+    return (m.content || []).filter((c) => c.type === "text").map((c) => c.text || "").join(" ");
+  };
+  const head = (m) => textOf(m).replace(/\s+/g, " ").trim().slice(0, 80);
+  let ei = 0;
+  return msgs.map((m) => {
+    if (m.role === "user" || m.role === "assistant") {
+      const want = head(m);
+      if (!want) return m;
+      while (ei < entries.length) {
+        const en = entries[ei++];
+        const em = en.message;
+        if (em.role !== m.role) continue;
+        if (head(em) === want) return { ...m, entryId: en.id };
+      }
+    } else if (m.role === "toolResult") {
+      while (ei < entries.length) {
+        const en = entries[ei++];
+        const em = en.message;
+        if (em.role !== "toolResult") continue;
+        if (em.toolCallId === m.toolCallId) return { ...m, entryId: en.id };
+      }
+    }
+    return m;
+  });
+}
 
 export async function sessionHistory(sessionId) {
   let session;
@@ -536,7 +580,7 @@ export async function sessionHistory(sessionId) {
           if (c.type === "text") parts.push({ type: "text", text: c.text });
           else if (c.type === "image") parts.push({ type: "image", mimeType: c.mimeType || "image/png", data: c.data });
         }
-      msgs.push({ role: "user", parts });
+      msgs.push({ role: "user", parts, entryId: m.id });
     } else if (m.role === "assistant") {
       const parts = [];
       for (const c of m.content || []) {
@@ -547,6 +591,7 @@ export async function sessionHistory(sessionId) {
       msgs.push({
         role: "assistant",
         parts,
+        entryId: m.id,
         model: m.model ? `${m.provider || ""}/${m.model}` : undefined,
         usage: m.usage ? { input: m.usage.input, output: m.usage.output, cost: m.usage.cost?.total } : undefined,
         stopReason: m.stopReason,
@@ -559,7 +604,8 @@ export async function sessionHistory(sessionId) {
       msgs.push({ role: "toolResult", toolCallId: m.toolCallId, toolName: m.toolName, text, isError: !!m.isError });
     }
   }
-  return { messages: msgs, model: session.model ? { provider: session.model.provider, id: session.model.id } : null, thinkingLevel: session.thinkingLevel };
+  const withIds = resolveEntryIds(session, msgs);
+  return { messages: withIds, model: session.model ? { provider: session.model.provider, id: session.model.id } : null, thinkingLevel: session.thinkingLevel };
 }
 
 export async function listSessions() {
@@ -567,6 +613,11 @@ export async function listSessions() {
   try {
     raw = await SessionManager.list(APP_ROOT);
   } catch {}
+  const pathToId = new Map();
+  for (const info of raw) {
+    const id = info.id || path.basename(info.path || "", ".jsonl");
+    if (info.path) pathToId.set(path.resolve(info.path), id);
+  }
   const out = [];
   for (const info of raw) {
     const id = info.id || path.basename(info.path || "", ".jsonl");
@@ -584,6 +635,8 @@ export async function listSessions() {
       createdAt: meta.createdAt,
       updatedAt: mtime,
       messageCount: info.messageCount,
+      parentSession: info.parentSessionPath || null,
+      parentId: info.parentSessionPath ? (pathToId.get(path.resolve(info.parentSessionPath)) || null) : null,
     });
   }
   out.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
@@ -591,7 +644,7 @@ export async function listSessions() {
 }
 
 export async function createChat({ paperId, projectId, title } = {}) {
-  const session = await newChat({ paperId, projectId });
+  const session = await newChat({ paperId, projectId, title: title || null });
   const id = session.sessionId;
   setSessionMeta(id, { paperId: paperId || null, projectId: projectId || null, title: title || null });
   return { id, model: session.model ? { provider: session.model.provider, id: session.model.id } : null };
@@ -600,6 +653,7 @@ export async function createChat({ paperId, projectId, title } = {}) {
 export async function deleteChat(sessionId) {
   const c = chats.get(sessionId);
   if (c) {
+    await abortChat(sessionId);
     try {
       await c.session.dispose();
     } catch {}
@@ -624,7 +678,86 @@ export async function setChatModel(sessionId, { provider, id, thinkingLevel }) {
 
 export async function abortChat(sessionId) {
   const c = chats.get(sessionId);
-  if (c) await c.session.abort();
+  if (c) {
+    c.stopped = true;
+    const aborted = c.session.abort();
+    c.ui.disconnect("aborted");
+    await aborted;
+  }
+}
+
+export function answerUserInput(sessionId, requestId, answer) {
+  chat(sessionId).ui.answer(requestId, answer);
+  return { ok: true };
+}
+
+// ---------------- steer & fork (pi 对话管理) ----------------
+// steer: 追加/打断 — 会话正在回复时,把新消息作为 steer 排入 pi 运行队列
+// (当前回合工具结算后、下一次模型调用前注入，即 pi CLI 的 Enter 语义)。
+// 消息内容与结果事件都走原 SSE 连接,因此这里不订阅,快速返回即可。
+export async function steerChat(sessionId, { text, images = [], mode = "steer" } = {}) {
+  const t = String(text || "").trim();
+  if (!t) throw new Error("空消息");
+  if (!["steer", "followUp"].includes(mode)) throw new Error("无效的排队方式");
+  await openChat(sessionId);
+  const c = chat(sessionId);
+  if (!c.busy) throw new Error("会话当前空闲，请直接发送");
+  if (c.stopped) throw new Error("会话正在停止，请稍后再发送");
+  if (c.ui.pending.size) throw new Error("请先回答或取消当前提问，再发送新消息");
+  const imgs = (images || [])
+    .filter((im) => im?.data && im.data.length > 50)
+    .slice(0, 6)
+    .map((im) => ({ type: "image", mimeType: im.mimeType || "image/png", data: im.data }));
+  // Use native queue APIs: never start an unobserved prompt during preflight.
+  if (mode === "followUp") await c.session.followUp(t, imgs);
+  else await c.session.steer(t, imgs);
+  return { ok: true, queued: true, mode };
+}
+
+// fork(编辑重问/重定向): 在某条历史问题之前切出新分支会话文件
+// (pi 的 createBranchedSession 语义:保留到该问题之前的历史,原会话文件不动),
+// 新会话与原会话在会话列表里并列,互不影响。
+export async function forkChat(sessionId, { entryId, title = null } = {}) {
+  if (!entryId) throw new Error("缺少目标消息");
+  const c = chats.has(sessionId) ? chats.get(sessionId) : { session: await openChat(sessionId), busy: false };
+  const live = c.session;
+  const sm0 = live.sessionManager;
+  const entry = sm0?.getEntry?.(entryId);
+  if (!entry || entry.type !== "message" || entry.message?.role !== "user") {
+    throw new Error("找不到要重问的问题消息（可能已被压缩或不在当前分支）");
+  }
+  const file = live.sessionFile || sm0?.getSessionFile?.();
+  if (!file || !fs.existsSync(file)) {
+    throw new Error("会话尚未保存，等 agent 回复过一次后再重问");
+  }
+  const meta = sessionMeta(sessionId) || {};
+  const leafId = entry.parentId;
+  let newSm;
+  if (leafId) {
+    newSm = SessionManager.open(file);
+    const newFile = newSm.createBranchedSession(leafId);
+    if (!fs.existsSync(newFile)) {
+      // pi 只在分支包含 assistant 消息时落盘;空分支(如重问第一条)手动
+      // 物化文件,让新会话立即可被发现/打开。
+      fs.writeFileSync(newFile, newSm.fileEntries.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    }
+  } else {
+    // fork 点在第一条用户消息之前:新建空会话文件并链接 parentSession
+    newSm = SessionManager.create(APP_ROOT);
+    newSm.newSession({ parentSession: file });
+    fs.writeFileSync(newSm.sessionFile, JSON.stringify(newSm.fileEntries[0]) + "\n");
+  }
+  const newId = newSm.sessionId;
+  setSessionMeta(newId, {
+    paperId: meta.paperId || null,
+    projectId: meta.projectId || null,
+    title: title || meta.title || null,
+    updatedAt: new Date().toISOString(),
+  });
+  const idHolder = { id: newId, paperId: meta.paperId || null };
+  const { session } = await createAgentSession(makeSessionOpts(newSm, idHolder, meta.projectId || null));
+  chats.set(newId, { session, ui: idHolder.ui, busy: false });
+  return { id: newId, model: session.model ? { provider: session.model.provider, id: session.model.id } : null };
 }
 
 // ---------------- prompt streaming (SSE) ----------------
@@ -638,22 +771,45 @@ function truncate(s, n) {
   return s.length > n ? s.slice(0, n) + "…" : s;
 }
 
-export async function promptChat(sessionId, { text, images = [], paperId, projectId }, send) {
-  const c = chats.has(sessionId) ? chats.get(sessionId) : { session: await openChat(sessionId), busy: false };
+// Streamable partial tool output (bash prints cumulative snapshots here)
+function partialToolText(result) {
+  if (typeof result === "string") return result;
+  const rc = result?.content;
+  if (Array.isArray(rc)) return rc.map((x) => (x.type === "text" ? x.text : "")).join("");
+  return "";
+}
+
+export async function promptChat(sessionId, { text, images = [], paperId, projectId }, send, signal) {
+  await openChat(sessionId);
+  if (signal?.aborted) return;
+  const c = chat(sessionId);
   if (c.busy) throw new Error("该会话正在回复中，请稍候或另开会话");
   c.busy = true;
+  c.stopped = false;
+  c.ui.connect((event) => sse(send, event));
+  const onAbort = () => { void abortChat(sessionId).catch(() => {}); };
+  signal?.addEventListener("abort", onAbort, { once: true });
   if (paperId || projectId) setSessionMeta(sessionId, { ...(paperId ? { paperId } : {}), ...(projectId ? { projectId } : {}) });
   if (!sessionMeta(sessionId)?.title && text) setSessionMeta(sessionId, { title: text.slice(0, 60) });
   setSessionMeta(sessionId, { updatedAt: new Date().toISOString() });
 
   const unsub = c.session.subscribe((event) => {
     try {
-      if (event.type === "message_update") {
+      if (event.type === "queue_update") {
+        sse(send, { t: "queue", steering: event.steering, followUp: event.followUp });
+      } else if (event.type === "message_start") {
+        const m = event.message;
+        if (m.role === "assistant") sse(send, { t: "assistant_start" });
+        else if (m.role === "user") sse(send, { t: "user_start", text: typeof m.content === "string" ? m.content : (m.content || []).filter((p) => p.type === "text").map((p) => p.text).join("\n"), images: (Array.isArray(m.content) ? m.content : []).filter((p) => p.type === "image") });
+      } else if (event.type === "message_update") {
         const e = event.assistantMessageEvent || {};
         if (e.type === "text_delta" && e.delta) sse(send, { t: "delta", text: e.delta });
         else if (e.type === "thinking_delta" && e.delta) sse(send, { t: "thinking", text: e.delta });
       } else if (event.type === "tool_execution_start") {
         sse(send, { t: "tool_start", id: event.toolCallId, name: event.toolName, args: event.args });
+      } else if (event.type === "tool_execution_update") {
+        const text = partialToolText(event.partialResult);
+        if (text) sse(send, { t: "tool_update", id: event.toolCallId, name: event.toolName, text: truncate(text, 16000), total: text.length });
       } else if (event.type === "tool_execution_end") {
         let preview = "";
         const rc = event.result?.content || event.output?.content || [];
@@ -671,6 +827,21 @@ export async function promptChat(sessionId, { text, images = [], paperId, projec
   });
 
   try {
+    if (!c.extensionsBound) {
+      // Bind after the SSE transport is live, since session_start can ask a question.
+      c.extensionsBound = true;
+      try {
+        await c.session.bindExtensions({
+          mode: "rpc",
+          uiContext: c.ui.context(c.session.extensionRunner.getUIContext()),
+          onError: (event) => c.ui.send?.({ t: "notice", note: event.error, isError: true }),
+        });
+      } catch (error) {
+        c.extensionsBound = false;
+        throw error;
+      }
+    }
+    if (c.stopped || signal?.aborted) return;
     // pi-ai ImageContent: {type:'image', data(base64), mimeType}
     const imgs = (images || [])
       .filter((im) => im?.data && im.data.length > 50)
@@ -688,6 +859,8 @@ export async function promptChat(sessionId, { text, images = [], paperId, projec
   } catch (err) {
     sse(send, { t: "error", message: String(err.message || err) });
   } finally {
+    c.ui.disconnect("finished");
+    signal?.removeEventListener("abort", onAbort);
     unsub();
     c.busy = false;
   }
