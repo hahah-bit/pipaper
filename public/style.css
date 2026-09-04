@@ -590,11 +590,12 @@ select, #model-select, #think-select {
 
 .toast-wrap { position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
 .toast {
-  background: var(--bg3); border: 1px solid var(--border); color: var(--fg0);
-  border-radius: 10px; padding: 9px 16px; font-size: 13px; box-shadow: 0 10px 26px rgba(0,0,0,.5);
+  /* 悬浮提示固定深底浅字，不随主题翻转，保证任何主题下可读 */
+  background: #1e2434; border: 1px solid #3a4470; color: #edf0fa;
+  border-radius: 10px; padding: 9px 16px; font-size: 13px; font-weight: 500; box-shadow: 0 10px 26px rgba(0,0,0,.5);
   animation: toast-in .18s ease-out; pointer-events: none;
 }
-.toast.err { border-color: #5c3038; background: #34222a; }
+.toast.err { border-color: #8a4550; background: #3a232b; color: #ffdadf; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
 
 .welcome { margin: 40px auto; max-width: 480px; text-align: center; color: var(--fg1); }
