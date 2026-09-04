@@ -2,6 +2,7 @@ import { api, state, $, el, toast, renderChips, askText } from "./app.js";
 import { waitOperation } from "./sessionTransport.js";
 
 let metrics, extensions, toolbar, queueControls, draftsBox;
+let reconnect;
 const drafts = [];
 const guard = fn => async (...args) => { try { await fn(...args); } catch (e) { toast(e.message, true); } };
 async function action(name, body = {}) {
@@ -18,8 +19,9 @@ function dialog(title) {
   return { node, content };
 }
 
-export function initSessionPanel() {
-  metrics = el("div", { id: "native-metrics", role: "status", class: "native-metrics" }, "会话尚未连接");
+export function initSessionPanel(onReconnect) {
+  reconnect = onReconnect;
+  metrics = el("div", { id: "native-metrics", role: "status", class: "native-metrics" }, "正在加载会话列表…");
   extensions = el("div", { class: "native-extension-ui" });
   toolbar = el("div", { class: "native-toolbar" },
     button("改名", async () => { const name = await askText({ title: "会话名称", initial: state.nativeSession?.name || "", okText: "保存" }); if (name !== null) await action("name", { name }); }),
@@ -39,6 +41,27 @@ export function initSessionPanel() {
   }
   queueControls.append(button("取消重试", () => action("abort", { kind: "retry" })), button("取消压缩/摘要", () => action("abort", { kind: state.nativeSession?.operations?.some(o => o.type === "tree") ? "branchSummary" : "compaction" })));
   $("#chat-queue").after(queueControls, draftsBox);
+  renderSessionConnection("initializing");
+}
+export function renderSessionConnection(phase, message) {
+  state.connectionPhase = phase;
+  if (!metrics) return;
+  metrics.dataset.connection = phase;
+  const labels = {
+    initializing: "正在加载会话列表…",
+    idle: "尚未创建会话，发送消息即可开始",
+    connecting: "正在连接会话并加载 Pi 资源…",
+    restoring: "已连接，正在恢复会话历史…",
+    starting: "历史已恢复，正在初始化扩展；如有弹窗请完成选择…",
+    disconnected: message || "会话连接已断开",
+  };
+  metrics.replaceChildren(); metrics.title = message || "";
+  if (phase !== "ready") metrics.append(el("span", {}, labels[phase] || message));
+  if (phase === "disconnected") metrics.append(button("重新连接", () => reconnect()));
+  for (const b of toolbar.querySelectorAll("button")) b.disabled = phase !== "ready" || !!state.nativeSession?.busy;
+  for (const b of queueControls.querySelectorAll("button, select")) b.disabled = phase !== "ready";
+  for (const id of ["#model-select", "#think-select"]) $(id).disabled = phase !== "ready" || !!state.nativeSession?.busy;
+  if (phase === "ready" && state.nativeSession) renderSessionState(state.nativeSession);
 }
 function renderDrafts() {
   draftsBox.replaceChildren();
@@ -58,9 +81,11 @@ export function renderSessionState(value) {
   const used = context?.percent != null ? `${Number(context.percent).toFixed(1)}%` : context?.tokens != null && context.contextWindow ? `${(100 * context.tokens / context.contextWindow).toFixed(1)}%` : "未知";
   const resource = ({ applied: "资源已生效", pending: "资源待更新", failed: "资源加载失败" })[value.resources?.status] || "";
   const phase = value.retry ? `重试 ${value.retry.attempt}/${value.retry.maxAttempts}${value.retry.waiting ? ` · 等待 ${Math.ceil(value.retry.delayMs / 1000)} 秒` : ""}` : value.compacting ? "压缩/摘要中" : value.busy ? "执行中" : "空闲";
-  metrics.textContent = [phase, `上下文 ${used}`, `累计 ${stats?.tokens?.total ?? "未知"} tokens`, `缓存读/写 ${stats?.tokens?.cacheRead ?? "?"}/${stats?.tokens?.cacheWrite ?? "?"}`, stats?.cost != null ? `$${Number(stats.cost).toFixed(4)}` : "费用未知", resource].join(" · ");
-  metrics.title = value.resources?.error || value.retry?.errorMessage || "上下文占用与累计用量分别统计";
-  for (const b of toolbar.querySelectorAll("button")) b.disabled = !!value.busy || !state.controlId;
+  if (state.connectionPhase === "ready") {
+    metrics.textContent = [phase, `上下文 ${used}`, `累计 ${stats?.tokens?.total ?? "未知"} tokens`, `缓存读/写 ${stats?.tokens?.cacheRead ?? "?"}/${stats?.tokens?.cacheWrite ?? "?"}`, stats?.cost != null ? `$${Number(stats.cost).toFixed(4)}` : "费用未知", resource].join(" · ");
+    metrics.title = value.resources?.error || value.retry?.errorMessage || "上下文占用与累计用量分别统计";
+  }
+  for (const b of toolbar.querySelectorAll("button")) b.disabled = !!value.busy || !state.controlId || state.connectionPhase !== "ready";
   for (const key of ["steering", "followUp"]) { const s = $(`#native-mode-${key}`); if (s) s.value = value.queue?.[key + "Mode"] || "one-at-a-time"; }
   const ui = value.ui || {};
   extensions.replaceChildren();

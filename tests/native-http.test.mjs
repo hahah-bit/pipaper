@@ -3,6 +3,39 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { nativeHttpFixture } from "./helpers/native-http-fixture.mjs";
+import { createSessionEventChannel } from "../src/sessionEventChannel.js";
+
+test("disconnect during cold resource loading cannot leave a ghost SSE owner", { timeout: 20000 }, async t => {
+  const fixture = await nativeHttpFixture();
+  const state = {}, transport = createSessionEventChannel({ state, fetch: (route, options) => fetch(fixture.url + route, options) });
+  t.after(async () => { transport.closeSessionEvents(); await fixture.dispose(); });
+  const api = async (route, body) => {
+    const res = await fetch(fixture.url + "/api" + route, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json", ...(state.controlId ? { "X-Pi-Control": state.controlId } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    assert.equal(res.ok, true); return res.json();
+  };
+  const { id } = await api("/sessions", {});
+  await transport.connectSessionEvents(id, () => {});
+  await transport.waitOperation((await api(`/sessions/${id}/prompt`, { text: "persist local fixture" })).operationId);
+  transport.closeSessionEvents();
+  const started = path.join(fixture.directory, "load-started"), release = path.join(fixture.directory, "load-release");
+  fs.writeFileSync(path.join(fixture.agent, "extensions", "slow-restore.js"), `import fs from "node:fs";
+    export default async function() {
+      fs.writeFileSync(${JSON.stringify(started)}, "started");
+      while (!fs.existsSync(${JSON.stringify(release)})) await new Promise(r => setTimeout(r, 10));
+    }`);
+  await fixture.restart();
+  const abort = new AbortController();
+  const pending = assert.rejects(fetch(`${fixture.url}/api/sessions/${id}/events`, { signal: abort.signal }), { name: "AbortError" });
+  for (let attempt = 0; attempt < 200 && !fs.existsSync(started); attempt++) await new Promise(r => setTimeout(r, 10));
+  assert.equal(fs.existsSync(started), true, "resource loader must be waiting before disconnect");
+  abort.abort(); await pending;
+  await new Promise(r => setTimeout(r, 30));
+  fs.writeFileSync(release, "continue");
+  await api(`/sessions/${id}/state`);
+  assert.equal((await api("/sessions")).sessions.find(s => s.id === id).connected, false);
+  await transport.connectSessionEvents(id, () => {});
+  assert.ok(state.controlId, "the next page can connect normally");
+});
 
 test("production HTTP harness: owner channel, model/tool dialogs, resource packages, fork and export", { timeout: 60000 }, async t => {
   const fixture = await nativeHttpFixture();

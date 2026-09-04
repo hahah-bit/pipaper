@@ -6,7 +6,8 @@ import { initSettings } from "./settings.js";
 import { initResources } from "./resources.js";
 import { initPanes } from "./panes.js";
 import { initSidebar, renderPapers, renderCollections, renderProjects } from "./sidebar.js";
-import { initChat, refreshSessions, loadCommands } from "./chat.js";
+import { initChat, refreshSessions, loadCommands, syncModelSelect } from "./chat.js";
+import { renderSessionConnection } from "./sessionPanel.js";
 import { initReader } from "./reader.js";
 import { initSearchPanel } from "./searchPanel.js";
 import { initVideoPanel as initVideoTab } from "./videoPanel.js";
@@ -214,19 +215,21 @@ async function boot() {
     state.collections = paperData.collections;
     state.zotero = paperData.zotero;
     state.models = models;
+    syncModelSelect();
     state.projects = projects.projects || [];
     renderPapers();
     renderCollections();
     renderProjects();
     updateZoteroFoot();
-    await loadCommands();
     await refreshSessions();
     if (!state.sessionId) {
       // show welcome state; session is created on first message
       renderWelcome();
+      void loadCommands();
     }
   } catch (e) {
     window.__bootStage = "error:" + (e.message || e);
+    renderSessionConnection("disconnected", "初始化失败：" + (e.message || e));
     toast("初始化失败: " + (e.message || e), true);
   }
 }

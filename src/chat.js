@@ -5,7 +5,7 @@ import { api, state, $, el, toast, renderWelcome, renderChips, addChip, askText,
 import { createUserInputUI } from "./userInput.js";
 import { composerAction } from "./chatKeys.js";
 import { connectSessionEvents, closeSessionEvents, waitOperation } from "./sessionTransport.js";
-import { initSessionPanel, renderSessionState } from "./sessionPanel.js";
+import { initSessionPanel, renderSessionState, renderSessionConnection } from "./sessionPanel.js";
 
 
 let autoScroll = true;
@@ -101,7 +101,7 @@ export async function refreshSessions(keepCurrent = true) {
   if (!keepCurrent || !state.sessions.some((s) => s.id === state.sessionId)) {
     state.sessionId = state.sessions[0]?.id || null;
     if (state.sessionId) await openSession(state.sessionId);
-    else renderWelcome();
+    else { closeSessionEvents(); state.nativeSession = null; renderSessionConnection("idle"); renderWelcome(); }
   }
   renderSessionMenu();
   return state.sessions;
@@ -125,13 +125,21 @@ export async function openSession(id, { force = false } = {}) {
   if (state.streaming && !force) return toast("请先停止当前回复，再切换会话");
   userInputUI.clear();
   state.sessionId = id;
+  if (state.nativeSession?.id !== id) {
+    state.nativeSession = null;
+    for (const n of liveNodes) finalizeActivity(n);
+    $("#messages").replaceChildren(); liveNodes.length = 0; activeStream = null;
+  }
   restoreBindingOnSnapshot = true; pendingBinding = null;
+  renderSessionMenu();
   try {
     await connectSessionEvents(id, handleSessionEvent);
-    await loadCommands();
-    state.models = await api.models(); syncModelSelect();
+    if (state.sessionId !== id) return;
     renderSessionMenu();
-  } catch (e) { toast("打开会话失败: " + e.message, true); }
+  } catch (e) {
+    // Transport failures already have a persistent reason and a retry button.
+    if (state.sessionId === id && state.connectionPhase !== "disconnected") toast("打开会话失败: " + e.message, true);
+  }
 }
 
 function renderContent(parts, target) {
@@ -195,6 +203,7 @@ function applySessionState(value) {
   if (!state.streaming) void settleSessionActions();
 }
 function handleSessionEvent(ev) {
+  if (ev.t === "connection_status") { renderSessionConnection(ev.phase); return; }
   if (ev.t === "session_replaced") {
     userInputUI.clear(); state.sessionId = ev.newSessionId; activeStream = null; restoreBindingOnSnapshot = true; pendingBinding = null;
     void refreshSessions(); void loadCommands(); return;
@@ -220,6 +229,7 @@ function handleSessionEvent(ev) {
   if (ev.t === "disconnected") {
     userInputUI.clear(); state.streaming = false; setStreamingUI(false);
     for (const n of liveNodes) finalizeActivity(n);
+    renderSessionConnection("disconnected", ev.message);
     toast(ev.message, true); return;
   }
   if (ev.t === "queue") {
@@ -865,6 +875,7 @@ function setStreamingUI(on) {
   $("#composer-keys").textContent = on ? "Enter 插队 · Alt+Enter / Ctrl+Q 排队 · Shift+Enter 换行" : "Enter 发送 · Shift+Enter 换行";
   $("#composer-input").placeholder = on ? "补充要求…（Enter 插队，Alt+Enter 排队）" : "问点什么…（Enter 发送，Shift+Enter 换行）";
   for (const id of ["#btn-new-session", "#btn-del-session", "#session-btn", "#project-select", "#model-select", "#think-select"]) $(id).disabled = on;
+  for (const id of ["#model-select", "#think-select"]) $(id).disabled = on || state.connectionPhase !== "ready";
 }
 
 export function updateComposerHint() {
@@ -894,7 +905,7 @@ export function autoSizeInput() {
 
 // ---------------- init ----------------
 export function initChat() {
-  initSessionPanel();
+  initSessionPanel(() => state.sessionId ? openSession(state.sessionId) : window.location.reload());
   let editorTimer;
   $("#composer-input").addEventListener("input", () => { clearTimeout(editorTimer); editorTimer = setTimeout(() => { if (state.sessionId && state.controlId) api.sessionAction(state.sessionId, "editor", { text: $("#composer-input").value }).catch(() => {}); }, 150); });
   $("#btn-new-session").addEventListener("click", createSession);

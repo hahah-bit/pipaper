@@ -18,6 +18,9 @@ export function registerSessionRoutes(api) {
   api.get("/sessions/:id/tree", route(async (req, res) => res.json((await h.controllerFor(req.params.id)).tree())));
   api.get("/sessions/:id/events", route(async (req, res) => {
     const c = await h.controllerFor(req.params.id);
+    // Restoring a cold session may outlive a tab navigation/connection timeout.
+    // Do not claim an owner on a response whose close event already happened.
+    if (res.destroyed || req.aborted) return;
     res.set({ "Content-Type": "text/event-stream", "Cache-Control": "no-cache, no-transform", Connection: "keep-alive", "X-Accel-Buffering": "no" });
     const connection = c.connect(event => res.write(`data: ${JSON.stringify(event)}\n\n`), () => res.end());
     const ping = setInterval(() => { if (!res.destroyed) res.write(": ping\n\n"); }, 15000);
