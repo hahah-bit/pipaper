@@ -903,9 +903,11 @@ select, #model-select, #think-select {
 .native-toolbar, .native-queue-controls { display:flex; flex-wrap:wrap; gap:5px; padding:6px 10px; border-bottom:1px solid var(--border); }
 .native-toolbar .tool-btn, .native-queue-controls .tool-btn, .native-queue-controls select { font-size:11px; padding:3px 7px; }
 .native-metrics { padding:4px 12px; color:var(--fg2); font-size:11px; }
+.native-metrics[data-connection="disconnected"] { color:var(--err); }
+.native-metrics .tool-btn { margin-left:8px; font-size:11px; }
 .native-extension-ui { display:flex; gap:10px; flex-wrap:wrap; padding:0 12px; font-size:12px; }
 .native-extension-ui:empty { display:none; }
-.native-dialog { width:min(920px,90vw); max-height:85vh; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--bg); color:var(--fg); }
+.native-dialog { width:min(920px,90vw); max-height:85vh; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--bg1); color:var(--fg0); box-shadow:0 24px 60px rgba(0,0,0,.55); }
 .native-dialog::backdrop { background:#0008; }
 .native-dialog header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
 .native-dialog-body { overflow:auto; max-height:72vh; }
