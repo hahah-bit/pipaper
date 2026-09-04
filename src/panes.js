@@ -181,6 +181,7 @@ export function initPanes() {
       chat?.classList.remove("is-collapsed");
       setButton("chat", false);
     }
+    if (paneState.floating) applyFloatGeom();
     updateCollapsedLayout();
     if (save) persist();
   }
@@ -227,7 +228,94 @@ export function initPanes() {
     document.addEventListener("mouseup", up);
   });
 
-  window.addEventListener("resize", syncProportionalWidths);
+  window.addEventListener("resize", () => { syncProportionalWidths(); applyFloatGeom(); });
+
+  // ---- floating chat: 标题栏拖动移动 + 8 向调整大小，几何持久化 ----
+  const FLOAT_KEY = "pipaper.chatFloat";
+  const FLOAT_MIN_W = 360, FLOAT_MIN_H = 220, FLOAT_EDGE = 8;
+  const floatGeo = { x: null, y: null, w: null, h: null };
+  try {
+    const savedGeo = JSON.parse(localStorage.getItem(FLOAT_KEY) || "{}");
+    for (const k of ["x", "y", "w", "h"]) if (Number.isFinite(savedGeo[k])) floatGeo[k] = savedGeo[k];
+  } catch {}
+
+  function applyFloatGeom() {
+    if (!chat) return;
+    const placed = floatGeo.x != null && floatGeo.y != null;
+    chat.classList.toggle("float-placed", placed);
+    if (!placed || !paneState.floating) return;
+    // 四个变量必须同时落值：var(--float-w) 未定义时 width 会回退成 auto 导致面板塌缩
+    const defW = Math.min(620, window.innerWidth - 44);
+    const defH = Math.min(760, window.innerHeight - 44);
+    const w = Math.max(FLOAT_MIN_W, floatGeo.w || defW);
+    const h = Math.max(FLOAT_MIN_H, floatGeo.h || defH);
+    const x = Math.min(Math.max(floatGeo.x, 0), Math.max(0, window.innerWidth - 80));
+    const y = Math.min(Math.max(floatGeo.y, 0), Math.max(0, window.innerHeight - 60));
+    chat.style.setProperty("--float-x", x + "px");
+    chat.style.setProperty("--float-y", y + "px");
+    chat.style.setProperty("--float-w", w + "px");
+    chat.style.setProperty("--float-h", h + "px");
+  }
+  function saveFloatGeom() {
+    try { localStorage.setItem(FLOAT_KEY, JSON.stringify(floatGeo)); } catch {}
+  }
+  function startFloatDrag(e, mode) {
+    if (!paneState.floating) return;
+    e.preventDefault();
+    const rect = chat.getBoundingClientRect();
+    const start = { px: e.clientX, py: e.clientY, x: rect.left, y: rect.top, w: rect.width, h: rect.height };
+    const move = (ev) => {
+      const dx = ev.clientX - start.px, dy = ev.clientY - start.py;
+      if (mode === "move") {
+        floatGeo.x = Math.min(Math.max(FLOAT_EDGE * -1, start.x + dx), window.innerWidth - 80);
+        floatGeo.y = Math.min(Math.max(FLOAT_EDGE * -1, start.y + dy), window.innerHeight - 56);
+      } else {
+        if (mode.includes("e")) floatGeo.w = Math.max(FLOAT_MIN_W, Math.min(start.w + dx, window.innerWidth - start.x - FLOAT_EDGE));
+        if (mode.includes("s")) floatGeo.h = Math.max(FLOAT_MIN_H, Math.min(start.h + dy, window.innerHeight - start.y - FLOAT_EDGE));
+        if (mode.includes("w")) {
+          const nx = Math.min(Math.max(0, start.x + dx), start.x + start.w - FLOAT_MIN_W);
+          floatGeo.x = nx;
+          floatGeo.w = start.w + (start.x - nx);
+        }
+        if (mode.includes("n")) {
+          const ny = Math.min(Math.max(0, start.y + dy), start.y + start.h - FLOAT_MIN_H);
+          floatGeo.y = ny;
+          floatGeo.h = start.h + (start.y - ny);
+        }
+      }
+      applyFloatGeom();
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.userSelect = "";
+      saveFloatGeom();
+    };
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+  const floatInterActive = (e) => e.target.closest("button, select, input, textarea, .dropdown, label, a");
+  const chatHead = $("#chat-head");
+  chatHead?.addEventListener("pointerdown", (e) => {
+    if (floatInterActive(e)) return;
+    startFloatDrag(e, "move");
+  });
+  // 双击标题栏空白处复位到默认停靠位置
+  chatHead?.addEventListener("dblclick", (e) => {
+    if (!paneState.floating || floatInterActive(e)) return;
+    floatGeo.x = floatGeo.y = floatGeo.w = floatGeo.h = null;
+    try { localStorage.removeItem(FLOAT_KEY); } catch {}
+    applyFloatGeom();
+  });
+  if (chat) {
+    for (const dir of ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
+      const handle = document.createElement("div");
+      handle.className = "float-handle float-h-" + dir;
+      handle.addEventListener("pointerdown", (e) => { e.stopPropagation(); startFloatDrag(e, dir); });
+      chat.appendChild(handle);
+    }
+  }
 
   setCollapsed("sidebar", paneState.sidebar, false);
   setCollapsed("chat", paneState.chat, false);

@@ -764,10 +764,27 @@ select, #model-select, #think-select {
 #chat-pane.is-floating {
   position: fixed; z-index: 80; right: 22px; bottom: 22px;
   width: min(620px, calc(100vw - 44px)); min-width: 360px;
-  height: min(760px, calc(100vh - 44px)); min-height: 300px;
+  height: min(760px, calc(100vh - 44px)); min-height: 220px;
   border: 1px solid var(--accent); border-radius: 14px; overflow: hidden;
   box-shadow: 0 20px 70px rgba(0,0,0,.48);
 }
+/* 拖动/缩放后几何由 --float-* 变量接管（panes.js 持久化到 localStorage） */
+#chat-pane.is-floating.float-placed {
+  left: var(--float-x); top: var(--float-y); right: auto; bottom: auto;
+  width: var(--float-w); height: var(--float-h);
+}
+#chat-pane.is-floating #chat-head { cursor: move; }
+#chat-pane.is-floating #chat-head :is(button, select, input, .dropdown) { cursor: pointer; }
+#chat-pane.is-floating .float-handle { position: absolute; z-index: 95; }
+.float-h-n { top: 0; left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.float-h-s { bottom: 0; left: 10px; right: 10px; height: 6px; cursor: ns-resize; }
+.float-h-e { right: 0; top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.float-h-w { left: 0; top: 10px; bottom: 10px; width: 6px; cursor: ew-resize; }
+.float-h-ne { top: 0; right: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+.float-h-nw { top: 0; left: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+.float-h-se { bottom: 0; right: 0; width: 14px; height: 14px; cursor: nwse-resize; }
+.float-h-sw { bottom: 0; left: 0; width: 14px; height: 14px; cursor: nesw-resize; }
+#chat-pane:not(.is-floating) .float-handle { display: none; }
 #chat-pane.is-floating + .gutter { width: 0; min-width: 0; pointer-events: none; }
 #chat-pane.is-floating #btn-chat-float { color: var(--accent); }
 
