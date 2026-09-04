@@ -153,27 +153,30 @@
           <input id="sch-year-from" type="number" placeholder="年份≥" style="width:70px" />
           <input id="sch-year-to" type="number" placeholder="年份≤" style="width:70px" />
           <select id="sch-sort">
-            <option value="relevance">按相关度</option>
+            <option value="recommended">综合推荐 (ReadScore)</option>
+            <option value="local">与本地最相关</option>
+            <option value="relevance">按相关度(源排序)</option>
             <option value="if">按影响因子(SJR)</option>
             <option value="citations">按被引</option>
             <option value="year">按年份</option>
           </select>
         </div>
         <div class="sch-row">
-          <select id="sch-quartile" style="flex:1">
+          <select id="sch-quartile" style="flex:1" title="检索前按 SJR 分区过滤（依据期刊 ISSN 匹配；arXiv/无分区来源会被排除）">
             <option value="">全部分区</option>
-            <option value="Q1">Q1 区</option>
-            <option value="Q2">Q2 区</option>
-            <option value="Q3">Q3 区</option>
-            <option value="Q4">Q4 区</option>
+            <option value="Q1">仅 Q1</option>
+            <option value="Q2">Q1–Q2</option>
+            <option value="Q3">Q1–Q3</option>
+            <option value="Q4">有分区 (Q1–Q4)</option>
           </select>
-          <label class="sch-oa"><input id="sch-oa" type="checkbox" />仅OA</label>
+          <label class="sch-oa" title="检索前过滤：只返回有开放获取全文的结果（OpenAlex/arXiv/Semantic Scholar 可判定）"><input id="sch-oa" type="checkbox" />仅开放全文</label>
         </div>
         <div class="sch-row">
           <div id="sch-sources" class="sch-sources"></div>
           <button id="btn-sch-sources" class="icon-btn" title="编辑检索源">⚙</button>
         </div>
         <button id="btn-search" class="tool-btn primary" style="width:100%">🔍 检索</button>
+        <div id="sch-toread" class="sch-toread"></div>
         <div id="sch-status" class="res-note"></div>
         <div id="sch-results"></div>
       </div>

@@ -12,6 +12,7 @@ import { blocksToContext } from "./parser/mdblocks.js";
 import { sourceBounds } from "./parser/regions.js";
 import { renderPageCrop } from "./parser/render.js";
 import { aggregateSearch, DEFAULT_SOURCES, tierOf } from "./search/engines.js";
+import { toreadAdd, toreadList, toreadDelete } from "./toread.js";
 import { clipAdd, clipList, clipDelete, clipClear } from "./clip.js";
 import * as harness from "./harness.js";
 
@@ -797,6 +798,8 @@ api.get("/search", async (req, res) => {
       oa: req.query.oa === "1",
       sort: req.query.sort,
       quartile: req.query.quartile,
+      projectId: req.query.projectId,
+      anchorPaperId: req.query.anchor,
       limit: Number(req.query.limit || 15),
     });
     r.results = r.results.map((x) => ({ ...x, tier: tierOf(x) }));
@@ -821,6 +824,21 @@ api.post("/search/import", async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: String(e.message || e).slice(0, 200) });
   }
+});
+
+// ---- to-read list: 检索结果元数据暂存（不下载）；“加入项目”时前端再调 /api/search/import ----
+api.get("/search/toread", (_req, res) => {
+  res.json({ entries: toreadList() });
+});
+
+api.post("/search/toread", (req, res) => {
+  const r = toreadAdd(req.body || {});
+  if (!r.ok) return res.status(400).json({ error: r.reason || "无效条目" });
+  res.json({ ok: true, entry: r.entry, dup: r.dup });
+});
+
+api.delete("/search/toread/:id", (req, res) => {
+  res.json({ ok: toreadDelete(req.params.id) });
 });
 
 app.use("/api", api);

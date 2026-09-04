@@ -9,6 +9,7 @@ const UA = "PiPaper/0.5 (academic reader; local app)";
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR } from "../config.js";
+import { rankResults } from "./readscore.js";
 
 function normDoi(doi) {
   return String(doi || "").toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//, "").trim();
@@ -330,7 +331,7 @@ export function dedupe(results) {
   return [...byKey.values()];
 }
 
-export async function aggregateSearch(q, { sources, yearFrom, yearTo, oa, sort, limit, quartile } = {}) {
+export async function aggregateSearch(q, { sources, yearFrom, yearTo, oa, sort, limit, quartile, projectId, anchorPaperId } = {}) {
   let sourceDefs;
   try {
     const f = path.join(DATA_DIR, "search-sources.json");
@@ -353,7 +354,14 @@ export async function aggregateSearch(q, { sources, yearFrom, yearTo, oa, sort, 
     else errors.push(`${use[i]}: ${String(s.reason?.message || s.reason).slice(0, 100)}`);
   });
   let merged = dedupe(results).map(enrich);
-  if (quartile) merged = merged.filter((r) => r.quartile === quartile);
+  // quartile 区间过滤：Q1=仅Q1，Q2=Q1–Q2 …，Q4=有分区（排除 arXiv/未知分区来源）
+  if (quartile) {
+    const rank = { Q1: 1, Q2: 2, Q3: 3, Q4: 4 };
+    const max = rank[quartile];
+    if (max) merged = merged.filter((r) => r.quartile && (rank[r.quartile] || 9) <= max);
+  }
+  // ReadScore 评分 + 默认综合推荐排序（recommended/local 在 rankResults 内排序）
+  merged = rankResults(merged, q, { projectId, anchorPaperId, sort });
   if (sort === "citations") merged.sort((a, b) => (b.citations || 0) - (a.citations || 0));
   else if (sort === "year") merged.sort((a, b) => (b.year || 0) - (a.year || 0));
   else if (sort === "if") merged.sort((a, b) => (b.sjr ?? -1) - (a.sjr ?? -1)); // 无分区/IF 的自然排到最后
