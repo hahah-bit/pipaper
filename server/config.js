@@ -23,6 +23,7 @@ const DEFAULTS = {
   },
   translate: { url: "http://localhost:5001" },
   chat: { thinkingLevel: "high" },
+  setup: { onboardedAt: null }, // 首次引导面板「不再显示」后写入时间戳
 };
 
 function deepMerge(base, extra) {

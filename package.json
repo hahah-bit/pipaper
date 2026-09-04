@@ -3,6 +3,9 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
   "description": "PiPaper — 论文精读工作台：以 pi agent 为内核的论文阅读 / 对话 UI",
   "scripts": {
     "test": "node --test tests/*.test.mjs",

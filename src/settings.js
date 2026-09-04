@@ -1,5 +1,6 @@
 import { api, state, $, el, toast, updateZoteroFoot } from "./app.js";
 import { reloadPapers } from "./sidebar.js";
+import { openSetup } from "./setupPanel.js";
 
 export function initSettings() {
   const backdrop = $("#modal-backdrop");
@@ -10,12 +11,18 @@ export function initSettings() {
   });
   $("#btn-settings-save").addEventListener("click", saveSettings);
   $("#btn-zotero-sync").addEventListener("click", syncZotero);
+  $("#btn-open-setup").addEventListener("click", () => {
+    backdrop.hidden = true;
+    openSetup();
+  });
 }
 
-async function openSettings() {
-  $("#modal-backdrop").hidden = false;
+export async function openSettings() {
+  const backdrop = $("#modal-backdrop");
+  backdrop.hidden = false;
   try {
-    const { config, zotero } = await api.getConfig();
+    const [cfgRes, srcRes] = await Promise.all([api.getConfig(), api.searchSources()]);
+    const { config, zotero } = cfgRes;
     $("#cfg-zotero-dir").value = config.zotero?.dataDir || "";
     $("#cfg-mineru-mode").value = config.parse?.mineru?.mode || "off";
     $("#cfg-mineru-token").value = config.parse?.mineru?.token || "";
@@ -23,6 +30,11 @@ async function openSettings() {
     $("#cfg-uns-mode").value = config.parse?.unstructured?.mode || "off";
     $("#cfg-uns-key").value = config.parse?.unstructured?.apiKey || "";
     $("#cfg-uns-url").value = config.parse?.unstructured?.url || "";
+    // 检索源密钥：接口返回的是打码值；用户不改动则原样回传（服务端还原）
+    const s2 = (srcRes.sources || []).find((s) => s.id === "semanticscholar");
+    const scholar = (srcRes.sources || []).find((s) => s.type === "scholar-mirror");
+    $("#cfg-s2-key").value = s2?.apiKey || "";
+    $("#cfg-scholar-cookie").value = scholar?.cookie || "";
     $("#zotero-sync-status").textContent = zotero?.syncedAt
       ? `上次同步 ${new Date(zotero.syncedAt).toLocaleString()}（${zotero.papers} 篇）`
       : "尚未同步";
@@ -49,6 +61,7 @@ async function saveSettings() {
         },
       },
     });
+    await saveSearchKeys();
     msg.textContent = "已保存 ✓";
     msg.className = "ok";
     setTimeout(() => (msg.textContent = ""), 2500);
@@ -56,6 +69,26 @@ async function saveSettings() {
     msg.textContent = e.message;
     msg.className = "err";
   }
+}
+
+// 检索源密钥：仅当用户输入了非打码的新值才写回；打码值/空值表示保持不变
+async function saveSearchKeys() {
+  const s2v = $("#cfg-s2-key").value.trim();
+  const ck = $("#cfg-scholar-cookie").value.trim();
+  if ((!s2v || s2v.includes("***")) && (!ck || ck.includes("***"))) return;
+  const src = await api.searchSources();
+  const list = (src.sources || []).map((s) => ({ ...s }));
+  if (s2v && !s2v.includes("***")) {
+    const s2 = list.find((s) => s.id === "semanticscholar");
+    if (s2) s2.apiKey = s2v;
+  }
+  if (ck && !ck.includes("***")) {
+    const scholar = list.find((s) => s.type === "scholar-mirror");
+    if (scholar) scholar.cookie = ck;
+  }
+  await api.saveSearchSources(list);
+  $("#cfg-s2-key").value = "";
+  $("#cfg-scholar-cookie").value = "";
 }
 
 async function syncZotero() {

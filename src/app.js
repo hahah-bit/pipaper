@@ -12,6 +12,7 @@ import { initSearchPanel } from "./searchPanel.js";
 import { initVideoPanel as initVideoTab } from "./videoPanel.js";
 import { initTheme } from "./theme.js";
 import { initClipboard } from "./clipPanel.js";
+import { initSetupPanel } from "./setupPanel.js";
 
 export const state = {
   papers: [],
@@ -91,6 +92,10 @@ export const api = {
   setModel: (id, body) => jfetch(`/api/sessions/${id}/model`, { method: "POST", body }),
   compact: (id) => jfetch(`/api/sessions/${id}/compact`, { method: "POST", body: {} }),
   abort: (id) => jfetch(`/api/sessions/${id}/abort`, { method: "POST" }),
+  setupStatus: () => jfetch("/api/setup/status"),
+  setupTest: (id) => jfetch(`/api/setup/test/${id}`, { method: "POST", body: {} }),
+  searchSources: () => jfetch("/api/search/sources"),
+  saveSearchSources: (sources) => jfetch("/api/search/sources", { method: "PUT", body: { sources } }),
 };
 
 // ---------------- tiny dom helpers ----------------
@@ -165,6 +170,7 @@ async function boot() {
   try { initChat(); } catch (e) { window.__initErrors.push("initChat: " + (e.message||e)); }
   try { initReader(); } catch (e) { window.__initErrors.push("initReader: " + (e.message||e)); }
   try { initSettings(); } catch (e) { window.__initErrors.push("initSettings: " + (e.message||e)); }
+  try { initSetupPanel(); } catch (e) { window.__initErrors.push("initSetupPanel: " + (e.message||e)); }
   initTheme();
   initClipboard();
   window.__bootStage = "search"; try { initSearchPanel(); } catch (e) { window.__initErrors.push("initSearchPanel: " + (e.message||e)); }

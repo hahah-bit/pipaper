@@ -8,8 +8,12 @@ const UA = "PiPaper/0.5 (academic reader; local app)";
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DATA_DIR } from "../config.js";
 import { rankResults } from "./readscore.js";
+
+// 随仓库分发的数据资产目录；DATA_DIR 为旧机回退路径
+const ASSETS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "assets");
 
 function normDoi(doi) {
   return String(doi || "").toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//, "").trim();
@@ -28,10 +32,13 @@ function openalexAbstract(inv) {
 let metricsByIssn = null;
 function metrics() {
   if (!metricsByIssn) {
-    try {
-      metricsByIssn = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "journal-metrics-2026.json"), "utf8"));
-    } catch {
-      metricsByIssn = {};
+    for (const dir of [ASSETS_DIR, DATA_DIR]) {
+      try {
+        metricsByIssn = JSON.parse(fs.readFileSync(path.join(dir, "journal-metrics-2026.json"), "utf8"));
+        break;
+      } catch {
+        metricsByIssn = {};
+      }
     }
   }
   return metricsByIssn;

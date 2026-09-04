@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PiPaper · 论文精读工作台</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
-<link rel="stylesheet" href="/style.css?v=d7c746c147" />
+<link rel="stylesheet" href="/style.css?v=325e7b069d" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -268,11 +268,34 @@
       </label>
       <label>API Key <input id="cfg-uns-key" type="password" /></label>
       <label>服务地址 <input id="cfg-uns-url" type="text" placeholder="https://api.unstructured.io 或 http://localhost:8000" /></label>
+
+      <h4>检索源密钥（可选）</h4>
+      <label>Semantic Scholar API Key <input id="cfg-s2-key" type="password" placeholder="留空保持不变；无 key 时走开放限速通道" /></label>
+      <label>学术镜像 Cookie（Google 学术镜像）<input id="cfg-scholar-cookie" type="password" placeholder="浏览器过一次验证后复制 Cookie；留空保持不变" /></label>
+      <p class="res-note" style="margin:4px 0 0">密钥只存本机 data/（已 gitignore，不会进仓库）；接口返回一律打码。清除请到检索面板的源配置 ⚙。</p>
     </div>
     <div class="modal-foot">
       <span id="settings-msg"></span>
+      <button id="btn-open-setup" class="tool-btn" title="环境检查：pi 登录 / Docker 服务 / Zotero / 密钥">环境检查</button>
       <div class="spacer"></div>
       <button id="btn-settings-save" class="tool-btn primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Setup / 环境检查 modal ============ -->
+<div id="setup-backdrop" hidden>
+  <div id="setup-modal" class="modal">
+    <div class="modal-head"><span>环境检查 · 首次使用</span><button id="btn-setup-close" class="icon-btn">✕</button></div>
+    <div class="modal-body">
+      <p class="setup-intro">「必选」就绪即可开始对话与阅读；Docker / 本地安装 / 密钥均为可选增强。未就绪项附安装链接与命令。</p>
+      <div id="setup-list"></div>
+    </div>
+    <div class="modal-foot">
+      <button id="btn-setup-recheck" class="tool-btn">重新检测</button>
+      <span id="setup-summary" class="res-note" style="margin:0"></span>
+      <div class="spacer"></div>
+      <button id="btn-setup-dismiss" class="tool-btn">不再显示</button>
     </div>
   </div>
 </div>
@@ -294,6 +317,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=d7c746c147"></script>
+<script src="/app.js?v=325e7b069d"></script>
 </body>
 </html>

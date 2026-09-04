@@ -17,6 +17,7 @@ import { clipAdd, clipList, clipDelete, clipClear } from "./clip.js";
 import * as harness from "./harness.js";
 import { registerSessionRoutes } from "./session-routes.js";
 import { changePackage } from "./pi-packages.js";
+import { setupStatus, setupTest } from "./setup-status.js";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const UA = "PiPaper/0.5 (academic reader; local app)";
@@ -40,6 +41,16 @@ app.use((req, res, next) => {
 const api = express.Router();
 
 api.get("/health", (_req, res) => res.json({ ok: true, name: "PiPaper", time: new Date().toISOString() }));
+
+// ---- setup：环境自检（首次使用引导数据源） ----
+api.get("/setup/status", async (_req, res) => {
+  try { res.json(await setupStatus()); }
+  catch (e) { res.status(500).json({ error: String(e.message || e) }); }
+});
+api.post("/setup/test/:id", async (req, res) => {
+  try { res.json(await setupTest(req.params.id)); }
+  catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }
+});
 
 // ---- config ----
 api.get("/config", (_req, res) => res.json({ config: redactedConfig(), zotero: zoteroStatus() }));
@@ -496,19 +507,50 @@ api.delete("/clip/:id", (req, res) => { clipDelete(req.params.id); res.json({ ok
 api.post("/clip/clear", (_req, res) => { clipClear(); res.json({ ok: true }); });
 
 // ---- academic search ----
-api.get("/search/sources", (_req, res) => {
-  let custom = null;
+// 检索源凭证（apiKey/cookie）与 config 密钥同机制：出接口一律掩码，
+// 写回时含 *** 的值还原为已存值，空串表示清除。
+const SECRET_FIELDS = ["apiKey", "cookie"];
+const maskSecret = (s) => (s ? (s.length <= 6 ? "***" : s.slice(0, 3) + "***" + s.slice(-3)) : s);
+function readSourcesFile() {
   try {
-    custom = JSON.parse(fs.readFileSync(path.join(DATA_DIR, "search-sources.json"), "utf8"));
-  } catch {}
-  res.json({ sources: custom || DEFAULT_SOURCES, custom: !!custom, defaults: DEFAULT_SOURCES });
+    return JSON.parse(fs.readFileSync(path.join(DATA_DIR, "search-sources.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function maskSources(list) {
+  return (list || []).map((s) => {
+    const out = { ...s };
+    for (const f of SECRET_FIELDS) if (out[f]) out[f] = maskSecret(out[f]);
+    return out;
+  });
+}
+function restoreMasked(incoming, current) {
+  for (const s of incoming) {
+    for (const f of SECRET_FIELDS) {
+      const v = s[f];
+      if (typeof v !== "string") continue;
+      if (v.includes("***")) {
+        const prev = (current || []).find((c) => c.id === s.id);
+        if (prev?.[f]) s[f] = prev[f];
+        else delete s[f];
+      } else if (v === "") delete s[f];
+    }
+  }
+  return incoming;
+}
+
+api.get("/search/sources", (_req, res) => {
+  const custom = readSourcesFile();
+  res.json({ sources: custom ? maskSources(custom) : DEFAULT_SOURCES, custom: !!custom, defaults: DEFAULT_SOURCES });
 });
 
 api.put("/search/sources", (req, res) => {
   const sources = req.body?.sources;
   if (!Array.isArray(sources)) return res.status(400).json({ error: "sources 必须是数组" });
+  restoreMasked(sources, readSourcesFile());
   fs.writeFileSync(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
-  res.json({ ok: true, sources });
+  res.json({ ok: true, sources: maskSources(sources) });
 });
 
 // user-facing add: only needs a URL (+optional key/cookie); metadata auto-filled
@@ -545,7 +587,7 @@ api.post("/search/sources/add", (req, res) => {
       sources.push(def);
     }
     fs.writeFileSync(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
-    return res.json({ ok: true, source: def, sources });
+    return res.json({ ok: true, source: maskSources([def])[0], sources: maskSources(sources) });
   } else {
     // generic mirror entry; the adapter scraper handles scholar-style layouts
     def = {
@@ -562,7 +604,7 @@ api.post("/search/sources/add", (req, res) => {
   if (i >= 0) sources[i] = def;
   else sources.push(def);
   fs.writeFileSync(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
-  res.json({ ok: true, source: def, sources });
+  res.json({ ok: true, source: maskSources([def])[0], sources: maskSources(sources) });
 });
 
 api.get("/search", async (req, res) => {

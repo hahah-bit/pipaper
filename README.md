@@ -2,17 +2,55 @@
 
 以 [pi agent](https://github.com/badlogic/pi-mono)（`@earendil-works/pi-coding-agent`）为内核的论文阅读 / 对话 Web UI。**完全复用 pi 的会话管理与模型认证**（`~/.pi/agent` 下的 `auth.json`、`models.json`、JSONL 会话），只是为「读论文」这个任务套了一层专用界面。
 
-## 启动
+## 启动（新机器：从 clone 到跑起来）
+
+### ① 必选：Node + pi 登录（对话内核）
+
+- [Node.js](https://nodejs.org/) ≥ 22.13（用到内置 `node:sqlite`；24 LTS 已验证）
+- 安装 [pi agent](https://github.com/badlogic/pi-mono) 并完成**一次登录**——本应用直接复用 pi 的模型认证（`~/.pi/agent/auth.json`），**不需要在这里填任何模型密钥**：
 
 ```bash
-npm run dev        # 首次：构建前端 + 启动
-# 之后日常：
-npm start          # 直接启动（端口见 data/config.json，默认 4318）
+npm install -g @earendil-works/pi-coding-agent   # pi CLI
+pi                                               # 首次运行按提示登录模型
 ```
 
-打开 **http://127.0.0.1:4318**
+然后拉取并启动：
 
-> 模型与密钥：无需额外配置，直接复用你 pi CLI 的已登录模型（`pi` 里能用，这里就能用）。右上角可切换模型与思考深度。
+```bash
+git clone <本仓库> && cd piagent_ui_reading
+npm ci            # 安装依赖
+npm start         # 首次会自动构建前端并启动（等价 npm run dev）
+```
+
+打开 **http://127.0.0.1:4318**（端口可在 `data/config.json` 或环境变量 `PORT` 修改）。首次进入会自动弹出**环境检查**面板，逐项显示就绪状态并附下载链接与安装命令；之后可在 ⚙ 设置 → 「环境检查」随时打开。
+
+### ② 可选：Docker sidecar（解析 / 翻译增强）
+
+```bash
+docker compose up -d      # unstructured(解析,:8000) + libretranslate(翻译,:5001)
+```
+
+- **unstructured 本地解析** → `http://localhost:8000`，⚙ 设置里模式选「本地服务」即可，无需密钥
+- **LibreTranslate 翻译** → `http://localhost:5001`，阅读器段落悬停「译」即时翻译，无需密钥
+- 没装 Docker？[下载 Docker Desktop](https://www.docker.com/products/docker-desktop/)；不装也能用——解析有 pdf.js 本地兜底，翻译可走 LLM 模板「翻译选区」
+
+### ③ 可选：本地下载安装（Zotero / MinerU CLI）
+
+| 组件 | 用途 | 获取链接 | 说明 |
+|---|---|---|---|
+| [Zotero 7](https://www.zotero.org/download/) | 文献库同步 | https://www.zotero.org/download/ | 装好建库后**自动探测**数据目录，无需填路径 |
+| [MinerU CLI](https://github.com/opendatalab/MinerU) | 公式/表格精排（本地模式） | https://github.com/opendatalab/MinerU | `pip install "mineru[core]"`；不装也可用云端 API |
+
+### ④ 可选：申请密钥（全部只存本机）
+
+| 密钥 | 用途 | 申请入口 | 填写位置 |
+|---|---|---|---|
+| MinerU token | MinerU 云端解析 API | https://mineru.net/ | ⚙ 设置 |
+| unstructured API key | unstructured 云端解析 API | https://unstructured.io/ | ⚙ 设置 |
+| Semantic Scholar key | 学术检索解除限速 | https://www.semanticscholar.org/product-api | ⚙ 设置 → 检索源密钥 |
+| 学术镜像 Cookie | Google 学术镜像检索 | 浏览器过一次验证后复制 Cookie | ⚙ 设置 → 检索源密钥 |
+
+> **密钥安全**：所有密钥只保存在本机 `data/` 目录（已在 `.gitignore`），接口返回一律打码，**不会进入 git 仓库**。请勿把 `data/` 目录打包分享给他人。
 
 ## 界面
 
@@ -93,6 +131,8 @@ server/          Node 服务端（Express + pi SDK 桥接）
   session-controller.js  原生运行时生命周期和单控制连接
   session-routes.js      SSE、状态、会话树、队列、工具与导出接口
   paper-tools.js        论文工具和领域提示词
+  setup-status.js   环境自检（能力注册表 + 探测，首启引导数据源）
+  assets/        随仓库分发的数据资产（期刊 SJR/分区指标，clone 即有）
   zotero.js      Zotero 集成（zotero.sqlite 快照，Zotero 关着也能同步）
   parser/        两层解析管线 + merge（中间态 blocks.json v2）
   parser/render.js  pdf.js + @napi-rs/canvas 服务端光栅化（图裁剪/页截图）
