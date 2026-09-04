@@ -9,7 +9,7 @@ import { initSidebar, renderPapers, renderCollections, renderProjects } from "./
 import { initChat, refreshSessions, loadCommands } from "./chat.js";
 import { initReader } from "./reader.js";
 import { initSearchPanel } from "./searchPanel.js";
-import { initVideoTab } from "./videoPanel.js";
+import { initVideoPanel as initVideoTab } from "./videoPanel.js";
 import { initTheme } from "./theme.js";
 import { initClipboard } from "./clipPanel.js";
 

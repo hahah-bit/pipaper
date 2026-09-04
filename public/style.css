@@ -631,3 +631,23 @@ select, #model-select, #think-select {
 #clip-panel.mini .clip-body, #clip-panel.mini .clip-rz { display: none !important; }
 #clip-panel.mini:hover { border-color: var(--accent); }
 #clip-panel.mini:hover .clip-title { color: var(--accent); }
+
+/* ============ 视频模块（右栏自包含） ============ */
+.video-item { display: flex; gap: 8px; align-items: center; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; margin-bottom: 6px; background: var(--bg2); }
+.video-item:hover { border-color: var(--accent); }
+.video-item.active { border-color: var(--accent); background: var(--chip); }
+.video-item input[type="checkbox"] { width: auto; margin: 0; flex: none; }
+.video-player-card { border: 1px solid var(--border); border-radius: 12px; padding: 10px; margin-top: 10px; background: var(--bg2); display: flex; flex-direction: column; gap: 8px; }
+.video-bar { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+.video-bar .tool-btn { font-size: 11.5px; padding: 4px 8px; }
+.va-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.va-title { flex: 1; min-width: 0; font-size: 12.5px; color: var(--fg1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.va-bar select { background: var(--bg1); border: 1px solid var(--border); color: var(--fg0); border-radius: 7px; padding: 4px 6px; font-size: 11.5px; }
+.va-bar .tool-btn { font-size: 11.5px; padding: 4px 10px; }
+.va-sec { font-size: 11.5px; color: var(--accent); font-weight: 600; margin: 6px 0 4px; }
+.va-tl { display: flex; flex-wrap: wrap; gap: 6px; }
+.va-chip { display: inline-flex; gap: 6px; align-items: center; background: var(--bg1); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 11.5px; color: var(--fg1); cursor: pointer; }
+.va-chip:hover { border-color: var(--accent); color: var(--fg0); }
+.va-chip .va-t { color: var(--accent); font-family: Consolas, monospace; font-size: 11px; }
+.va-card { border: 1px solid var(--border); border-radius: 9px; padding: 8px; background: var(--bg1); margin-top: 8px; }
+#va-mindmap-svg { background: var(--bg0); border-radius: 6px; }

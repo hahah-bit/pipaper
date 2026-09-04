@@ -425,7 +425,7 @@ async function sendMessageInner() {
 
 // Shared streaming core: ensures a session, renders the exchange, streams SSE.
 // Used by the composer and by the reader's box-annotation quick-ask.
-export async function streamPrompt(fullText, images = [], userPreview, displayBlocks = []) {
+export async function streamPrompt(fullText, images = [], userPreview, displayBlocks = [], onDone) {
   if (state.streaming) {
     toast("上一条还在回复中，稍候", true);
     return;
@@ -529,6 +529,7 @@ export async function streamPrompt(fullText, images = [], userPreview, displayBl
     state.streaming = false;
     setStreamingUI(false);
     sendAbortController = null;
+    try { onDone?.(acc); } catch {}
     refreshSessions();
   }
 }

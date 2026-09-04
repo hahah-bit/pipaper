@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PiPaper · 论文精读工作台</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
-<link rel="stylesheet" href="/style.css?v=c17399103f" />
+<link rel="stylesheet" href="/style.css?v=d946b5271b" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -169,7 +169,38 @@
           <span>视频管理</span><span class="vd-caret">▾</span>
         </div>
         <div id="video-list"></div>
-        <p class="res-note">打开后在阅读器播放，可「截帧问 AI」：把当前画面 + 时间戳发给模型一起讨论。</p>
+        <div id="video-player-card" class="video-player-card" hidden>
+          <div id="video-stage">
+            <video id="video-el" controls style="width:100%; background:#000; border-radius:8px;"></video>
+            <div class="video-bar">
+              <span id="video-ts" class="res-note" style="margin:0;flex:1;min-width:0;overflow:hidden;white-space:nowrap"></span>
+              <button id="btn-frame-ask" class="tool-btn">📸 截帧问 AI</button>
+              <button id="btn-frame-chip" class="tool-btn">＋帧入对话</button>
+              <button id="btn-va-pip" class="tool-btn" title="带控制条的画中画">🖼 画中画</button>
+            </div>
+          </div>
+          <div class="va-bar">
+            <span id="video-title" class="va-title"></span>
+            <select id="va-mode">
+              <option value="auto">自动（按时长）</option>
+              <option value="summary">仅总结脉络</option>
+              <option value="full">时间轴+思维导图</option>
+            </select>
+            <button id="btn-va-run" class="tool-btn primary">🤖 AI 解析</button>
+          </div>
+          <span id="va-status" class="res-note"></span>
+          <div id="va-timeline"></div>
+          <div id="va-mindmap-card" class="va-card" hidden>
+            <div class="va-sec">🧠 思维导图</div>
+            <svg id="va-mindmap-svg" style="width:100%;height:300px"></svg>
+          </div>
+          <div id="va-summary-card" class="va-card" hidden>
+            <div class="va-sec">📝 脉络</div>
+            <div id="va-summary" style="max-height:200px;overflow:auto;font-size:12.5px;color:var(--fg1);white-space:pre-wrap"></div>
+          </div>
+        </div>
+        <button id="btn-va-batch" class="tool-btn" style="width:100%;margin-top:8px">🧠 批量解析所选<span id="va-batch-count"></span> → 综合思维导图</button>
+        <p class="res-note">勾选列表中的视频后可批量解析；AI 解析调用会话中的 video-use 技能，基于等间隔关键帧生成时间轴/思维导图/脉络。</p>
       </div>
     </div>
   </aside>
@@ -236,6 +267,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=c17399103f"></script>
+<script src="/app.js?v=d946b5271b"></script>
 </body>
 </html>

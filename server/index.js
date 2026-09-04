@@ -561,6 +561,30 @@ api.post("/translate", async (req, res) => {
   }
 });
 
+// ---- video proxy (fixes CORS + allows frame capture for remote URLs) ----
+api.get("/video/proxy", async (req, res) => {
+  const target = String(req.query.url || "");
+  if (!target.startsWith("http://") && !target.startsWith("https://")) return res.status(400).end("bad url");
+  try {
+    const headers = { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PiPaper/0.8" };
+    if (req.headers.range) headers.Range = req.headers.range;
+    const upstream = await fetch(target, { headers, redirect: "follow", signal: AbortSignal.timeout(600000) });
+    const h = {
+      "content-type": upstream.headers.get("content-type") || "video/mp4",
+      "access-control-allow-origin": "*",
+    };
+    for (const k of ["content-length", "content-range", "accept-ranges"]) {
+      const v = upstream.headers.get(k);
+      if (v) h[k] = v;
+    }
+    res.writeHead(upstream.status, h);
+    const { Readable } = await import("node:stream");
+    Readable.fromWeb(upstream.body).pipe(res);
+  } catch (e) {
+    res.status(502).end(String(e.message || e).slice(0, 200));
+  }
+});
+
 // ---- clipboard history (2-day TTL) ----
 api.get("/clip", (_req, res) => res.json({ entries: clipList() }));
 api.post("/clip", (req, res) => {
