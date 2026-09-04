@@ -140,6 +140,31 @@ input, select, textarea { font-family: inherit; }
 .sr-actions .tool-btn { font-size: 11.5px; padding: 3px 8px; color: var(--fg1); text-decoration: none; }
 .sr-src { margin-left: auto; font-size: 10.5px; color: var(--fg2); }
 
+/* ReadScore 评分行 */
+.sr-scorerow { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin-bottom: 5px; }
+.sr-score { color: #10131f; border-radius: 6px; padding: 1px 8px; font-weight: 700; font-size: 11.5px; cursor: help; }
+.sr-scorepart { border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; font-size: 10.5px; color: var(--fg1); cursor: help; }
+.sr-flag { border: 1px dashed var(--accent); color: var(--accent); border-radius: 6px; padding: 0 6px; font-size: 10.5px; }
+.sr-flag.classic { border-color: #e5c07b; color: #e5c07b; }
+
+/* 待读清单 */
+.sch-toread { margin-top: 8px; }
+.tr-head { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--fg1); cursor: pointer; padding: 5px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); user-select: none; }
+.tr-head:hover { border-color: var(--accent); }
+.tr-head.empty { opacity: .7; }
+.tr-caret { margin-left: auto; font-size: 10px; color: var(--fg2); }
+.tr-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.tr-row { border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; background: var(--bg1); }
+.tr-main { min-width: 0; }
+.tr-title { font-size: 12px; font-weight: 600; color: var(--fg0); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-meta { display: flex; gap: 6px; align-items: center; font-size: 10.5px; color: var(--fg2); margin-top: 3px; flex-wrap: wrap; }
+.tr-venue { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.tr-nopdf { color: var(--fg2); border: 1px dashed var(--border); border-radius: 5px; padding: 0 4px; font-size: 10px; }
+.tr-actions { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; }
+.tr-actions .tool-btn { font-size: 11px; padding: 2px 7px; color: var(--fg1); text-decoration: none; }
+.tr-actions .tool-btn.primary { color: var(--fg0); }
+.tr-empty { margin: 6px 2px; }
+
 /* right panel (search/video) */
 #rightbar {
   width: var(--right-w, 480px); min-width: var(--right-w, 480px);

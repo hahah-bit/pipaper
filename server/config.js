@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-export const DATA_DIR = path.join(APP_ROOT, "data");
+export const DATA_DIR = process.env.PIPAPER_DATA_DIR ? path.resolve(process.env.PIPAPER_DATA_DIR) : path.join(APP_ROOT, "data");
 export const LIBRARY_DIR = path.join(APP_ROOT, "library");
 export const PARSED_DIR = path.join(DATA_DIR, "parsed");
 export const TMP_DIR = path.join(DATA_DIR, "tmp");
