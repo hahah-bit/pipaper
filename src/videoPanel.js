@@ -10,7 +10,7 @@ let current = null;
 let listCollapsed = false;
 const selected = new Set();
 
-const srcOf = (v) => (v.remote ? "/api/video/proxy?url=" + encodeURIComponent(v.url) : v.url);
+const srcOf = (v) => v.playSrc || (v.remote ? "/api/video/proxy?url=" + encodeURIComponent(v.url) : v.url);
 
 export function initVideoPanel() {
   $("#btn-video-pick").addEventListener("click", () => $("#video-input").click());
@@ -23,13 +23,35 @@ export function initVideoPanel() {
     row.hidden = !row.hidden;
     if (!row.hidden) $("#video-url-input").focus();
   });
-  $("#btn-video-url-add").addEventListener("click", () => {
+  $("#btn-video-url-add").addEventListener("click", async () => {
     const url = $("#video-url-input").value.trim();
     if (!url) return;
-    const name = decodeURIComponent(url.split("/").pop().split("?")[0]) || url;
-    addVideo({ name, url, remote: true });
     $("#video-url-input").value = "";
     $("#video-url-row").hidden = true;
+    if (/bilibili\.com\/video\/(BV[0-9A-Za-z]{10})/.test(url) || /^BV[0-9A-Za-z]{10}$/.test(url)) {
+      toast("解析 B 站视频…");
+      try {
+        const r = await fetch("/api/video/bili?url=" + encodeURIComponent(url));
+        const j = await r.json();
+        if (!r.ok || !j.ok) throw new Error(j.error || "HTTP " + r.status);
+        const bv = j.bv;
+        addVideo({
+          name: j.title.slice(0, 60),
+          url,
+          remote: true,
+          playSrc: j.mp4 || null,
+          iframe: j.mp4 ? null : "https://player.bilibili.com/player.html?bvid=" + bv + "&danmaku=0&autoplay=0&high_quality=1",
+          meta: { title: j.title, desc: j.desc, owner: j.owner, duration: j.duration, cover: j.cover },
+          bili: true,
+        });
+        toast(j.mp4 ? "B 站视频已解析（可播放+AI 解析）" : "B 站视频已嵌入官方播放器（AI 将基于元数据总结）");
+      } catch (e) {
+        toast("B 站解析失败: " + e.message, true);
+      }
+      return;
+    }
+    const name = decodeURIComponent(url.split("/").pop().split("?")[0]) || url;
+    addVideo({ name, url, remote: true });
   });
   $("#video-url-input").addEventListener("keydown", (e) => {
     if (e.key === "Enter") { e.preventDefault(); $("#btn-video-url-add").click(); }
@@ -98,6 +120,28 @@ function playVideo(v) {
   renderList();
   $("#video-player-card").hidden = false;
   const player = $("#video-el");
+  let frameBox = $("#video-bili-frame");
+  if (v.iframe) {
+    player.hidden = true;
+    $("#btn-frame-ask").hidden = true;
+    $("#btn-frame-chip").hidden = true;
+    if (!frameBox) {
+      frameBox = el("iframe", { id: "video-bili-frame", style: { width: "100%", aspectRatio: "16/9", border: "0", borderRadius: "8px" }, allow: "fullscreen", scrolling: "no" });
+      player.parentElement.insertBefore(frameBox, player);
+    }
+    frameBox.hidden = false;
+    frameBox.src = v.iframe;
+    $("#video-title").textContent = v.name;
+    $("#va-timeline").replaceChildren();
+    $("#va-summary").replaceChildren();
+    $("#va-mindmap-card").hidden = true;
+    $("#va-summary-card").hidden = true;
+    return;
+  }
+  player.hidden = false;
+  $("#btn-frame-ask").hidden = false;
+  $("#btn-frame-chip").hidden = false;
+  if (frameBox) frameBox.hidden = true;
   const src = srcOf(v);
   if (player.dataset.src !== src) {
     player.dataset.src = src;
@@ -170,7 +214,7 @@ async function captureVideoFrames(v, count) {
 // ---------- AI analysis ----------
 function analysisPrompt(name, dur, frames, mode) {
   const m = mode === "auto" ? (dur < 180 ? "summary" : "full") : mode;
-  const tsList = frames.map((f, i) => `帧${i + 1} @ ${fmt(f.ts)}`).join("，");
+  const tsList = frames.map((f, i) => `帧${i + 1} @ ${Math.round(f.ts)}秒(${fmt(f.ts)})`).join("，");
   const head = `请使用 video-use 技能分析视频《${name}》（时长 ${fmt(dur)}）。按时间顺序提供 ${frames.length} 个等间隔关键帧：${tsList}。请基于画面实际内容作答，不要编造。`;
   if (m === "summary") {
     return head + "\n\n请总结视频整体脉络：分 3-6 点，每点注明大致时间段，最后一句总评。";
@@ -214,6 +258,18 @@ function parseAnalysis(text) {
 }
 
 async function analyzeOne(v, mode) {
+  if (v.iframe && v.meta) {
+    setVaStatus("AI 基于元数据总结（该源无法抽帧）…");
+    const m = v.meta;
+    await streamPrompt(
+      `请总结这个 B 站视频的预期内容脉络：标题《${m.title}》，UP主：${m.owner}，时长 ${fmt(m.duration)}，简介：${(m.desc || "无").slice(0, 800)}。基于以上信息归纳主题、可能的知识结构与观看价值，注明这是基于元数据的推断。`,
+      [],
+      `🎬 AI 解析《${v.name}》`,
+      [],
+      (text) => { setVaStatus(""); renderAnalysis({ timeline: null, outline: "", summary: text, raw: text }, v); }
+    );
+    return;
+  }
   const dur = await durationOf(v);
   const nFrames = mode === "summary" ? 4 : 8;
   setVaStatus(`抽取 ${nFrames} 个关键帧…`);
