@@ -416,7 +416,12 @@ async function openPip() {
       if (card) card.prepend(stage);
     });
   } catch (e) {
-    toast("画中画失败: " + e.message, true);
+    // graceful fallback: native picture-in-picture
+    try {
+      await player.requestPictureInPicture();
+    } catch {
+      toast("画中画不可用（需浏览器授权）: " + String(e.message || e).slice(0, 60), true);
+    }
   }
 }
 
