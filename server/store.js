@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { normalizeResources } from "./resource-config.js";
 import { DATA_DIR, LIBRARY_DIR, PARSED_DIR, TMP_DIR } from "./config.js";
 
 const PAPERS_FILE = path.join(DATA_DIR, "papers.json");
@@ -24,6 +25,17 @@ function load() {
   } catch {}
 }
 load();
+
+// Back up the original indexes once, before the first v2 write.
+const MIGRATION_FILE = path.join(DATA_DIR, "pi-resources-v2.json");
+if (!fs.existsSync(MIGRATION_FILE)) {
+  for (const file of [PROJECTS_FILE, SESSIONS_FILE]) {
+    if (fs.existsSync(file) && !fs.existsSync(file + ".pre-pi-v2.bak")) fs.copyFileSync(file, file + ".pre-pi-v2.bak");
+  }
+  for (const p of projects) p.resources = normalizeResources(p.resources);
+  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2));
+  fs.writeFileSync(MIGRATION_FILE, JSON.stringify({ schemaVersion: 2, migratedAt: new Date().toISOString() }));
+}
 
 function persist() {
   clearTimeout(saveTimer);
@@ -52,7 +64,7 @@ export function getProject(id) {
 }
 
 export function createProject(name, type = "temp") {
-  const p = { id: "prj_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name, type, paperIds: [], resources: { skillsEnabled: [], extensions: [] }, createdAt: new Date().toISOString() };
+  const p = { id: "prj_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), name, type, paperIds: [], resources: normalizeResources(), createdAt: new Date().toISOString() };
   projects.push(p);
   persist();
   return p;
@@ -64,7 +76,7 @@ export function updateProject(id, { name, addPaper, removePaper, resources } = {
   if (name) p.name = name;
   if (addPaper && !p.paperIds.includes(addPaper)) p.paperIds.push(addPaper);
   if (removePaper) p.paperIds = p.paperIds.filter((x) => x !== removePaper);
-  if (resources) p.resources = { ...(p.resources || {}), ...resources };
+  if (resources) p.resources = normalizeResources({ ...normalizeResources(p.resources), ...resources, revision: (p.resources?.revision || 0) + 1 });
   persist();
   return p;
 }

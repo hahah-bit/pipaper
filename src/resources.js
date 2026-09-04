@@ -5,8 +5,10 @@ import { api, state, $, el, toast } from "./app.js";
 
 let resData = null;
 let activeTab = "skills";
+let saving = false;
 
 export function initResources() {
+  window.addEventListener("pi:resources", () => { if (!$("#resources-backdrop").hidden) loadResources(); });
   $("#btn-resources").addEventListener("click", openResources);
   $("#btn-resources-close").addEventListener("click", () => ($("#resources-backdrop").hidden = true));
   $("#resources-backdrop").addEventListener("click", (e) => {
@@ -34,13 +36,14 @@ async function openResources() {
 }
 
 function projName() {
-  return state.projectId ? state.projects.find((p) => p.id === state.projectId)?.name : null;
+  return currentProject()?.name || null;
 }
 
 function renderRes() {
   $("#res-proj-name").textContent = projName() ? `· 项目「${projName()}」` : "· 全局";
   const body = $("#res-body");
   body.replaceChildren();
+  if (resData.resources) body.append(el("p", { class: "res-note" }, ({ applied: "当前会话资源已生效", pending: "当前任务结束后更新资源", failed: "加载失败，当前会话保留原配置" })[resData.resources.status] + (resData.resources.error ? "：" + resData.resources.error : "")));
   if (activeTab === "skills") renderSkills(body);
   else if (activeTab === "extensions") renderExtensions(body);
   else if (activeTab === "packages") renderPackages(body);
@@ -48,18 +51,23 @@ function renderRes() {
 }
 
 function currentProject() {
-  return state.projects.find((p) => p.id === state.projectId) || null;
+  const id = resData?.sessionId ? resData.projectId : state.projectId;
+  return state.projects.find((p) => p.id === id) || null;
 }
 
 async function saveResources(resources) {
+  if (saving) return;
   const p = currentProject();
   if (!p) {
     p_resources_fallback(resources);
     return;
   }
-  p.resources = { ...(p.resources || {}), ...resources };
-  await api.updateProject(p.id, { resources: p.resources });
-  toast("已保存，绑定该项目的会话生效");
+  saving = true;
+  for (const input of $("#res-body").querySelectorAll("input,button,select")) input.disabled = true;
+  try {
+    const updated = await api.updateProject(p.id, { resources }); p.resources = updated.resources;
+    toast("已保存；空闲会话更新，运行中的会话等待任务结束"); await loadResources();
+  } finally { saving = false; renderRes(); }
 }
 
 function p_resources_fallback() {
@@ -67,39 +75,23 @@ function p_resources_fallback() {
 }
 
 function renderSkills(body) {
-  const proj = currentProject();
-  const enabled = proj?.resources?.skillsEnabled || [];
-  body.append(
-    el("p", { class: "res-note" },
-      "分层技能路由（展示层）：基座技能始终可用；", el("b", {}, "论文综合技能组"), "（zotero / nature-* 等）只在会话绑定论文或 Zotero 项目时自动注入，不做强制钩子。")
-  );
-  // gated 论文综合 group
-  const gated = resData.gatedSkills || [];
-  body.append(el("div", { class: "dd-group", style: { paddingLeft: 0 } }, `论文综合技能组（按需加载 · ${gated.length} 个）`));
-  if (!gated.length) body.append(el("p", { class: "res-note" }, "未发现分层技能。把技能放进 ~/.pi/agent/skills-gated/ 即进入该组（不直接暴露给 pi）。"));
-  for (const s of gated) {
-    body.append(el("div", { class: "res-row" },
-      el("span", { class: "res-name" }, "🔒 " + s.name),
-      el("span", { class: "res-desc" }, s.description),
-      el("span", { class: "res-src" }, "论文综合")
-    ));
-  }
-  body.append(el("div", { class: "dd-group", style: { paddingLeft: 0 } }, "基座技能（pi 常规发现）"));
-  for (const s of resData.skills) {
-    const cb = el("input", { type: "checkbox" });
-    cb.checked = !proj || !enabled.length || enabled.includes(s.name);
-    cb.addEventListener("change", async () => {
-      const set = new Set(enabled);
-      cb.checked ? set.add(s.name) : set.delete(s.name);
-      await saveResources({ skillsEnabled: [...set] });
-    });
-    body.append(
-      el("div", { class: "res-row" },
-        el("label", { class: "res-check" }, cb, el("span", { class: "res-name" }, s.name)),
-        el("span", { class: "res-desc" }, s.description?.slice(0, 90) || ""),
-        el("span", { class: "res-src" }, s.source || "")
-      )
-    );
+  const project = currentProject();
+  const resources = project?.resources || resData.selection || {};
+  const mode = el("select", {}, el("option", { value: "inherit" }, "继承默认技能"), el("option", { value: "selected" }, "只启用勾选技能"));
+  mode.value = resources.skillsMode || "inherit"; mode.disabled = !project;
+  mode.onchange = async () => { try { await saveResources({ skillsMode: mode.value, legacyGated: false, skillsEnabled: resData.skills.filter(s => s.enabled).map(s => s.name) }); } catch(e) { toast(e.message,true); } };
+  body.append(el("p", { class: "res-note" }, "这里显示当前会话的候选技能和实际启用状态。论文技能按绑定进入候选列表；指定清单可以全部关闭。"), mode);
+  body.append(el("button", { class: "tool-btn", disabled: !project, onclick: async () => { try { await saveResources({ skillsMode: "selected", legacyGated: false, skillsEnabled: [] }); } catch(e) { toast(e.message,true); } } }, "全部关闭"));
+  for (const s of resData.skills || []) {
+    const cb = el("input", { type: "checkbox" }); cb.checked = resources.skillsMode === "selected" && !resources.legacyGated ? (resources.skillsEnabled || []).includes(s.name) : !!s.enabled; cb.disabled = !project;
+    cb.onchange = async () => {
+      const selection = new Set(resources.skillsMode === "selected" && !resources.legacyGated ? resources.skillsEnabled : resData.skills.filter(s => s.enabled).map(s => s.name));
+      cb.checked ? selection.add(s.name) : selection.delete(s.name);
+      cb.disabled = true;
+      try { await saveResources({ skillsMode: "selected", legacyGated: false, skillsEnabled: [...selection] }); }
+      catch(e) { toast(e.message,true); cb.disabled = false; }
+    };
+    body.append(el("div", { class: "res-row" }, el("label", { class: "res-check" }, cb, el("span", { class: "res-name" }, s.name)), el("span", { class: "res-desc" }, s.description || ""), el("span", { class: "res-src" }, s.source || "")));
   }
 }
 
@@ -107,7 +99,7 @@ function renderExtensions(body) {
   const proj = currentProject();
   body.append(
     el("p", { class: "res-note" },
-      "已加载的扩展（~/.pi/agent/extensions、.pi/extensions 与 settings.json packages）。扩展为全局加载；项目可在下方追加项目专属扩展路径。")
+      "已加载的扩展（~/.pi/agent/extensions、.pi/extensions 与 settings.json packages）。每个会话独立加载；项目可在下方追加项目专属扩展路径。")
   );
   if (!resData.extensions.length) body.append(el("p", { class: "res-note" }, "未发现已加载扩展。"));
   for (const e of resData.extensions) {
@@ -161,10 +153,10 @@ function renderPackages(body) {
     el("p", { class: "res-note" },
       "pi 扩展包商店：",
       el("a", { href: "https://pi.dev/packages", target: "_blank", style: { color: "var(--accent)" } }, "pi.dev/packages"),
-      "（安装即调用本地 pi CLI）。全局安装写入 ~/.pi/agent/settings.json；项目安装通过 npm 装到本工作区，仅对绑定该项目的会话生效。")
+      "（由 Pi 原生包管理器安装）。全局配置由 Pi 管理；项目包安装在独立管理目录，仅供该项目使用。")
   );
   // install form
-  const spec = el("input", { type: "text", placeholder: "包名，如 npm:pi-web-access 或 @scope/pkg", style: { flex: "1" } });
+  const spec = el("input", { type: "text", placeholder: "npm:包名、npm:@scope/pkg@版本、Git 来源或绝对路径", style: { flex: "1" } });
   const scope = el("select", {},
     el("option", { value: "global" }, "全局（~/.pi/agent）"),
     el("option", { value: "project" }, "当前项目"),
@@ -176,9 +168,9 @@ function renderPackages(body) {
       log.style.display = "block";
       log.textContent = "安装中…";
       try {
-        const r = await api.pkgInstall(spec.value.trim(), scope.value, state.projectId);
+        const r = await api.pkgInstall(spec.value.trim(), scope.value, currentProject()?.id);
         log.textContent = (r.ok ? "✓ 成功\n" : "✕ 失败\n") + (r.output || "") + (r.entries?.length ? "\n入口: \n" + r.entries.join("\n") : "");
-        if (r.ok) { spec.value = ""; loadResources(); }
+        if (r.ok) { if (r.project && currentProject()) currentProject().resources = r.project.resources; spec.value = ""; loadResources(); }
       } catch (e) {
         log.textContent = "✕ " + e.message;
       }
@@ -192,7 +184,7 @@ function renderPackages(body) {
   if (!resData.packages.length) body.append(el("p", { class: "res-note" }, "未安装包。"));
   for (const p of resData.packages) {
     body.append(el("div", { class: "res-row" },
-      el("span", { class: "res-name" }, p),
+      el("span", { class: "res-name" }, typeof p === "string" ? p : p.source),
       el("button", {
         class: "icon-btn", onclick: async () => {
           if (!confirm(`移除全局包 ${p}？（执行 pi remove）`)) return;
@@ -211,13 +203,10 @@ function renderPackages(body) {
   else if (!list.length) body.append(el("p", { class: "res-note" }, "该项目尚未安装包。"));
   for (const p of list) {
     body.append(el("div", { class: "res-row" },
-      el("span", { class: "res-name" }, p),
+      el("span", { class: "res-name" }, typeof p === "string" ? p : p.source),
       el("button", {
         class: "icon-btn", onclick: async () => {
-          const rest = list.filter((x) => x !== p);
-          proj.resources.packages = rest;
-          await api.updateProject(proj.id, { resources: { packages: rest } });
-          loadResources();
+          try { const result = await api.pkgRemoveProject(p, proj.id); if (result.project) proj.resources = result.project.resources; await loadResources(); } catch(e) { toast(e.message,true); }
         }
       }, "移除")
     ));

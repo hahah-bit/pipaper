@@ -4,17 +4,40 @@ import renderMathInElement from "katex/contrib/auto-render";
 import { api, state, $, el, toast, renderWelcome, renderChips, addChip } from "./app.js";
 import { createUserInputUI } from "./userInput.js";
 import { composerAction } from "./chatKeys.js";
+import { connectSessionEvents, closeSessionEvents, waitOperation } from "./sessionTransport.js";
+import { initSessionPanel, renderSessionState } from "./sessionPanel.js";
 
-let sendAbortController = null;
+
 let autoScroll = true;
 const userInputUI = createUserInputUI(
   (sessionId, requestId, answer) => api.answerUserInput(sessionId, requestId, answer),
-  async (sessionId) => { sendAbortController?.abort(); await api.abort(sessionId); }
+  async (sessionId) => { await api.abort(sessionId); }
 );
 let streamSessionId = null;
 let sendingQueuedMessage = false;
 const pendingBranchJobs = [];
 let drainingBranchJobs = false;
+let pendingBinding = null, applyingBinding = false, restoreBindingOnSnapshot = false;
+
+export async function syncSessionBinding() {
+  if (!state.sessionId || !state.controlId) return;
+  pendingBinding = { id: state.sessionId, paperId: state.currentPaper?.id || null, projectId: state.projectId || null };
+  await settleSessionActions();
+}
+async function settleSessionActions() {
+  if (state.streaming || applyingBinding) return;
+  if (pendingBinding) {
+    const binding = pendingBinding; pendingBinding = null;
+    if (binding.id === state.sessionId && state.controlId) {
+      applyingBinding = true;
+      try { await api.sessionAction(binding.id, "binding", binding); await loadCommands(); }
+      catch (e) { toast("绑定更新失败：" + e.message, true); }
+      finally { applyingBinding = false; }
+    }
+  }
+  if (pendingBinding) await settleSessionActions();
+  else await drainBranchJobs();
+}
 
 // ---------------- markdown / math rendering ----------------
 marked.setOptions({ gfm: true, breaks: false });
@@ -100,46 +123,133 @@ async function createSession() {
 
 export async function openSession(id, { force = false } = {}) {
   if (state.streaming && !force) return toast("请先停止当前回复，再切换会话");
+  userInputUI.clear();
   state.sessionId = id;
-  $("#messages").replaceChildren();
-  liveNodes.length = 0;
-  renderSessionMenu();
+  restoreBindingOnSnapshot = true; pendingBinding = null;
   try {
-    const h = await api.history(id);
-    if (h.error) throw new Error(h.error);
-    state.model = h.model;
-    syncModelSelect();
-    if (h.thinkingLevel) $("#think-select").value = h.thinkingLevel;
-    for (const m of h.messages || []) {
-      if (m.role === "user") {
-        const text = m.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n");
-        const nImgs = m.parts.filter((p) => p.type === "image").length;
-        const node = addMessageEl("user", text + (nImgs ? `\n[🖼 截图 ×${nImgs}]` : ""));
-        if (m.entryId) addReaskButton(node, m.entryId, text);
-      } else if (m.role === "assistant") {
-        const node = assistantSkeleton();
-        $("#messages").append(node.root);
-        liveNodes.push(node);
-        let textAcc = "";
-        let thinkingAcc = "";
-        for (const p of m.parts || []) {
-          if (p.type === "text") textAcc += p.text;
-          else if (p.type === "thinking") thinkingAcc += p.text;
-          else if (p.type === "toolCall") addToolCard(node, p.id, p.name, p.args, true);
-        }
-        flushAssistant(node, textAcc, thinkingAcc, false);
-        collapseThinking(node);
-        addMeta(node, m.usage, m.model);
-        if (m.error) markError(node, m.error);
-      } else if (m.role === "toolResult") {
-        fillToolCard(m.toolCallId, m.toolName, m.text, m.isError);
-      }
-    }
-    scrollBottom(true);
-    if (!($("#messages").children.length)) renderWelcome();
-  } catch (e) {
-    toast("打开会话失败: " + e.message, true);
+    await connectSessionEvents(id, handleSessionEvent);
+    await loadCommands();
+    state.models = await api.models(); syncModelSelect();
+    renderSessionMenu();
+  } catch (e) { toast("打开会话失败: " + e.message, true); }
+}
+
+function renderContent(parts, target) {
+  for (const p of parts || []) {
+    if (p.type === "image") target.append(el("img", { src: 'data:' + p.mimeType + ';base64,' + p.data, class: "native-result-image", alt: "对话图片" }));
+    else if (p.type === "text") target.append(el("pre", { class: "native-result-text" }, p.text));
   }
+}
+function renderHistory(h) {
+  for (const n of liveNodes) finalizeActivity(n);
+  $("#messages").replaceChildren(); liveNodes.length = 0; activeStream = null;
+  for (const m of h.messages || []) {
+    let root;
+    if (m.role === "user") {
+      const text = m.parts.filter(p => p.type === "text").map(p => p.text).join("\n");
+      const node = addMessageEl("user", text, m.parts.filter(p => p.type === "image").map(p => 'data:' + p.mimeType + ';base64,' + p.data));
+      if (m.entryId) addReaskButton(node, m.entryId, text);
+      root = node;
+    } else if (m.role === "assistant") {
+      const node = assistantSkeleton(); $("#messages").append(node.root); liveNodes.push(node);
+      for (const p of m.parts || []) if (p.type === "toolCall") addToolCard(node, p.id, p.name, p.args, true);
+      flushAssistant(node, m.parts.filter(p => p.type === "text").map(p => p.text).join(""), m.parts.filter(p => p.type === "thinking").map(p => p.text).join(""), false);
+      collapseThinking(node); addMeta(node, m.usage, m.model); if (m.error) markError(node, m.error); root = node.root;
+      renderContent(m.parts.filter(p => p.type === "image"), node.bubble);
+    } else if (m.role === "toolResult") {
+      root = fillToolCard(m.toolCallId, m.toolName, m.text, m.isError, m.parts, m.details);
+      if (!root) {
+        root = el("details", { class: "native-message" }, el("summary", {}, m.toolName + " · 工具结果"));
+        renderContent(m.parts, root); $("#messages").append(root);
+      }
+    } else {
+      root = el("details", { class: "native-message" }, el("summary", {}, m.role === "custom" ? m.customType : m.role === "bashExecution" ? "命令执行记录" : m.role === "branchSummary" ? "分支摘要" : "上下文压缩摘要"));
+      if (m.role === "bashExecution") root.append(el("pre", {}, m.command + "\n" + m.output));
+      renderContent(m.parts, root); $("#messages").append(root);
+    }
+    if (root && m.entryId) root.dataset.entryId = m.entryId;
+  }
+  if (!h.messages?.length) renderWelcome();
+  applySessionState(h); scrollBottom();
+}
+let activeStream = null;
+function streamNode() {
+  if (!activeStream) {
+    const node = assistantSkeleton(); $("#messages").append(node.root); liveNodes.push(node);
+    activeStream = { node, text: "", thinking: "" };
+  }
+  return activeStream;
+}
+function applySessionState(value) {
+  state.nativeSession = value;
+  state.model = value.model;
+  if (!$("#model-select").options.length) syncModelSelect();
+  state.streaming = !!value.busy; streamSessionId = state.streaming ? state.sessionId : null;
+  setStreamingUI(state.streaming); renderSessionState(value);
+  const select = $("#think-select");
+  select.replaceChildren(...(value.thinkingLevels || []).map(level => el("option", { value: level }, "思考: " + level)));
+  select.value = value.thinkingLevel || "off";
+  if (value.model) $("#model-select").value = value.model.provider + "|" + value.model.id;
+  const row = state.sessions.find(s => s.id === state.sessionId); if (row && value.name) row.title = value.name;
+  $("#session-title").textContent = value.name || row?.title || "(空会话)";
+  if (!state.streaming) void settleSessionActions();
+}
+function handleSessionEvent(ev) {
+  if (ev.t === "session_replaced") {
+    userInputUI.clear(); state.sessionId = ev.newSessionId; activeStream = null; restoreBindingOnSnapshot = true; pendingBinding = null;
+    void refreshSessions(); void loadCommands(); return;
+  }
+  if (ev.t === "snapshot") {
+    if (restoreBindingOnSnapshot) {
+      restoreBindingOnSnapshot = false;
+      const meta = ev.history.meta || {};
+      state.projectId = meta.projectId || null;
+      state.currentPaper = state.papers.find(p => p.id === meta.paperId) || null;
+      void import("./sidebar.js").then(m => { m.renderProjects(); m.renderPapers(); });
+      if (state.currentPaper) void import("./reader.js").then(m => m.readerLoadPaper(state.currentPaper));
+      updateComposerHint();
+    }
+    renderHistory(ev.history); return;
+  }
+  if (ev.t === "state") { applySessionState(ev.state); return; }
+  if (ev.t === "ui_request") { userInputUI.show(ev.sessionId, ev.request); return; }
+  if (ev.t === "ui_resolved") { userInputUI.resolve(ev.id); return; }
+  if (ev.t === "editor_text") { $("#composer-input").value = ev.text; autoSizeInput(); return; }
+  if (ev.t === "extension_ui") { renderSessionState({ ...state.nativeSession, ui: ev.ui }); return; }
+  if (ev.t === "notice") { toast(ev.note, ev.isError); return; }
+  if (ev.t === "disconnected") {
+    userInputUI.clear(); state.streaming = false; setStreamingUI(false);
+    for (const n of liveNodes) finalizeActivity(n);
+    toast(ev.message, true); return;
+  }
+  if (ev.t === "queue") {
+    const lines = [...(ev.steering || []).map(t => "待插队：" + t.slice(0,100)), ...(ev.followUp || []).map(t => "已排队：" + t.slice(0,100))];
+    $("#chat-queue").textContent = lines.join("\n"); $("#chat-queue").hidden = !lines.length; return;
+  }
+  if (ev.t === "operation_end") {
+    if (ev.error) toast(ev.error, true);
+    if (["reload", "startup", "binding"].includes(ev.kind)) {
+      void loadCommands();
+      const id = state.sessionId;
+      void api.models().then(models => { if (state.sessionId === id) { state.models = models; syncModelSelect(); } }).catch(e => toast(e.message, true));
+      window.dispatchEvent(new CustomEvent("pi:resources"));
+    }
+    return;
+  }
+  if (ev.t === "compaction") {
+    if (ev.error) toast(ev.error, true); else toast(ev.aborted ? "已取消压缩" : "上下文已压缩"); return;
+  }
+  if (ev.t === "assistant_start") { if (activeStream) flushAssistant(activeStream.node, activeStream.text, activeStream.thinking, false); activeStream = null; streamNode(); }
+  else if (ev.t === "user_start") { addMessageEl("user", ev.text, (ev.images || []).map(im => 'data:' + im.mimeType + ';base64,' + im.data)); }
+  else if (ev.t === "delta") streamNode().text += ev.text;
+  else if (ev.t === "thinking") streamNode().thinking += ev.text;
+  else if (ev.t === "tool_start") addToolCard(streamNode().node, ev.id, ev.name, ev.args);
+  else if (ev.t === "tool_update") liveToolText(streamNode().node, ev.id, ev.content.filter(c => c.type === "text").map(c => c.text).join(""));
+  else if (ev.t === "tool_end") fillToolCard(ev.id, ev.name, ev.content.filter(c => c.type === "text").map(c => c.text).join("\n"), ev.isError, ev.content, ev.details);
+  else if (ev.t === "entry" && ev.message.role === "custom") {
+    const root = el("details", { class: "native-message" }, el("summary", {}, ev.message.customType)); renderContent(ev.message.parts, root); $("#messages").append(root);
+  }
+  if (activeStream) flushAssistant(activeStream.node, activeStream.text, activeStream.thinking, true);
 }
 
 function renderSessionMenu() {
@@ -257,10 +367,9 @@ function addReaskButton(node, entryId, originalText) {
       if (!t) return toast("内容为空，已取消", true);
       try {
         const r = await api.fork(state.sessionId, entryId, t.slice(0, 60));
-        state.sessionId = r.id;
-        state.model = r.model || state.model;
+        const result = await waitOperation(r.operationId);
+        if (result?.cancelled) return;
         await refreshSessions();
-        await openSession(r.id);
         await streamPrompt(t, [], t);
       } catch (e) {
         toast("重问失败: " + e.message, true);
@@ -496,7 +605,7 @@ function liveToolText(node, id, text) {
   tc.tout.scrollTop = tc.tout.scrollHeight;
 }
 
-function fillToolCard(id, name, text, isError) {
+function fillToolCard(id, name, text, isError, content, details) {
   for (const node of liveNodes) {
     const tc = node.toolCards.get(id);
     if (tc) {
@@ -509,13 +618,16 @@ function fillToolCard(id, name, text, isError) {
       tc.glyph.textContent = isError ? "✕" : "✓";
       const final = tc.live && tc.text.length >= String(text || "").length ? tc.text : String(text || "");
       tc.status.textContent = secs + "s" + (isError ? " ·错误" : tc.live ? " ·已结束" : "");
-      if (final.trim()) {
-        tc.tout.textContent = clipOut(final, !tc.live);
+      if (final.trim() || content?.length) {
+        tc.tout.replaceChildren();
+        renderContent(content?.length ? content : [{ type: "text", text: final }], tc.tout);
+        if (details && Object.keys(details).length) tc.tout.append(el("details", {}, el("summary", {}, "结构化结果"), el("pre", {}, JSON.stringify(details, null, 2))));
+        tc.tout.style.display = "none";
         tc.tout.dataset.has = "1";
         tc.card.classList.add("has-out");
       }
       updateActivityLive(node);
-      return;
+      return tc.card;
     }
   }
 }
@@ -644,7 +756,7 @@ async function sendMessageInner(mode) {
     const originalValue = input.value;
     const originalChips = [...state.chips];
     try {
-      await api.steer(streamSessionId, { text: fullText, images, mode });
+      await api.steer(streamSessionId, { text: fullText, images, mode, draft: { text, chips: structuredClone(state.chips) } });
       if (input.value === originalValue) input.value = "";
       state.chips = state.chips.filter((chip) => !originalChips.includes(chip));
       autoSizeInput();
@@ -665,12 +777,20 @@ async function sendMessageInner(mode) {
     }
   }
 
+  const originalValue = input.value, originalChips = [...state.chips];
   input.value = "";
   autoSizeInput();
   state.chips = [];
   renderChips();
 
-  await streamPrompt(fullText, images, text + (images.length ? `\n[🖼 截图 ×${images.length}]` : "") + (ctxText ? "\n＋已附上阅读器上下文" : ""));
+  try {
+    await streamPrompt(fullText, images, text + (images.length ? `\n[🖼 截图 ×${images.length}]` : "") + (ctxText ? "\n＋已附上阅读器上下文" : ""));
+  } catch (error) {
+    if (!error.accepted && !input.value && !state.chips.length) {
+      input.value = originalValue; state.chips = originalChips; autoSizeInput(); renderChips();
+    }
+    throw error;
+  }
 }
 
 // Shared streaming core: ensures a session, renders the exchange, streams SSE.
@@ -698,202 +818,42 @@ async function forkPoint(sessionId) {
 }
 
 // Run a prompt in a native Pi branch. When the source conversation is busy,
-// the branch is created immediately and its prompt waits until the active SSE
-// turn settles. This preserves Pi's append-only tree and gives the user a
-// visible branch in the session selector instead of mixing two transcripts.
+// record the target node and create the branch after the parent finishes.
 export async function streamPromptInBranch(fullText, images = [], userPreview, displayBlocks = [], onDone) {
-  const sourceId = streamSessionId || state.sessionId;
+  const sourceId = state.sessionId;
   if (!sourceId) return streamPrompt(fullText, images, userPreview, displayBlocks, onDone);
   const entryId = await forkPoint(sourceId);
-  const title = (userPreview || fullText || "视频分析").replace(/\s+/g, " ").slice(0, 60);
-  let branch = null;
-  if (entryId) {
-    try {
-      branch = await api.fork(sourceId, entryId, title);
-    } catch (e) {
-      toast("Pi 分支创建失败，将使用独立会话: " + e.message, true);
-    }
-  }
   const job = async () => {
-    if (!branch) {
-      const r = await api.createSession(state.currentPaper?.id || null, state.projectId || null, title);
-      branch = r;
+    if (state.sessionId !== sourceId) await openSession(sourceId);
+    if (entryId) {
+      const op = await api.fork(sourceId, entryId, (userPreview || fullText).slice(0,60));
+      const result = await waitOperation(op.operationId); if (result?.cancelled) return;
+    } else {
+      const r = await api.createSession(state.currentPaper?.id || null, state.projectId || null);
+      await openSession(r.id);
     }
-    state.sessionId = branch.id;
-    state.model = branch.model || state.model;
-    await refreshSessions();
-    await openSession(branch.id, { force: true });
     await streamPrompt(fullText, images, userPreview, displayBlocks, onDone);
   };
-  await refreshSessions();
-  if (state.streaming) {
-    pendingBranchJobs.push(job);
-    toast(branch ? "已创建 Pi 分支；当前任务结束后自动开始视频分析" : "已排入独立会话；当前任务结束后自动开始视频分析");
-    return;
-  }
-  await job();
+  if (state.streaming) { pendingBranchJobs.push(job); toast("父任务完成后创建分支并开始分析"); }
+  else await job();
 }
 
 export async function streamPrompt(fullText, images = [], userPreview, displayBlocks = [], onDone) {
-  if (state.streaming) {
-    toast("上一条还在回复中，稍候", true);
-    return;
-  }
+  if (state.streaming) throw new Error("上一项操作尚未完成");
   if (!state.sessionId) {
-    try {
-      const r = await api.createSession(state.currentPaper?.id || null, state.projectId || null);
-      state.sessionId = r.id;
-      state.model = r.model;
-      $("#messages").replaceChildren();
-    } catch (e) {
-      toast("创建会话失败: " + e.message, true);
-      return;
-    }
+    const r = await api.createSession(state.currentPaper?.id || null, state.projectId || null); state.sessionId = r.id;
   }
-  addMessageEl(
-    "user",
-    (userPreview || fullText) + (images.length ? `\n[🖼 截图 ×${images.length}]` : ""),
-    images.map((im) => `data:${im.mimeType};base64,${im.data}`),
-    displayBlocks
-  );
-  let node = assistantSkeleton();
-  $("#messages").append(node.root);
-  liveNodes.length = 0;
-  liveNodes.push(node);
-  scrollBottom(true);
-
-  state.streaming = true;
-  streamSessionId = state.sessionId;
-  const sessionId = streamSessionId;
-  setStreamingUI(true);
-  sendAbortController = new AbortController();
-  let acc = "";
-  let think = "";
-  let seenInitialUser = false;
-  let seenAssistant = false;
-  let streamCompleted = false;
-
+  await connectSessionEvents(state.sessionId, handleSessionEvent);
+  const originId = state.sessionId;
+  const op = await api.prompt(state.sessionId, { text: fullText, images, paperId: state.currentPaper?.id || null, projectId: state.projectId || null });
   try {
-    const res = await fetch(`/api/sessions/${sessionId}/prompt`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: fullText, images, paperId: state.currentPaper?.id || null, projectId: state.projectId || null }),
-      signal: sendAbortController.signal,
-    });
-    if (!res.ok || !res.body) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `HTTP ${res.status}`);
+    await waitOperation(op.operationId);
+    if (onDone) {
+      const last = [...(await api.history(originId)).messages].reverse().find(m => m.role === "assistant");
+      onDone(last?.text || "");
     }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = "";
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      const parts = buf.split("\n\n");
-      buf = parts.pop();
-      for (const part of parts) {
-        const line = part.split("\n").find((l) => l.startsWith("data: "));
-        if (!line) continue;
-        let ev;
-        try { ev = JSON.parse(line.slice(6)); } catch { continue; }
-        switch (ev.t) {
-          case "ui_request":
-            userInputUI.show(sessionId, ev.request);
-            break;
-          case "ui_resolved":
-            userInputUI.resolve(ev.id);
-            if (ev.reason === "timeout") toast("提问已超时，已取消");
-            break;
-          case "queue": {
-            const queue = $("#chat-queue");
-            const lines = [
-              ...(ev.steering || []).map((text) => "待插队：" + text.slice(0, 100)),
-              ...(ev.followUp || []).map((text) => "已排队：" + text.slice(0, 100)),
-            ];
-            queue.textContent = lines.join("\n");
-            queue.hidden = !lines.length;
-            break;
-          }
-          case "user_start":
-            if (seenInitialUser) {
-              flushAssistant(node, acc, think, false);
-              addMessageEl("user", ev.text, (ev.images || []).map((im) => `data:${im.mimeType};base64,${im.data}`));
-            }
-            seenInitialUser = true;
-            break;
-          case "assistant_start":
-            if (seenAssistant) {
-              flushAssistant(node, acc, think, false);
-              node = assistantSkeleton();
-              $("#messages").append(node.root);
-              liveNodes.push(node);
-              acc = "";
-              think = "";
-            }
-            seenAssistant = true;
-            break;
-          case "delta":
-            acc += ev.text;
-            break;
-          case "thinking":
-            think += ev.text;
-            break;
-          case "tool_start": {
-            addToolCard(node, ev.id, ev.name, ev.args);
-            break;
-          }
-          case "tool_update": {
-            liveToolText(node, ev.id, ev.text);
-            break;
-          }
-          case "tool_end": {
-            fillToolCard(ev.id, ev.name, ev.preview, ev.isError);
-            break;
-          }
-          case "usage":
-            break;
-          case "retry":
-            toast(ev.note || "自动重试中…");
-            break;
-          case "notice":
-            toast(ev.note, ev.isError);
-            break;
-          case "done":
-            streamCompleted = true;
-            if (ev.errorMessage) markError(node, ev.errorMessage);
-            addMeta(node, ev.usage, ev.model ? `${ev.model.provider}/${ev.model.id}` : null);
-            break;
-          case "error":
-            streamCompleted = true;
-            markError(node, ev.message);
-            break;
-        }
-        flushAssistant(node, acc, think, true);
-      }
-    }
-    if (!streamCompleted) throw new Error("连接已断开，当前任务已停止，请重新发送。");
-  } catch (e) {
-    if (e.name === "AbortError") {
-      markError(node, "已停止");
-    } else {
-      markError(node, e.message);
-    }
-  } finally {
-    userInputUI.clear();
-    for (const n of liveNodes) finalizeActivity(n);
-    flushAssistant(node, acc, think, false);
-    state.streaming = false;
-    setStreamingUI(false);
-    sendAbortController = null;
-    streamSessionId = null;
-    $("#chat-queue").hidden = true;
-    $("#chat-queue").textContent = "";
-    try { onDone?.(acc); } catch {}
-    refreshSessions();
-    void drainBranchJobs();
-  }
+    await refreshSessions();
+  } catch (error) { error.accepted = true; throw error; }
 }
 
 function setStreamingUI(on) {
@@ -934,12 +894,16 @@ export function autoSizeInput() {
 
 // ---------------- init ----------------
 export function initChat() {
+  initSessionPanel();
+  let editorTimer;
+  $("#composer-input").addEventListener("input", () => { clearTimeout(editorTimer); editorTimer = setTimeout(() => { if (state.sessionId && state.controlId) api.sessionAction(state.sessionId, "editor", { text: $("#composer-input").value }).catch(() => {}); }, 150); });
   $("#btn-new-session").addEventListener("click", createSession);
   $("#btn-del-session").addEventListener("click", async () => {
     if (!state.sessionId) return;
     if (!confirm("删除当前会话（含 pi 会话文件）？")) return;
     try {
       await api.delSession(state.sessionId);
+      closeSessionEvents();
       state.sessionId = null;
       await refreshSessions(false);
       toast("已删除");
@@ -996,8 +960,7 @@ export function initChat() {
   $("#btn-send").addEventListener("click", () => sendMessage("steer"));
   $("#btn-queue").addEventListener("click", () => sendMessage("followUp"));
   $("#btn-stop").addEventListener("click", async () => {
-    const sessionId = streamSessionId;
-    sendAbortController?.abort();
+    const sessionId = state.sessionId;
     userInputUI.clear();
     try { if (sessionId) await api.abort(sessionId); } catch {}
   });
@@ -1042,15 +1005,17 @@ const BUILTIN_COMMANDS = [
 ];
 
 export async function loadCommands() {
+  const id = state.sessionId;
   try {
-    piCommands = await api.commands();
+    const commands = await api.commands(); if (id === state.sessionId) piCommands = commands;
   } catch {}
 }
 function slashItems(q) {
   const items = [
-    ...BUILTIN_COMMANDS,
-    ...piCommands.prompts.map((p) => ({ name: "/" + p.name, desc: p.description || "pi 提示模板", template: true })),
-    ...piCommands.skills.map((s) => ({ name: "/skill:" + s.name, desc: s.description || "pi 技能", skill: true })),
+    ...BUILTIN_COMMANDS.filter(p => !(piCommands.extensions || []).some(e => p.name === "/" + e.name)),
+    ...(piCommands.extensions || []).map(p => ({ name: "/" + p.name, desc: (p.description || "扩展命令") + " · " + (p.source || "Pi"), template: true })),
+    ...piCommands.prompts.map((p) => ({ name: "/" + p.name, desc: (p.description || "提示模板") + " · " + (p.source || "Pi 模板"), template: true })),
+    ...piCommands.skills.map((s) => ({ name: "/skill:" + s.name, desc: (s.description || "技能") + " · " + (s.source || "Pi 技能"), skill: true })),
   ];
   if (!q) return items.slice(0, 12);
   return items.filter((i) => i.name.toLowerCase().includes(q)).slice(0, 12);
@@ -1060,7 +1025,10 @@ async function runCompact() {
   if (!state.sessionId) return toast("没有活动会话", true);
   toast("压缩上下文中…");
   try {
-    await api.compact(state.sessionId);
+    const instructions = prompt("压缩时需要保留哪些信息？（可留空）", "");
+    if (instructions === null) return;
+    const op = await api.sessionAction(state.sessionId, "compact", { instructions });
+    await waitOperation(op.operationId);
     toast("上下文已压缩 ✓");
   } catch (e) {
     toast("压缩失败: " + e.message, true);

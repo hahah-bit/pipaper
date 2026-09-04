@@ -18,6 +18,7 @@ export const state = {
   collections: [],
   zotero: null,
   currentPaper: null,       // selected paper (reader + composer binding)
+  controlId: null,
   sessionId: null,          // active chat session
   sessions: [],
   models: { models: [], default: null },
@@ -31,7 +32,7 @@ export const state = {
 // ---------------- api ----------------
 async function jfetch(url, opts = {}) {
   const res = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(state.controlId ? { "X-Pi-Control": state.controlId } : {}) },
     ...opts,
     body: opts.body != null ? JSON.stringify(opts.body) : undefined,
   });
@@ -63,10 +64,11 @@ export const api = {
   parseVersion: (id, version) => jfetch(`/api/papers/${id}/versions/${version}`),
   activateParseVersion: (id, version) => jfetch(`/api/papers/${id}/versions/${version}/activate`, { method: "POST", body: {} }),
   job: (id) => jfetch(`/api/jobs/${id}`),
-  models: () => jfetch("/api/models"),
-  commands: () => jfetch("/api/pi/commands"),
-  resources: () => jfetch("/api/pi/resources"),
+  models: () => jfetch("/api/models" + (state.sessionId ? "?sessionId=" + encodeURIComponent(state.sessionId) : "")),
+  commands: () => jfetch("/api/pi/commands?" + new URLSearchParams(state.sessionId ? { sessionId: state.sessionId } : state.projectId ? { projectId: state.projectId } : {})),
+  resources: () => jfetch("/api/pi/resources?" + new URLSearchParams(state.sessionId ? { sessionId: state.sessionId } : state.projectId ? { projectId: state.projectId } : {})),
   pkgInstall: (spec, scope, projectId) => jfetch("/api/pi/packages/install", { method: "POST", body: { spec, scope, projectId } }),
+  pkgRemoveProject: (spec, projectId) => jfetch("/api/pi/packages/remove", { method: "POST", body: { spec, projectId, scope: "project" } }),
   pkgRemove: (spec) => jfetch("/api/pi/packages/remove-global", { method: "POST", body: { spec } }),
   translate: (text, target) => jfetch("/api/translate", { method: "POST", body: { text, target } }),
   files: (q) => jfetch("/api/files?q=" + encodeURIComponent(q || "")),
@@ -77,6 +79,10 @@ export const api = {
   deleteProject: (id) => jfetch(`/api/projects/${id}`, { method: "DELETE" }),
   sessions: () => jfetch("/api/sessions"),
   createSession: (paperId, projectId, title) => jfetch("/api/sessions", { method: "POST", body: { paperId, projectId, title } }),
+  prompt: (id, body) => jfetch(`/api/sessions/${id}/prompt`, { method: "POST", body }),
+  sessionAction: (id, action, body = {}) => jfetch(`/api/sessions/${id}/${action}`, { method: "POST", body }),
+  sessionTree: (id) => jfetch(`/api/sessions/${id}/tree`),
+  sessionState: (id) => jfetch(`/api/sessions/${id}/state`),
   history: (id) => jfetch(`/api/sessions/${id}`),
   delSession: (id) => jfetch(`/api/sessions/${id}`, { method: "DELETE" }),
   steer: (id, body) => jfetch(`/api/sessions/${id}/steer`, { method: "POST", body }),

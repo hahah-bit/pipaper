@@ -107,7 +107,8 @@ export async function switchProject(id) {
   renderProjects();
   renderPapers();
   // refresh session list so dropdown regroups
-  const { refreshSessions } = await import("./chat.js");
+  const { refreshSessions, syncSessionBinding } = await import("./chat.js");
+  await syncSessionBinding();
   await refreshSessions();
 }
 
@@ -204,6 +205,7 @@ export async function selectPaper(p) {
   renderPapers();
   const { readerLoadPaper } = await import("./reader.js");
   readerLoadPaper(p);
-  const { updateComposerHint } = await import("./chat.js");
+  const { updateComposerHint, syncSessionBinding } = await import("./chat.js");
   updateComposerHint();
+  await syncSessionBinding();
 }

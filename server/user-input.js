@@ -6,6 +6,24 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 export class UserInputBroker {
   pending = new Map();
   send = null;
+  displayState = { statuses: {}, widgets: {}, working: "", title: "", editor: "" };
+  resetDisplay(preserveEditor = false) {
+    this.displayState = { statuses: {}, widgets: {}, working: "", title: "", editor: preserveEditor ? this.displayState.editor : "" };
+    this.send?.({ t: "extension_ui", ui: this.displayState });
+  }
+
+  setEditor(text) {
+    this.editorInitialized = true;
+    this.displayState.editor = String(text || "");
+    this.send?.({ t: "editor_text", text: this.displayState.editor });
+  }
+  display(kind, key, value) {
+    if (kind === "statuses" || kind === "widgets") {
+      if (value == null) delete this.displayState[kind][key];
+      else this.displayState[kind][key] = value;
+    } else this.displayState[kind] = value;
+    this.send?.({ t: "extension_ui", ui: this.displayState });
+  }
 
   connect(send) { this.send = send; }
 
@@ -61,6 +79,7 @@ export class UserInputBroker {
 
   // Preserve SDK defaults for terminal-only operations; replace dialog methods.
   context(base) {
+    if (!this.editorInitialized) { this.displayState.editor = base.getEditorText?.() || ""; this.editorInitialized = true; }
     const value = async (spec, opts) => {
       const result = await this.request(spec, opts);
       return result.cancelled ? undefined : result.value;
@@ -72,6 +91,20 @@ export class UserInputBroker {
       input: (title, placeholder, opts) => value({ kind: "input", title, placeholder }, opts),
       editor: (title, prefill) => value({ kind: "editor", title, prefill }),
       notify: (note, type) => this.send?.({ t: "notice", note, isError: type === "error" }),
+      setStatus: (key, text) => this.display("statuses", key, text),
+      setWidget: (key, content) => {
+        if (content !== undefined && !Array.isArray(content)) throw new Error("网页组件只支持文本行数组");
+        this.display("widgets", key, content);
+      },
+      setWorkingMessage: (text) => this.display("working", null, text || ""),
+      setWorkingVisible: (visible) => this.display("workingVisible", null, !!visible),
+      setTitle: (text) => this.display("title", null, String(text)),
+      setEditorText: (text) => this.setEditor(text),
+      getEditorText: () => this.displayState.editor,
+      pasteToEditor: (text) => this.setEditor(this.displayState.editor + text),
+      setHeader: () => { throw new Error("网页不支持终端自定义页眉，请使用 setStatus"); },
+      setFooter: () => { throw new Error("网页不支持终端自定义页脚，请使用 setStatus"); },
+      setEditorComponent: () => { throw new Error("网页不支持终端编辑器组件"); },
       custom: async () => { throw new Error("网页不支持终端自定义组件，请使用 ui.select / confirm / input / editor"); },
     };
   }

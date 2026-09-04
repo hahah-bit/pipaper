@@ -898,3 +898,24 @@ select, #model-select, #think-select {
 .va-chip .va-t { color: var(--accent); font-family: Consolas, monospace; font-size: 11px; }
 .va-card { border: 1px solid var(--border); border-radius: 9px; padding: 8px; background: var(--bg1); margin-top: 8px; }
 #va-mindmap-svg { background: var(--bg0); border-radius: 6px; }
+
+/* Native Pi session controls, using the existing theme tokens. */
+.native-toolbar, .native-queue-controls { display:flex; flex-wrap:wrap; gap:5px; padding:6px 10px; border-bottom:1px solid var(--border); }
+.native-toolbar .tool-btn, .native-queue-controls .tool-btn, .native-queue-controls select { font-size:11px; padding:3px 7px; }
+.native-metrics { padding:4px 12px; color:var(--fg2); font-size:11px; }
+.native-extension-ui { display:flex; gap:10px; flex-wrap:wrap; padding:0 12px; font-size:12px; }
+.native-extension-ui:empty { display:none; }
+.native-dialog { width:min(920px,90vw); max-height:85vh; padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--bg); color:var(--fg); }
+.native-dialog::backdrop { background:#0008; }
+.native-dialog header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+.native-dialog-body { overflow:auto; max-height:72vh; }
+.native-tool-row { display:flex; gap:8px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--border); }
+.native-tool-row span { font-size:12px; color:var(--fg2); flex:1; }
+.native-tool-row strong { min-width:110px; }
+.native-tree-row { display:flex; flex-wrap:wrap; align-items:center; gap:5px; padding:7px 0; border-bottom:1px solid var(--border); }
+.native-tree-row span { flex:1 1 240px; font-size:12px; overflow-wrap:anywhere; }
+.native-tree-row input { width:110px; }
+.native-result-image { display:block; max-width:100%; max-height:600px; object-fit:contain; margin:8px 0; }
+.native-result-text, .native-message pre, .native-dialog pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; }
+.native-message { margin:10px 16px; padding:10px; border:1px solid var(--border); border-radius:8px; }
+.native-drafts { display:flex; flex-direction:column; gap:3px; max-height:130px; overflow:auto; }

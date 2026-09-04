@@ -15,11 +15,14 @@ import { aggregateSearch, DEFAULT_SOURCES, tierOf } from "./search/engines.js";
 import { toreadAdd, toreadList, toreadDelete } from "./toread.js";
 import { clipAdd, clipList, clipDelete, clipClear } from "./clip.js";
 import * as harness from "./harness.js";
+import { registerSessionRoutes } from "./session-routes.js";
+import { changePackage } from "./pi-packages.js";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 const UA = "PiPaper/0.5 (academic reader; local app)";
 
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "24mb" }));
 app.use((req, res, next) => {
   // raw body for uploads (PUT /api/papers/import)
   if (req.method === "PUT" && req.path.startsWith("/api/papers/import")) {
@@ -177,140 +180,7 @@ api.get("/papers/:id/file/*", (req, res) => {
   res.sendFile(target);
 });
 
-// ---- sessions (pi harness) ----
-api.get("/models", async (_req, res) => {
-  try {
-    res.json(await harness.modelList());
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
-});
-
-api.get("/sessions", async (_req, res) => {
-  try {
-    res.json({ sessions: await harness.listSessions() });
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
-});
-
-api.post("/sessions", async (req, res) => {
-  try {
-    const r = await harness.createChat({
-      paperId: req.body?.paperId || null,
-      projectId: req.body?.projectId || null,
-      title: req.body?.title || null,
-    });
-    res.json(r);
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
-});
-
-// steer: 会话回复期间"追加"新消息 — pi Enter 打断语义,
-// 当前回合工具结算后立即注入,结果继续走原 SSE 连接
-api.post("/sessions/:id/steer", async (req, res) => {
-  try {
-    res.json(await harness.steerChat(req.params.id, { text: req.body?.text, images: req.body?.images, mode: req.body?.mode }));
-  } catch (e) {
-    res.status(400).json({ error: String(e.message || e) });
-  }
-});
-
-// fork(编辑重问/重定向): 在某条历史问题之前切出新的分支会话,
-// 原会话文件与列表项原样保留
-api.post("/sessions/:id/ui/:requestId", (req, res) => {
-  try {
-    res.json(harness.answerUserInput(req.params.id, req.params.requestId, req.body));
-  } catch (e) {
-    res.status(e.status || 400).json({ error: String(e.message || e) });
-  }
-});
-
-api.post("/sessions/:id/fork", async (req, res) => {
-  try {
-    res.json(await harness.forkChat(req.params.id, { entryId: req.body?.entryId, title: req.body?.title }));
-  } catch (e) {
-    res.status(400).json({ error: String(e.message || e) });
-  }
-});
-
-api.post("/sessions/:id/compact", async (req, res) => {
-  try {
-    res.json(await harness.compactSession(req.params.id, req.body?.instructions));
-  } catch (e) {
-    res.status(400).json({ error: String(e.message || e) });
-  }
-});
-
-api.get("/sessions/:id", async (req, res) => {
-  try {
-    res.json(await harness.sessionHistory(req.params.id));
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
-});
-
-api.delete("/sessions/:id", async (req, res) => {
-  try {
-    await harness.deleteChat(req.params.id);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
-});
-
-api.post("/sessions/:id/model", async (req, res) => {
-  try {
-    res.json(await harness.setChatModel(req.params.id, req.body || {}));
-  } catch (e) {
-    res.status(400).json({ error: String(e.message || e) });
-  }
-});
-
-api.post("/sessions/:id/abort", async (req, res) => {
-  try {
-    await harness.abortChat(req.params.id);
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(400).json({ error: String(e.message || e) });
-  }
-});
-
-api.post("/sessions/:id/prompt", async (req, res) => {
-  const { text, images, paperId, projectId } = req.body || {};
-  if (!text && !(images || []).length) return res.status(400).json({ error: "空消息" });
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream; charset=utf-8",
-    "Cache-Control": "no-cache, no-transform",
-    Connection: "keep-alive",
-    "X-Accel-Buffering": "no",
-  });
-  const controller = new AbortController();
-  const onClose = () => controller.abort();
-  res.on("close", onClose);
-  const send = (s) => { if (!res.destroyed && !res.writableEnded) res.write(s); };
-  const ping = setInterval(() => send(": ping\n\n"), 15000);
-  try {
-    await harness.promptChat(req.params.id, { text, images, paperId, projectId }, send, controller.signal);
-  } catch (e) {
-    send(`data: ${JSON.stringify({ t: "error", message: String(e.message || e) })}\n\n`);
-  } finally {
-    clearInterval(ping);
-    res.off("close", onClose);
-    res.end();
-  }
-});
-
-// ---- pi surface: commands (prompts/skills), files (@), projects ----
-
-api.get("/pi/commands", async (_req, res) => {
-  try {
-    res.json(await harness.listCommands());
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
-});
+registerSessionRoutes(api);
 
 function safeJoin(base, rel) {
   const target = path.resolve(base, rel);
@@ -432,6 +302,7 @@ api.post("/projects", (req, res) => {
 api.put("/projects/:id", (req, res) => {
   const p = updateProject(req.params.id, req.body || {});
   if (!p) return res.status(404).json({ error: "项目不存在" });
+  if (req.body?.resources) harness.refreshProjectResources(p.id);
   res.json(p);
 });
 
@@ -468,7 +339,7 @@ function migrateLibrary() {
 // local plugin registry: skills/*/.codex-plugin/plugin.json
 function scanLocalPlugins() {
   const out = [];
-  const skillsRoot = path.join(process.env.USERPROFILE || "", ".pi", "agent", "skills");
+  const skillsRoot = path.join(getAgentDir(), "skills");
   try {
     for (const d of fs.readdirSync(skillsRoot)) {
       const mf = path.join(skillsRoot, d, ".codex-plugin", "plugin.json");
@@ -490,21 +361,12 @@ function scanLocalPlugins() {
   return out;
 }
 
-api.get("/pi/resources", async (_req, res) => {
+api.get("/pi/resources", async (req, res) => {
   try {
-    const out = { skills: [], extensions: [], packages: [], mcp: [] };
+    const out = { ...(await harness.resourceInfo(req.query.sessionId, req.query.projectId)), packages: [], mcp: [] };
+    out.plugins = scanLocalPlugins();
     try {
-      const sk = await import("./harness.js").then((h) => h.listCommands());
-      out.skills = sk.skills || [];
-    } catch {}
-    try {
-      const h = await import("./harness.js");
-      out.gatedSkills = h.gatedSkills();
-      out.plugins = scanLocalPlugins();
-      out.extensions = h.sharedLoaderInfo()?.extensions || [];
-    } catch {}
-    try {
-      const settingsPath = path.join(process.env.USERPROFILE || "", ".pi", "agent", "settings.json");
+      const settingsPath = path.join(getAgentDir(), "settings.json");
       if (fs.existsSync(settingsPath)) {
         out.packages = JSON.parse(fs.readFileSync(settingsPath, "utf8")).packages || [];
       }
@@ -535,92 +397,17 @@ api.get("/projects/resources/:id", (req, res) => {
   res.json(p?.resources || {});
 });
 
-// ---- package management: pi install/remove + per-project npm packages ----
-
-const PKG_NPM_DIR = path.join(DATA_DIR, "npm");
-
-function runCmd(cmd, args, { timeoutMs = 10 * 60 * 1000 } = {}) {
-  return new Promise((resolve) => {
-    const p = spawn(cmd, args, { shell: true, cwd: APP_ROOT, env: process.env });
-    let out = "";
-    const t = setTimeout(() => {
-      out += "\n[超时]";
-      p.kill();
-    }, timeoutMs);
-    p.stdout.on("data", (d) => (out += d));
-    p.stderr.on("data", (d) => (out += d));
-    p.on("error", (e) => {
-      clearTimeout(t);
-      resolve({ code: -1, output: out + String(e) });
-    });
-    p.on("exit", (code) => {
-      clearTimeout(t);
-      resolve({ code, output: out.slice(-4000) });
-    });
+// Native package management; project installs are isolated from the tool cwd.
+for (const [endpoint, remove, globalOnly] of [["install", false, false], ["remove", true, false], ["remove-global", true, true]]) {
+  api.post("/pi/packages/" + endpoint, async (req, res) => {
+    try {
+      const body = { ...req.body, remove, ...(globalOnly ? { scope: "global" } : {}) };
+      const result = await changePackage(body);
+      harness.refreshProjectResources(body.scope === "global" ? undefined : body.projectId);
+      res.json(result);
+    } catch (error) { res.status(400).json({ error: error.message }); }
   });
 }
-
-// resolve pi extension entry files from an installed npm package
-function resolvePiEntries(pkgDir) {
-  const entries = [];
-  let manifest = null;
-  try {
-    manifest = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
-  } catch {
-    return entries;
-  }
-  let declared = manifest?.pi?.extensions;
-  if (!declared && fs.existsSync(path.join(pkgDir, "extensions"))) declared = ["./extensions"];
-  for (const rel of declared || []) {
-    const full = path.resolve(pkgDir, rel);
-    if (fs.existsSync(full) && fs.statSync(full).isDirectory()) {
-      for (const f of fs.readdirSync(full)) {
-        if (/\.(ts|js|mjs)$/i.test(f)) entries.push(path.join(full, f));
-      }
-    } else if (fs.existsSync(full)) {
-      entries.push(full);
-    }
-  }
-  return entries;
-}
-
-api.post("/pi/packages/install", async (req, res) => {
-  const { spec, scope, projectId } = req.body || {};
-  const s = String(spec || "").trim();
-  if (!s) return res.status(400).json({ error: "请填写包名（如 npm:pi-web-access）" });
-  if (scope === "global") {
-    const r = await runCmd("pi", ["install", s]);
-    return res.json({ ok: r.code === 0, output: r.output, scope });
-  }
-  // project scope: npm install into our managed prefix, wire entry paths into
-  // the project's resources.extensions (per-project ResourceLoader picks them up)
-  if (!projectId) return res.status(400).json({ error: "未选择项目" });
-  const npmName = s.replace(/^npm:/, "");
-  if (!/^(@[\w.-]+\/)?[\w.-]+(@[\w.^~*-]*)?$/.test(npmName)) {
-    return res.status(400).json({ error: "项目级安装仅支持 npm 包名（git/URL 请用全局安装）" });
-  }
-  fs.mkdirSync(PKG_NPM_DIR, { recursive: true });
-  const r = await runCmd("npm", ["install", npmName, "--prefix", PKG_NPM_DIR, "--no-audit", "--no-fund"], { timeoutMs: 15 * 60 * 1000 });
-  if (r.code !== 0) return res.json({ ok: false, output: r.output, scope });
-  const pkgName = npmName.split("@")[0] && npmName.startsWith("@") ? npmName : npmName.replace(/@[^@]*$/, "");
-  const pkgDir = path.join(PKG_NPM_DIR, "node_modules", ...(npmName.startsWith("@") ? npmName.split("/") : [npmName]));
-  const entries = resolvePiEntries(pkgDir);
-  if (!entries.length) return res.json({ ok: false, output: "包内未找到 pi 扩展入口（package.json 的 pi.extensions 或 extensions/ 目录）" });
-  const proj = updateProject(projectId, {
-    resources: {
-      extensions: [...new Set([...(listProjects().find((x) => x.id === projectId)?.resources?.extensions || []), ...entries])],
-      packages: [...new Set([...(listProjects().find((x) => x.id === projectId)?.resources?.packages || []), s])],
-    },
-  });
-  res.json({ ok: true, output: r.output, scope, entries, project: proj });
-});
-
-api.post("/pi/packages/remove-global", async (req, res) => {
-  const spec = String(req.body?.spec || "").trim();
-  if (!spec) return res.status(400).json({ error: "缺少包名" });
-  const r = await runCmd("pi", ["remove", spec]);
-  res.json({ ok: r.code === 0, output: r.output });
-});
 
 // ---- translation (LibreTranslate from our docker stack) ----
 api.post("/translate", async (req, res) => {

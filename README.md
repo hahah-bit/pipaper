@@ -51,11 +51,17 @@ npm start          # 直接启动（端口见 data/config.json，默认 4318）
 
 ## pi 深度复用
 
+检索器优化已整合到同一应用：检索面板默认按 ReadScore 综合推荐排序，也可按与当前论文／本地文献的相关度排序，悬停分数可查看六个评分维度。年份、分区范围和开放全文筛选会记忆；「＋待读」只保存元数据，在待读清单点击「＋项目」才下载开放 PDF 并导入。
+
 - **会话**：原生 pi JSONL 会话（树状分支 / compaction / 自动重试全保留），按**项目**分组管理（侧边栏顶部切换，会话下拉按项目分组）
 - **交互提问**：Agent 通过 `request_user_input` 发起确认、选择或文本提问；Pi 扩展的 `ctx.ui.confirm/select/input/editor` 同样显示网页小窗。提交后继续执行，Esc 取消；选择题支持扩展原始选项，模型提问还可填写其他答案。普通回复文字不会自动转换成弹窗。停止、关闭页面或连接断开会取消等待。
 - **排队 / 插队**：回复过程中 `Enter`（或“插队”按钮）在当前轮工具结束后介入；`Alt+Enter` / `Ctrl+Q`（或“排队”按钮）等当前任务完成后处理。`Shift+Enter` 换行；空闲时 Enter 发送。待处理消息显示在输入框下方；回答小窗中的问题后才能继续排队。
 - **模型认证**：`ModelRuntime` 直接用你 `~/.pi/agent` 的 auth.json / models.json，pi 里能用这里就能用
-- **技能 / 提示模板 / 扩展**：DefaultResourceLoader 自动发现 `~/.pi/agent/skills`、prompts、扩展（含 settings.json 里的 packages）；输入框打 `/` 弹出全部命令（内置 /model /thinking /new /compact /paper + pi 模板 + /skill:xxx）
+- **技能 / 提示模板 / 扩展**：每个会话独立加载 `~/.pi/agent/skills`、prompts、扩展与项目资源；输入 `/` 查看应用命令、原生扩展命令、模板及 `/skill:xxx`，并显示来源。
+- **原生状态与导出**：对话上方显示当前上下文占用、累计 Token、缓存和费用；支持附加说明压缩、取消、重试状态及 HTML/JSONL 下载。思考档位随实际模型能力变化。
+- **会话树与工具**：「会话树」查看同一 JSONL 内的节点、保存标签、带摘要切换路径；历史问题旁的 ✎ 另建分支会话。通过「工具」启停下一轮可用工具，可选择仅内置读取工具或 Windows PowerShell，并显式保存项目默认值。
+- **队列取回**：「取回待发送消息」清空原生待发送队列并恢复为草稿列表，保留文字、截图和插队／排队类型；已消费消息不会再次取回。
+- **扩展 UI**：支持状态、文本组件、工作提示、标题及编辑器文字。自定义终端组件会明确报不支持。一个会话同时只允许一个控制页面，关闭页面会停止执行；重新打开读取原生状态和历史，不自动重发。
 - **@ 文件**：输入 `@` 弹出文件列表（论文解析全文、论文插图、工作区文件、library PDF），选中即加入对话上下文
 - **论文域工具**：`read_paper`（outline/section/search/full）、`list_library`、`search_library`、`get_paper_pages`（渲染论文页给视觉模型看）
 - **思考过程**：ZCode 式一行显示——思考中单行滚动尾部内容，输出后折叠为「✻ 已深度思考 Ns ▸」，点击展开
@@ -74,13 +80,19 @@ docker compose ps         # 状态
 
 ## 插件 / 技能管理
 
-侧边栏 🧩 打开资源管理：Skills（项目级勾选）、扩展（项目级路径）、Packages（带 [pi.dev/packages](https://pi.dev/packages) 商店链接；填包名可全局 `pi install` 或装到当前项目，项目级经 npm 安装后自动接线到该项目会话）、MCP（pi 不内置，只读扫描说明）。
+侧边栏 🧩 打开资源管理。技能可「继承默认」或「只启用勾选技能」，显式空清单关闭全部候选技能。扩展可追加绝对路径；Packages 使用 Pi 原生 `DefaultPackageManager`，支持 `npm:包名@版本`、`npm:@scope/包名@版本`、Git 来源及本地绝对路径，自动发现包内扩展、技能和模板。每个项目有独立包管理目录，工具工作目录仍为应用目录。资源修改在空闲时生效，运行中显示待更新，失败时保留当前可用配置。
+
+首次升级会备份项目和会话索引并迁移资源配置；原生 JSONL 不批量重写。完整使用规则、接口和验收方式见 [Pi 原生接入说明](docs/pi-native-integration.md)。
 
 ## 目录
 
 ```
 server/          Node 服务端（Express + pi SDK 桥接）
-  harness.js     pi 内核：会话/模型/流式事件/论文工具/命令发现
+  harness.js     业务兼容入口（导出原生接入与论文工具）
+  native-harness.js      会话、资源与项目绑定
+  session-controller.js  原生运行时生命周期和单控制连接
+  session-routes.js      SSE、状态、会话树、队列、工具与导出接口
+  paper-tools.js        论文工具和领域提示词
   zotero.js      Zotero 集成（zotero.sqlite 快照，Zotero 关着也能同步）
   parser/        两层解析管线 + merge（中间态 blocks.json v2）
   parser/render.js  pdf.js + @napi-rs/canvas 服务端光栅化（图裁剪/页截图）
