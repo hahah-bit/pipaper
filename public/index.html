@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PiPaper · 论文精读工作台</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
-<link rel="stylesheet" href="/style.css?v=d14b864ac9" />
+<link rel="stylesheet" href="/style.css?v=458cfdffdf" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -89,6 +89,7 @@
       <div class="tabs">
         <button id="tab-parsed" class="tab active">解析视图</button>
         <button id="tab-pdf" class="tab">PDF 原文</button>
+        <button id="tab-artifacts" class="tab" title="本会话 agent 写出的文件">产出物<span id="tab-artifacts-count" class="tab-count" hidden></span></button>
       </div>
       <div class="spacer"></div>
       <span id="reader-status" class="status-chip"></span>
@@ -131,6 +132,10 @@
       </div>
       <div id="pdf-view" class="reader-view" hidden>
         <div id="pdf-pages"></div>
+      </div>
+      <div id="artifacts-view" class="reader-view" hidden>
+        <aside id="artifact-list" class="artifact-list"></aside>
+        <div id="artifact-viewer" class="artifact-viewer"></div>
       </div>
     </div>
   </section>
@@ -317,6 +322,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=d14b864ac9"></script>
+<script src="/app.js?v=458cfdffdf"></script>
 </body>
 </html>

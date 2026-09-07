@@ -738,13 +738,13 @@ export function initReader() {
   });
 }
 
-function switchTab(which) {
-  const isParsed = which === "parsed";
-  $("#tab-parsed").classList.toggle("active", isParsed);
-  $("#tab-pdf").classList.toggle("active", !isParsed);
-  $("#parsed-view").hidden = !isParsed;
-  $("#pdf-view").hidden = isParsed;
-  if (!isParsed && state.currentPaper && !pdfDoc) loadPdf(state.currentPaper);
+function switchTab(which = "parsed") {
+  const views = [["parsed", "#tab-parsed", "#parsed-view"], ["pdf", "#tab-pdf", "#pdf-view"], ["artifacts", "#tab-artifacts", "#artifacts-view"]];
+  for (const [key, tabSel, viewSel] of views) {
+    $(tabSel).classList.toggle("active", key === which);
+    $(viewSel).hidden = key !== which;
+  }
+  if (which === "pdf" && state.currentPaper && !pdfDoc) loadPdf(state.currentPaper);
 }
 
-export { loadPdf };
+export { loadPdf, switchTab };

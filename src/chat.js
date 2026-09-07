@@ -6,6 +6,7 @@ import { createUserInputUI } from "./userInput.js";
 import { composerAction } from "./chatKeys.js";
 import { connectSessionEvents, closeSessionEvents, waitOperation } from "./sessionTransport.js";
 import { initSessionPanel, renderSessionState, renderSessionConnection } from "./sessionPanel.js";
+import { recordHistory, recordEvent } from "./artifacts.js";
 
 
 let autoScroll = true;
@@ -178,6 +179,7 @@ function renderHistory(h) {
     if (root && m.entryId) root.dataset.entryId = m.entryId;
   }
   if (!h.messages?.length) renderWelcome();
+  recordHistory(h);
   applySessionState(h); scrollBottom();
 }
 let activeStream = null;
@@ -253,9 +255,9 @@ function handleSessionEvent(ev) {
   else if (ev.t === "user_start") { addMessageEl("user", ev.text, (ev.images || []).map(im => 'data:' + im.mimeType + ';base64,' + im.data)); }
   else if (ev.t === "delta") streamNode().text += ev.text;
   else if (ev.t === "thinking") streamNode().thinking += ev.text;
-  else if (ev.t === "tool_start") addToolCard(streamNode().node, ev.id, ev.name, ev.args);
+  else if (ev.t === "tool_start") recordEvent(ev), addToolCard(streamNode().node, ev.id, ev.name, ev.args);
   else if (ev.t === "tool_update") liveToolText(streamNode().node, ev.id, ev.content.filter(c => c.type === "text").map(c => c.text).join(""));
-  else if (ev.t === "tool_end") fillToolCard(ev.id, ev.name, ev.content.filter(c => c.type === "text").map(c => c.text).join("\n"), ev.isError, ev.content, ev.details);
+  else if (ev.t === "tool_end") recordEvent(ev), fillToolCard(ev.id, ev.name, ev.content.filter(c => c.type === "text").map(c => c.text).join("\n"), ev.isError, ev.content, ev.details);
   else if (ev.t === "entry" && ev.message.role === "custom") {
     const root = el("details", { class: "native-message" }, el("summary", {}, ev.message.customType)); renderContent(ev.message.parts, root); $("#messages").append(root);
   }

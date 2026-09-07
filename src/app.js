@@ -14,6 +14,7 @@ import { initVideoPanel as initVideoTab } from "./videoPanel.js";
 import { initTheme } from "./theme.js";
 import { initClipboard } from "./clipPanel.js";
 import { initSetupPanel } from "./setupPanel.js";
+import { initArtifacts } from "./artifacts.js";
 
 export const state = {
   papers: [],
@@ -203,6 +204,7 @@ async function boot() {
   try { initSidebar(); } catch (e) { window.__initErrors.push("initSidebar: " + (e.message||e)); }
   try { initChat(); } catch (e) { window.__initErrors.push("initChat: " + (e.message||e)); }
   try { initReader(); } catch (e) { window.__initErrors.push("initReader: " + (e.message||e)); }
+  try { initArtifacts(); } catch (e) { window.__initErrors.push("initArtifacts: " + (e.message||e)); }
   try { initSettings(); } catch (e) { window.__initErrors.push("initSettings: " + (e.message||e)); }
   try { initSetupPanel(); } catch (e) { window.__initErrors.push("initSetupPanel: " + (e.message||e)); }
   initTheme();
