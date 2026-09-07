@@ -487,7 +487,9 @@ async function renderPage(pno) {
   }
   const canvas = pageEl.querySelector("canvas");
   const textDiv = pageEl.querySelector(".textLayer");
-  const cssWidth = Math.min(900, holder.clientWidth - 48);
+  // 沉浸模式下栏位更宽：放开 900px 上限，让 PDF 铺满栏位
+  const maxW = document.getElementById("immersive")?.hidden === false ? 1600 : 900;
+  const cssWidth = Math.min(maxW, holder.clientWidth - 48);
   const scale = cssWidth / page.getViewport({ scale: 1 }).width;
   const viewport = page.getViewport({ scale });
   const dpr = Math.min(2, window.devicePixelRatio || 1);

@@ -18,6 +18,17 @@ fs.cpSync(katexSrc, katexDst, { recursive: true });
 const workerSrc = path.join(ROOT, "node_modules", "pdfjs-dist", "build", "pdf.worker.min.mjs");
 fs.copyFileSync(workerSrc, path.join(PUB, "vendor", "pdf.worker.min.mjs"));
 
+// mermaid: 打成懒加载的全局包（沉浸模式流程图模块首次使用时注入 <script>），不进主 bundle
+await esbuild.build({
+  entryPoints: [path.join(ROOT, "scripts", "mermaid-entry.mjs")],
+  bundle: true,
+  outfile: path.join(PUB, "vendor", "mermaid.min.js"),
+  format: "iife",
+  target: "es2022",
+  minify: true,
+  logLevel: "silent",
+});
+
 await esbuild.build({
   entryPoints: [path.join(ROOT, "src", "app.js")],
   bundle: true,

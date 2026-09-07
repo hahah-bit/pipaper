@@ -7,6 +7,7 @@ import { composerAction } from "./chatKeys.js";
 import { connectSessionEvents, closeSessionEvents, waitOperation } from "./sessionTransport.js";
 import { initSessionPanel, renderSessionState, renderSessionConnection } from "./sessionPanel.js";
 import { recordHistory, recordEvent } from "./artifacts.js";
+import { buildFineNotePrompt } from "./noteTemplates.js";
 
 
 let autoScroll = true;
@@ -894,6 +895,17 @@ export function updateComposerHint() {
     ]) {
       qa.append(el("button", { class: "qa-btn", onclick: () => { const i = $("#composer-input"); i.value = prompt; i.focus(); autoSizeInput(); } }, label));
     }
+    qa.append(el("button", {
+      class: "qa-btn", title: "生成精读笔记并写入 knowledge/精读/（与粗读分库存放）",
+      onclick: async () => {
+        try {
+          const meta = await api.notesEnsure({ paperId: state.currentPaper.id, title: state.currentPaper.title, category: "精读" });
+          const i = $("#composer-input");
+          i.value = buildFineNotePrompt({ title: state.currentPaper.title || "", slug: meta.slug });
+          i.focus(); autoSizeInput();
+        } catch (e) { toast("准备精读笔记失败: " + (e.message || e), true); }
+      }
+    }, "📝 精读笔记"));
   } else {
     hint.textContent = "未选择论文 — 仍可自由对话";
   }

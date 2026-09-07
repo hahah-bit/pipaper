@@ -15,6 +15,7 @@ import { initTheme } from "./theme.js";
 import { initClipboard } from "./clipPanel.js";
 import { initSetupPanel } from "./setupPanel.js";
 import { initArtifacts } from "./artifacts.js";
+import { initImmersive } from "./immersive.js";
 
 export const state = {
   papers: [],
@@ -97,6 +98,11 @@ export const api = {
   abort: (id) => jfetch(`/api/sessions/${id}/abort`, { method: "POST" }),
   setupStatus: () => jfetch("/api/setup/status"),
   setupTest: (id) => jfetch(`/api/setup/test/${id}`, { method: "POST", body: {} }),
+  notes: () => jfetch("/api/notes"),
+  notesResolve: (paperId, title) => jfetch("/api/notes/resolve?" + new URLSearchParams({ paperId, title: title || "" })),
+  notesEnsure: (body) => jfetch("/api/notes/ensure", { method: "POST", body }),
+  notesDeleteFile: (path) => jfetch("/api/notes/file?path=" + encodeURIComponent(path), { method: "DELETE" }),
+  notesDeletePaper: (category, slug) => jfetch("/api/notes/paper?" + new URLSearchParams({ category, slug }), { method: "DELETE" }),
   searchSources: () => jfetch("/api/search/sources"),
   saveSearchSources: (sources) => jfetch("/api/search/sources", { method: "PUT", body: { sources } }),
 };
@@ -205,6 +211,7 @@ async function boot() {
   try { initChat(); } catch (e) { window.__initErrors.push("initChat: " + (e.message||e)); }
   try { initReader(); } catch (e) { window.__initErrors.push("initReader: " + (e.message||e)); }
   try { initArtifacts(); } catch (e) { window.__initErrors.push("initArtifacts: " + (e.message||e)); }
+  window.__bootStage = "immersive"; try { initImmersive(); } catch (e) { window.__initErrors.push("initImmersive: " + (e.message||e)); }
   try { initSettings(); } catch (e) { window.__initErrors.push("initSettings: " + (e.message||e)); }
   try { initSetupPanel(); } catch (e) { window.__initErrors.push("initSetupPanel: " + (e.message||e)); }
   initTheme();

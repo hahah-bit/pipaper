@@ -1063,3 +1063,148 @@ select, #model-select, #think-select {
 .artifact-doc { padding-top: 26px; padding-bottom: 60px; }
 .artifact-code { margin: 18px auto; max-width: 960px; padding: 16px 18px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg1); overflow: auto; font-size: 13px; line-height: 1.6; }
 .artifact-image { display: block; max-width: min(96%, 1100px); margin: 26px auto; border-radius: 8px; border: 1px solid var(--border); }
+
+/* ================= 沉浸式阅读工作台 ================= */
+#immersive {
+  position: fixed; inset: 0; z-index: 200;
+  background: var(--bg0); display: flex; flex-direction: column;
+}
+#imm-head {
+  display: flex; align-items: center; gap: 10px; flex: none;
+  padding: 8px 14px; background: var(--bg1); border-bottom: 1px solid var(--border);
+}
+#imm-head .imm-brand {
+  display: inline-flex; width: 24px; height: 24px; border-radius: 7px; flex: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  align-items: center; justify-content: center; color: #fff; font-size: 13px;
+}
+#imm-title { font-weight: 600; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40vw; }
+#imm-body { flex: 1; min-height: 0; display: flex; padding: 8px; gap: 0; }
+.imm-slot {
+  flex: 0 0 50%; min-width: 0; display: flex; flex-direction: column;
+  background: var(--bg1); border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+}
+.imm-divider { flex: 0 0 10px; cursor: col-resize; border-radius: 4px; transition: background .15s; }
+.imm-divider:hover, .imm-divider:active { background: var(--accent); opacity: .5; }
+.imm-slot-head {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; background: var(--bg2); border-bottom: 1px solid var(--border);
+  position: relative;
+}
+.imm-slot-name {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 55%;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--fg0);
+  border-radius: 8px; padding: 4px 10px; font-size: 12.5px;
+}
+.imm-slot-name:hover { border-color: var(--accent); }
+.imm-slot-status { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.imm-slot-size {
+  flex: none; font-size: 10.5px; color: var(--fg2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 1px 6px;
+}
+.imm-slot-size.big { color: var(--accent); border-color: var(--accent); opacity: .8; }
+.imm-slot-body { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; position: relative; }
+/* 搬迁进来的原生面板：铺满栏位并压过 panes.js 的内联折叠样式 */
+#immersive .imm-slot-body > #chat-pane,
+#immersive .imm-slot-body > #reader-pane {
+  flex: 1 !important; width: auto !important; min-width: 0 !important;
+  height: auto !important; border: none !important; border-right: none !important;
+}
+#immersive #btn-chat-toggle, #immersive #btn-chat-float,
+#immersive #btn-reader-toggle, #immersive #btn-rightbar-toggle { display: none !important; }
+#immersive .float-handle { display: none !important; }
+
+/* 栏位弹出菜单（切换模块 / 布局） */
+.imm-menu {
+  position: fixed; z-index: 300; min-width: 190px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.5); padding: 4px;
+}
+.imm-menu-item {
+  display: block; width: 100%; text-align: left; border: 0; background: none;
+  color: var(--fg1); padding: 8px 10px; border-radius: 7px; font-size: 13px;
+}
+.imm-menu-item:hover { background: var(--bg3); color: var(--fg0); }
+.imm-menu-item.active { color: var(--accent); }
+
+/* 组合选择器 */
+.imm-picker { min-width: 460px; }
+.imm-pick-row, .imm-pick-presets { display: flex; align-items: center; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+.imm-pick-label { font-size: 12.5px; color: var(--fg2); flex: none; }
+.imm-pick-slots { display: flex; gap: 10px; margin: 10px 0; flex-wrap: wrap; }
+.imm-pick-slot { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--fg2); }
+.imm-pick-slot select { min-width: 170px; max-width: none; }
+
+/* ---------------- 知识模块（粗读解析 / 导图 / 流程图） ---------------- */
+.note-mod { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.note-mod-bar {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--bg1);
+}
+.note-mod-title { font-size: 12.5px; font-weight: 600; color: var(--fg0); white-space: nowrap; }
+.note-mod-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); }
+.note-mod-content { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 40px; }
+.note-mod-bar .tool-btn.subtle { opacity: .85; }
+.note-sec {
+  font-size: 12.5px; font-weight: 600; color: var(--fg1);
+  margin: 16px 0 10px; padding-bottom: 5px; border-bottom: 1px dashed var(--border);
+}
+.note-sec:first-child { margin-top: 0; }
+.note-file-view { min-height: 200px; }
+.note-md { font-size: 14px; line-height: 1.8; }
+.note-prose { font-size: 13px; color: var(--fg1); margin-bottom: 12px; }
+.note-toolbar { display: flex; gap: 8px; margin-bottom: 8px; }
+.note-mindmap { min-height: 320px; }
+/* 思维导图独占栏位时：svg 铺满整个内容区高度（不再固定 320px） */
+.note-mod-content.mindmap-mode { overflow: hidden; display: flex; flex-direction: column; padding: 10px 12px; }
+.note-file-view.mindmap-view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.note-file-view.mindmap-view .note-mindmap { flex: 1; min-height: 260px; width: 100%; height: auto; }
+/* mermaid 流程图：宽度铺满栏位，高度按比例 */
+.mermaid-box svg { width: 100% !important; max-width: none !important; height: auto !important; }
+.mermaid-box { margin: 10px 0 18px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg1); overflow: auto; }
+.mermaid-box svg { max-width: 100%; height: auto; }
+.mermaid-src { white-space: pre-wrap; font-size: 12px; color: var(--fg2); margin: 0 0 8px; }
+.note-empty { margin: 10vh auto 0; max-width: 420px; text-align: center; color: var(--fg2); line-height: 1.9; }
+.note-empty-icon { font-size: 44px; margin-bottom: 8px; }
+.note-empty h4 { color: var(--fg1); margin: 0 0 6px; font-size: 15px; }
+.note-empty p { font-size: 12.5px; margin: 0 0 14px; }
+.note-noop {
+  margin: 20px auto; max-width: 460px; text-align: center; font-size: 13px; color: var(--fg1);
+  border: 1px dashed var(--border); border-radius: 10px; padding: 16px; line-height: 1.9;
+}
+
+/* ---------------- 笔记管理弹窗 ---------------- */
+.nm-cat { margin: 14px 0 6px; font-size: 13px; color: var(--fg0); }
+.nm-cat:first-child { margin-top: 0; }
+.nm-paper {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px;
+  background: var(--bg2); margin: 6px 0 2px;
+}
+.nm-title { font-size: 13px; color: var(--fg0); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%; }
+.nm-slug { font-size: 11px; color: var(--fg2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nm-file {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px 6px 22px; border-bottom: 1px solid var(--border); font-size: 12.5px;
+}
+.nm-fname { color: var(--fg1); }
+.nm-meta { color: var(--fg2); font-size: 11.5px; }
+.nm-view-head { font-size: 12.5px; color: var(--fg1); font-weight: 600; margin-bottom: 10px; }
+.tool-btn.danger { color: var(--err); border-color: color-mix(in srgb, var(--err) 45%, var(--border)); }
+.tool-btn.danger:hover { background: color-mix(in srgb, var(--err) 18%, var(--bg2)); }
+
+/* ---- 沉浸模式补丁：铺满栏位 + 一大两小（左大右上下） + 笔记管理 dialog ---- */
+#immersive .paper-doc { max-width: none; }
+#immersive #pdf-pages { display: flex; flex-direction: column; align-items: center; }
+.imm-stack { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.imm-divider.h { cursor: row-resize; }
+.notes-dialog { width: 680px; max-height: 86vh; }
+.mindmap-lightbox {
+  position: fixed; inset: 0; z-index: 400;
+  background: var(--bg0); display: flex; flex-direction: column;
+}
+.mindmap-lb-bar {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; background: var(--bg1); border-bottom: 1px solid var(--border);
+}
+.mindmap-lightbox > svg { flex: 1; min-height: 0; }

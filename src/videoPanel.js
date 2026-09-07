@@ -1,5 +1,6 @@
 import { $, el, toast, addChip, state } from "./app.js";
 import { streamPrompt, streamPromptInBranch } from "./chat.js";
+import { renderMarkmap } from "./markmapUtil.js";
 
 // Self-contained video module (right panel tab): manager list + inline player
 // + AI analysis (timeline / mindmap via markmap) + batch analysis + PiP with
@@ -387,11 +388,7 @@ async function renderAnalysis(parsed, v) {
 
 async function renderMindmap(svgEl, md) {
   try {
-    const { Transformer } = await import("markmap-lib");
-    const { Markmap } = await import("markmap-view");
-    svgEl.replaceChildren();
-    const tr = new Transformer();
-    Markmap.create(svgEl, { autoFit: true, duration: 300, maxWidth: 260 }, tr.transform(md || "# 空").root);
+    await renderMarkmap(svgEl, md);
   } catch (e) {
     svgEl.parentElement.append(el("div", { class: "res-note" }, "导图渲染失败: " + e.message));
   }

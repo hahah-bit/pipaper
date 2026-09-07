@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PiPaper · 论文精读工作台</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
-<link rel="stylesheet" href="/style.css?v=458cfdffdf" />
+<link rel="stylesheet" href="/style.css?v=6c1e00a601" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -18,6 +18,7 @@
       <div class="brand"><span class="logo">π</span><span>PiPaper</span></div>
       <div class="side-actions">
         <button id="btn-import" class="icon-btn" title="导入本地 PDF">＋导入</button>
+        <button id="btn-notes-mgr" class="icon-btn" title="笔记管理（知识库：粗读/精读）">🗂</button>
         <button id="btn-resources" class="icon-btn" title="资源管理（技能/扩展/MCP）">🧩</button>
         <button id="btn-settings" class="icon-btn" title="设置">⚙</button>
       </div>
@@ -96,6 +97,7 @@
       <button id="btn-parse" class="tool-btn">解析</button>
       <button id="btn-rightbar-toggle" class="tool-btn active" title="检索/视频面板">🔍</button>
       <button id="btn-boxselect" class="tool-btn" title="在 PDF 上框选截图加入对话">⬚ 框选</button>
+      <button id="btn-immersive" class="tool-btn primary" title="进入沉浸式阅读工作台（自选布局与模块组合）">⛶ 沉浸</button>
       <button id="btn-reader-toggle" class="pane-toggle" title="折叠阅读器" aria-label="折叠阅读器">›</button>
     </header>
     <div id="parse-panel" hidden>
@@ -240,6 +242,27 @@
 
 <div id="sel-popup" hidden><button id="btn-sel-add">✂ 加入对话</button></div>
 
+<!-- ============ 沉浸式阅读工作台 ============ -->
+<div id="immersive" hidden>
+  <header id="imm-head">
+    <span class="imm-brand">⛶</span>
+    <span id="imm-title">沉浸阅读</span>
+    <div class="spacer"></div>
+    <button id="btn-imm-layout" class="tool-btn" title="切换布局：两栏 / 一大两小">布局</button>
+    <button id="btn-imm-combo" class="tool-btn" title="重新选择模块组合">模块组合</button>
+    <button id="btn-imm-notes" class="tool-btn" title="笔记管理（知识库）">🗂 笔记管理</button>
+    <button id="btn-imm-exit" class="tool-btn" title="退出沉浸模式（Esc 退出全屏后仍可用此按钮）">✕ 退出</button>
+  </header>
+  <div id="imm-body"></div>
+</div>
+
+<!-- ============ 笔记管理 modal（用 <dialog>：showModal 的 top layer 在浏览器全屏时依然可见可点） ============ -->
+<dialog id="notes-backdrop" class="native-dialog notes-dialog">
+  <div class="modal-head"><span>笔记管理 · 知识库（粗读 / 精读）</span><button id="btn-notes-close" class="icon-btn">✕</button></div>
+  <div class="modal-body" id="notes-manage-body" style="min-height: 200px; max-height: 52vh; overflow: auto;"></div>
+  <div class="modal-body" id="notes-manage-view" hidden style="border-top: 1px solid var(--border); max-height: 38vh; overflow: auto;"></div>
+</dialog>
+
 <!-- ============ Settings modal ============ -->
 <div id="modal-backdrop" hidden>
   <div id="settings-modal" class="modal">
@@ -322,6 +345,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=458cfdffdf"></script>
+<script src="/app.js?v=6c1e00a601"></script>
 </body>
 </html>
