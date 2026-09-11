@@ -16,6 +16,66 @@ const DOCS = [
 
 let activeDoc = "struct";
 let renderSeq = 0;
+let assetCache = { paperId: null, figures: new Map(), tables: new Map() }; // 原图原表索引
+
+async function buildAssetIndex(paper) {
+  if (assetCache.paperId === paper.id) return assetCache;
+  const idx = { paperId: paper.id, figures: new Map(), tables: new Map() };
+  try {
+    const res = await fetch(`/api/papers/${paper.id}/blocks`).then((r) => r.json());
+    for (const b of res.blocks || []) {
+      if (b.type === "image" && b.src) {
+        const m = String(b.caption || "").match(/(?:图|Figure|Fig\.?)\s*(\d+)/i);
+        if (m && !idx.figures.has(+m[1])) {
+          idx.figures.set(+m[1], { url: `/api/papers/${paper.id}/${b.src}`, caption: b.caption || `图${m[1]}` });
+        }
+      } else if (b.type === "table" && (b.html || b.md)) {
+        const m = String(b.caption || "").match(/(?:表|Table)\s*(\d+)/i);
+        if (m && !idx.tables.has(+m[1])) {
+          idx.tables.set(+m[1], { html: b.html || b.md, caption: b.caption || `表${m[1]}` });
+        }
+      }
+    }
+  } catch {}
+  assetCache = idx;
+  return idx;
+}
+
+// 在文档 DOM 里找 图N/表N 的首次引用位置，把原图/原表插到该段落之后
+function embedOriginalAssets(docBox, idx) {
+  if (!idx || (!idx.figures.size && !idx.tables.size)) return;
+  const pat = /(图|Figure|Fig\.?)\s*(\d+)|(表|Table)\s*(\d+)/g;
+  const inserted = new Set();
+  for (const node of [...docBox.children].filter((n) => !n.classList.contains("fig-asset"))) {
+    const text = node.textContent || "";
+    pat.lastIndex = 0;
+    let m, anchor = node;
+    while ((m = pat.exec(text))) {
+      const isFig = !!m[2];
+      const num = +(isFig ? m[2] : m[4]);
+      const key = (isFig ? "F" : "T") + num;
+      if (inserted.has(key)) continue;
+      if (isFig && idx.figures.has(num)) {
+        inserted.add(key);
+        const { url, caption } = idx.figures.get(num);
+        const fig = el("figure", { class: "fig-asset" },
+          el("img", { src: url, alt: caption, loading: "lazy", onclick: () => window.open(url, "_blank") }),
+          el("figcaption", {}, "📎 原图 " + caption));
+        anchor.after(fig);
+        anchor = fig;
+      } else if (!isFig && idx.tables.has(num)) {
+        inserted.add(key);
+        const { html, caption } = idx.tables.get(num);
+        const holder = el("div", { class: "fig-asset" },
+          el("div", { class: "fig-asset-cap" }, "📎 原表 " + caption),
+          el("div", { class: "tbl-wrap" }));
+        renderMd(html, holder.querySelector(".tbl-wrap"));
+        anchor.after(holder);
+        anchor = holder;
+      }
+    }
+  }
+}
 
 async function lookupFiles() {
   const p = state.currentPaper;
@@ -147,6 +207,7 @@ export async function renderFigurePanel() {
   if (!have(activeDoc)) activeDoc = DOCS.find((d) => have(d.key)).key;
   const nav = el("div", { class: "fig-nav" });
   const docBox = el("div", { class: "fig-doc paper-doc" });
+  const assetIdx = await buildAssetIndex(paper);
   async function showDoc(key) {
     activeDoc = key;
     const d = DOCS.find((x) => x.key === key);
@@ -156,6 +217,7 @@ export async function renderFigurePanel() {
       const f = files.find((x) => x.name === d.file);
       const text = await readDoc(f.path);
       renderMd(text, docBox);
+      embedOriginalAssets(docBox, assetIdx);
     } catch (e) {
       docBox.replaceChildren(el("div", { class: "res-note", style: { padding: "18px" } }, "读取失败: " + (e.message || e)));
     }

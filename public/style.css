@@ -1306,3 +1306,9 @@ select, #model-select, #think-select {
 .fw-ribbon-t { font-size: 11px; color: var(--accent); font-weight: 600; flex: none; }
 .fw-ribbon-item { font-size: 11.5px; color: var(--fg1); opacity: .85; white-space: nowrap; }
 .fw-rr .fw-ribbon-t { color: var(--ok); }
+
+/* 原图原表内嵌 */
+.fig-asset { margin: 14px 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg1); }
+.fig-asset img { display: block; max-width: min(100%, 760px); max-height: 480px; margin: 0 auto; border-radius: 6px; cursor: zoom-in; }
+.fig-asset figcaption, .fig-asset-cap { font-size: 11.5px; color: var(--accent); margin-bottom: 8px; }
+.fig-asset .tbl-wrap { font-size: 12.5px; }
