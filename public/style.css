@@ -1208,3 +1208,33 @@ select, #model-select, #think-select {
   padding: 8px 14px; background: var(--bg1); border-bottom: 1px solid var(--border);
 }
 .mindmap-lightbox > svg { flex: 1; min-height: 0; }
+
+/* ================= LaTeX 编辑器模块 ================= */
+.latex-mod { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.lm-toolbar {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--bg1);
+}
+.lm-file { font-size: 12.5px; color: var(--fg0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+.lm-main { flex: 1; min-height: 0; display: flex; }
+.lm-tree {
+  flex: 0 0 190px; min-width: 0; overflow: auto; border-right: 1px solid var(--border);
+  background: var(--bg1); padding: 6px 4px; font-size: 12.5px;
+}
+.lm-root { color: var(--fg2); font-size: 11px; padding: 4px 8px 8px; word-break: break-all; border-bottom: 1px dashed var(--border); margin-bottom: 4px; }
+.lm-group { color: var(--accent); font-size: 11.5px; padding: 6px 8px 2px; }
+.lm-item { padding: 4px 8px 4px 16px; color: var(--fg1); cursor: pointer; border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lm-item:hover { background: var(--bg2); color: var(--fg0); }
+.lm-item.active { background: var(--chip); color: var(--fg0); }
+.lm-editor {
+  flex: 1 1 46%; min-width: 0; border: 0; outline: none; resize: none;
+  background: var(--bg0); color: var(--fg0);
+  font-family: Consolas, "Courier New", monospace; font-size: 13px; line-height: 1.6;
+  padding: 12px 14px; white-space: pre; overflow: auto;
+}
+.lm-pdf { flex: 1 1 46%; min-width: 0; border: 0; border-left: 1px solid var(--border); background: #fff; }
+.lm-log {
+  flex: none; height: 130px; overflow: auto; margin: 0;
+  border-top: 1px solid var(--border); background: var(--pre-bg); color: var(--fg1);
+  font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.5; padding: 8px 10px;
+}

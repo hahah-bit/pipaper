@@ -17,6 +17,7 @@ import { clipAdd, clipList, clipDelete, clipClear } from "./clip.js";
 import * as harness from "./harness.js";
 import { registerSessionRoutes } from "./session-routes.js";
 import { registerNoteRoutes } from "./notes.js";
+import { registerLatexRoutes } from "./latex-editor.js";
 import { changePackage } from "./pi-packages.js";
 import { setupStatus, setupTest } from "./setup-status.js";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
@@ -194,6 +195,7 @@ api.get("/papers/:id/file/*", (req, res) => {
 
 registerSessionRoutes(api);
 registerNoteRoutes(api);
+registerLatexRoutes(api);
 
 function safeJoin(base, rel) {
   const target = path.resolve(base, rel);
