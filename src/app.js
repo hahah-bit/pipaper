@@ -17,6 +17,7 @@ import { initSetupPanel } from "./setupPanel.js";
 import { initArtifacts } from "./artifacts.js";
 import { initImmersive } from "./immersive.js";
 import { registerLatexModule } from "./latexEditor.js";
+import { initFigurePanel } from "./figurePanel.js";
 
 export const state = {
   papers: [],
@@ -212,6 +213,7 @@ async function boot() {
   try { initChat(); } catch (e) { window.__initErrors.push("initChat: " + (e.message||e)); }
   try { initReader(); } catch (e) { window.__initErrors.push("initReader: " + (e.message||e)); }
   try { initArtifacts(); } catch (e) { window.__initErrors.push("initArtifacts: " + (e.message||e)); }
+  try { initFigurePanel(); } catch (e) { window.__initErrors.push("initFigurePanel: " + (e.message||e)); }
   window.__bootStage = "immersive";
   try { registerLatexModule(); } catch (e) { window.__initErrors.push("registerLatexModule: " + (e.message||e)); }
   try { initImmersive(); } catch (e) { window.__initErrors.push("initImmersive: " + (e.message||e)); }

@@ -20,6 +20,7 @@ export async function readerLoadPaper(p) {
   $("#tab-parsed").click();
   $("#reader-status").textContent = p.title ? p.title.slice(0, 42) : "";
   document.title = `${p.title || "PiPaper"} · PiPaper`;
+  window.dispatchEvent(new CustomEvent("pipaper:paper-changed", { detail: { paperId: p.id } }));
   await loadParsed(p);
   // reset pdf
   pdfDoc = null;
@@ -741,7 +742,7 @@ export function initReader() {
 }
 
 function switchTab(which = "parsed") {
-  const views = [["parsed", "#tab-parsed", "#parsed-view"], ["pdf", "#tab-pdf", "#pdf-view"], ["artifacts", "#tab-artifacts", "#artifacts-view"]];
+  const views = [["parsed", "#tab-parsed", "#parsed-view"], ["pdf", "#tab-pdf", "#pdf-view"], ["artifacts", "#tab-artifacts", "#artifacts-view"], ["figana", "#tab-figana", "#figana-view"]];
   for (const [key, tabSel, viewSel] of views) {
     $(tabSel).classList.toggle("active", key === which);
     $(viewSel).hidden = key !== which;

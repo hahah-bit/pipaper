@@ -1238,3 +1238,71 @@ select, #model-select, #think-select {
   border-top: 1px solid var(--border); background: var(--pre-bg); color: var(--fg1);
   font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.5; padding: 8px 10px;
 }
+
+/* ================= 图表分析管理界面 ================= */
+#figana-view { overflow: auto; }
+#figana-body { min-height: 100%; display: flex; flex-direction: column; padding-bottom: 40px; }
+.fig-head {
+  flex: none; display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--bg1);
+  position: sticky; top: 0; z-index: 3;
+}
+.fig-title { font-size: 14px; font-weight: 600; color: var(--fg0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.fig-content { flex: 1; min-height: 0; padding: 14px 18px; }
+.fig-empty-hint { text-align: center; color: var(--fg2); font-size: 12.5px; padding: 18px 0 8px; }
+
+/* 分节导航 */
+.fig-nav { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+.fig-nav-btn {
+  border: 1px solid var(--border); background: var(--bg2); color: var(--fg1);
+  border-radius: 9px; padding: 6px 12px; font-size: 12.5px;
+}
+.fig-nav-btn:hover { border-color: var(--accent); color: var(--fg0); }
+.fig-nav-btn.active { background: var(--chip); color: var(--fg0); border-color: var(--accent); }
+.fig-nav-btn.missing { border-style: dashed; opacity: .75; }
+.fig-doc { max-width: none; padding: 4px 6px 30px; }
+
+/* 生成卡片行 */
+.fig-gen-row { display: flex; gap: 14px; margin: 26px auto 10px; max-width: 900px; flex-wrap: wrap; justify-content: center; }
+.fig-gen-card {
+  flex: 1 1 240px; max-width: 280px; text-align: left; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 14px; padding: 16px;
+  background: var(--bg1); color: var(--fg1); transition: border-color .15s, transform .15s;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.fig-gen-card:hover { border-color: var(--accent); transform: translateY(-2px); }
+.fgc-icon { font-size: 26px; }
+.fgc-t { font-size: 14px; font-weight: 600; color: var(--fg0); }
+.fgc-s { font-size: 11.5px; color: var(--fg2); line-height: 1.6; }
+.fgc-go { font-size: 12px; color: var(--accent); margin-top: 4px; }
+
+/* 科研流程图（虚化通用业务链） */
+.fw-wrap { position: relative; overflow: hidden; margin: 18px auto 6px; max-width: 980px; border: 1px solid var(--border); border-radius: 18px; padding: 34px 26px 26px; background: var(--bg1); }
+.fw-blob { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .30; pointer-events: none; }
+.fw-blob.b1 { width: 300px; height: 300px; background: #3346a8; top: -90px; left: -60px; }
+.fw-blob.b2 { width: 260px; height: 260px; background: #6d3fa8; bottom: -80px; right: 10%; }
+.fw-blob.b3 { width: 220px; height: 220px; background: #1d6a8f; top: 30%; right: -70px; }
+.fw-title { position: relative; text-align: center; font-size: 17px; font-weight: 700; color: var(--fg0); letter-spacing: 1px; }
+.fw-sub { position: relative; text-align: center; font-size: 12px; color: var(--fg2); margin: 6px 0 22px; }
+.fw-chain { position: relative; display: flex; align-items: stretch; justify-content: center; flex-wrap: wrap; gap: 4px; }
+.fw-node {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  min-width: 104px; padding: 12px 10px; border-radius: 12px;
+  background: color-mix(in srgb, var(--bg2) 55%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--border) 80%, transparent);
+  backdrop-filter: blur(3px);
+}
+.fw-icon { font-size: 20px; filter: saturate(.8); }
+.fw-t { font-size: 12.5px; font-weight: 600; color: var(--fg0); white-space: nowrap; }
+.fw-s { font-size: 10.5px; color: var(--fg2); white-space: nowrap; }
+.fw-arrow { align-self: center; color: var(--fg2); font-size: 16px; padding: 0 6px; opacity: .7; }
+.fw-ribbon {
+  position: relative; display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+  margin: 14px auto 0; max-width: 760px; padding: 8px 16px; border-radius: 999px;
+  background: color-mix(in srgb, var(--bg2) 45%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  backdrop-filter: blur(2px);
+}
+.fw-ribbon-t { font-size: 11px; color: var(--accent); font-weight: 600; flex: none; }
+.fw-ribbon-item { font-size: 11.5px; color: var(--fg1); opacity: .85; white-space: nowrap; }
+.fw-rr .fw-ribbon-t { color: var(--ok); }
