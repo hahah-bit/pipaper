@@ -1,5 +1,6 @@
 import { api, state, $, el, toast } from "./app.js";
 import { renderMd } from "./chat.js";
+import { switchTab } from "./reader.js";
 import { generateFigureDoc } from "./figureGen.js";
 
 // 图表分析管理界面（阅读器「📊 图表分析」tab）：
@@ -174,7 +175,7 @@ export async function renderFigurePanel() {
 }
 
 export function initFigurePanel() {
-  $("#tab-figana")?.addEventListener("click", () => setTimeout(renderFigurePanel, 30));
+  $("#tab-figana")?.addEventListener("click", () => { switchTab("figana"); setTimeout(renderFigurePanel, 30); });
   // 论文切换后若停留在本 tab，自动刷新
   window.addEventListener("pipaper:paper-changed", () => {
     if ($("#figana-view") && !$("#figana-view").hidden) renderFigurePanel();
