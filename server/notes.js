@@ -6,7 +6,7 @@ import { APP_ROOT } from "./config.js";
 // 知识库：粗读 / 精读两类目录彼此隔离，每篇论文一个子文件夹（含 meta.json），
 // 删除以文件夹为单位递归移除，保证「删得彻底」。
 export const KNOWLEDGE_DIR = path.join(APP_ROOT, "knowledge");
-export const NOTE_CATEGORIES = ["粗读", "精读"];
+export const NOTE_CATEGORIES = ["粗读", "精读", "图表分析"];
 
 const error = (text, status = 400) => Object.assign(new Error(text), { status });
 
