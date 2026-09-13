@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>PiPaper · 论文精读工作台</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
-<link rel="stylesheet" href="/style.css?v=14d6477f1e" />
+<link rel="stylesheet" href="/style.css?v=2e333a9f54" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -90,13 +90,10 @@
       <div class="tabs">
         <button id="tab-parsed" class="tab active">解析视图</button>
         <button id="tab-pdf" class="tab">PDF 原文</button>
-        <button id="tab-artifacts" class="tab" title="本会话 agent 写出的文件">产出物<span id="tab-artifacts-count" class="tab-count" hidden></span></button>
-        <button id="tab-figana" class="tab" title="图表分析：方法结构 / 实验设计 / 复现大纲">📊 图表分析</button>
       </div>
       <div class="spacer"></div>
       <span id="reader-status" class="status-chip"></span>
       <button id="btn-parse" class="tool-btn">解析</button>
-      <button id="btn-rightbar-toggle" class="tool-btn active" title="检索/视频面板">🔍</button>
       <button id="btn-boxselect" class="tool-btn" title="在 PDF 上框选截图加入对话">⬚ 框选</button>
       <button id="btn-immersive" class="tool-btn primary" title="进入沉浸式阅读工作台（自选布局与模块组合）">⛶ 沉浸</button>
       <button id="btn-reader-toggle" class="pane-toggle" title="折叠阅读器" aria-label="折叠阅读器">›</button>
@@ -140,23 +137,26 @@
         <aside id="artifact-list" class="artifact-list"></aside>
         <div id="artifact-viewer" class="artifact-viewer"></div>
       </div>
-      <div id="figana-view" class="reader-view" hidden>
-        <div id="figana-body"></div>
-      </div>
     </div>
   </section>
 
-  <!-- ============ Right panel: 检索 / 视频 ============ -->
-  <div class="gutter" id="gutter-3" title="拖拽调整宽度">
-    <button class="pane-reopen reopen-reader" data-pane="reader" title="展开阅读器" aria-label="展开阅读器">‹</button>
-    <button class="pane-reopen reopen-right" data-pane="right" title="展开检索/视频面板" aria-label="展开检索/视频面板">›</button>
-  </div>
-  <aside id="rightbar">
-    <div class="side-tabs">
-      <button class="rt-tab active" data-tab="search">🔍 检索</button>
-      <button class="rt-tab" data-tab="video">🎬 视频</button>
-      <button id="btn-rightbar-close" class="icon-btn" title="收起" style="flex:none">«</button>
-    </div>
+  <!-- ============ Dock 抽屉：点击 dock 图标后占满右侧（与阅读器同区域），关闭即回到阅读器 ============ -->
+  <section id="dock-drawer" hidden>
+    <header id="dock-drawer-head">
+      <span id="dock-drawer-icon"></span>
+      <span id="dock-drawer-title"></span>
+      <span id="dock-drawer-status" class="res-note"></span>
+      <div class="spacer"></div>
+      <button id="btn-drawer-close" class="icon-btn" title="关闭抽屉（回到阅读器）">✕</button>
+    </header>
+    <div id="dock-drawer-body"></div>
+  </section>
+
+  <!-- ============ Dock：macOS dock 式功能导航（图标按大分类分组，悬浮显示名称） ============ -->
+  <nav id="dock" aria-label="功能导航"></nav>
+
+  <!-- 检索 / 视频 面板的原始挂载点（被 dock 抽屉按需搬入，平时隐藏） -->
+  <div id="dock-origin" hidden>
     <div id="stab-search" class="stab">
       <div id="search-panel">
         <textarea id="sch-q" rows="2" placeholder="检索论文：主题 / 方法 / 模型名…（Enter 检索）"></textarea>
@@ -241,7 +241,7 @@
         <p class="res-note">勾选列表中的视频后可批量解析；AI 解析调用会话中的 video-use 技能，基于等间隔关键帧生成时间轴/思维导图/脉络。</p>
       </div>
     </div>
-  </aside>
+  </div>
 </div>
 
 <div id="sel-popup" hidden><button id="btn-sel-add">✂ 加入对话</button></div>
@@ -349,6 +349,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=14d6477f1e"></script>
+<script src="/app.js?v=2e333a9f54"></script>
 </body>
 </html>

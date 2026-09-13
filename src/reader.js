@@ -390,7 +390,7 @@ async function translateBlock(blkEl) {
 
 function renderChipsIf() { import("./app.js").then((m) => m.renderChips()); }
 
-function lightbox(src, caption) {
+export function lightbox(src, caption) {
   const back = el("div", {
     style: { position: "fixed", inset: "0", background: "rgba(4,6,14,.85)", zIndex: "150", display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-out", flexDirection: "column", gap: "10px" },
     onclick: () => back.remove(),
@@ -742,7 +742,7 @@ export function initReader() {
 }
 
 function switchTab(which = "parsed") {
-  const views = [["parsed", "#tab-parsed", "#parsed-view"], ["pdf", "#tab-pdf", "#pdf-view"], ["artifacts", "#tab-artifacts", "#artifacts-view"], ["figana", "#tab-figana", "#figana-view"]];
+  const views = [["parsed", "#tab-parsed", "#parsed-view"], ["pdf", "#tab-pdf", "#pdf-view"]];
   for (const [key, tabSel, viewSel] of views) {
     $(tabSel).classList.toggle("active", key === which);
     $(viewSel).hidden = key !== which;

@@ -66,10 +66,17 @@ export function renderMd(mdText, container) {
 // Markdown treats underscores and dollar signs as formatting before KaTeX can
 // see them. Replace complete math spans with inert ASCII tokens, then restore
 // them as text nodes so the math renderer receives the original delimiters.
+// MinerU 提取的 LaTeX 常把相邻单字符用空格隔开（"$4 \times 1 0 ^ { - 4 }$"、
+// "\mathrm { F i x e d }"），KaTeX 渲染出来符号散开；数学模式里单字符链的空格
+// 是冗余的（a b 与 ab 输出一致），这里统一收拢。命令名（\log x）前后的空格不动。
+function tightenMathSpaces(token) {
+  return String(token).replace(/(?<![A-Za-z0-9\\])((?:[A-Za-z0-9] )+[A-Za-z0-9])(?![A-Za-z0-9])/g, (chain) => chain.replace(/ /g, ""));
+}
+
 function protectMath(source) {
   const math = [];
   const text = String(source || "").replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+(?<!\\)\$)/g, (part) => {
-    const i = math.push(part) - 1;
+    const i = math.push(tightenMathSpaces(part)) - 1;
     return `MATHTOKEN${i}END`;
   });
   return { text, math };

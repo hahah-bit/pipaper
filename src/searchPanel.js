@@ -304,19 +304,7 @@ export function initSearchPanel() {
   restoreFilters();
   renderSources();
   renderToRead();
-  // rightbar tabs: search / video switch (+ reopen when collapsed)
-  document.querySelectorAll(".rt-tab").forEach((t) =>
-    t.addEventListener("click", () => {
-      document.querySelectorAll(".rt-tab").forEach((x) => x.classList.remove("active"));
-      t.classList.add("active");
-      document.querySelector("#stab-search").hidden = t.dataset.tab !== "search";
-      document.querySelector("#stab-video").hidden = t.dataset.tab !== "video";
-      const rb = document.getElementById("rightbar");
-      rb.classList.remove("collapsed");
-      localStorage.setItem("pipaper.rightCollapsed", "0");
-      window.dispatchEvent(new Event("resize"));
-    })
-  );
+  // 旧版 rightbar tab 切换已移除：检索/视频由 dock 抽屉按需挂载
   $("#btn-search").addEventListener("click", doSearch);
   $("#sch-q").addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); doSearch(); }

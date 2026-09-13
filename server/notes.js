@@ -83,6 +83,18 @@ export function deleteNoteFile(rel) {
   return { ok: true };
 }
 
+// 写入（编辑器保存）：严格限定 knowledge/ 内的 .md 文件；不存在时按提供的路径新建
+export function writeNoteFile({ path: rel, content } = {}) {
+  const target = insideKnowledge(rel);
+  if (!target) throw error("路径越界");
+  if (!/\.md$/i.test(String(rel || ""))) throw error("只允许写入 Markdown（.md）文件");
+  const text = String(content ?? "");
+  if (text.length > 2_000_000) throw error("内容过大（>2MB）");
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, text, "utf8");
+  return { ok: true, path: String(rel), bytes: Buffer.byteLength(text, "utf8"), updatedAt: new Date().toISOString() };
+}
+
 export function deleteNotePaper(category, slug) {
   if (!NOTE_CATEGORIES.includes(category)) throw error("未知的知识库类别");
   if (!slug || /[\\/:*?"<>|]/.test(slug)) throw error("非法的论文目录名");
@@ -106,6 +118,10 @@ export function registerNoteRoutes(api) {
   });
   api.post("/notes/ensure", (req, res) => {
     try { res.json(ensurePaper(req.body || {})); }
+    catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }
+  });
+  api.put("/notes/file", (req, res) => {
+    try { res.json(writeNoteFile(req.body || {})); }
     catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }
   });
   api.delete("/notes/file", (req, res) => {

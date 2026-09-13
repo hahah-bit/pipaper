@@ -98,7 +98,7 @@ async function renderMermaid(container, code) {
   container.innerHTML = svg;
 }
 
-async function renderMermaidFile(box, mdText) {
+export async function renderMermaidFile(box, mdText) {
   const blocks = [...String(mdText || "").matchAll(/```mermaid\s*([\s\S]*?)```/gi)].map((m) => m[1].trim());
   const prose = String(mdText || "").replace(/```mermaid[\s\S]*?```/gi, "").trim();
   if (prose) {

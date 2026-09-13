@@ -17,7 +17,8 @@ export function getModule(id) {
 
 // DOM 搬迁型模块：把现有面板节点移入沉浸栏位（SSE 流、pdf canvas、事件监听全部存活），
 // unmount 时原样放回父节点原位置，并恢复进沉浸前被临时摘掉的折叠/悬浮类。
-function reparentModule({ id, name, icon, selector, keepClasses = [] }) {
+// 沉浸工作台与 dock 抽屉共用（dock 侧：检索/视频/产出物）。
+export function reparentModule({ id, name, icon, selector, keepClasses = [] }) {
   let origin = null;
   return {
     id, name, icon,

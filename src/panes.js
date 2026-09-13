@@ -6,23 +6,20 @@ export function initPanes() {
   const root = document.getElementById("app");
   if (!root) return;
 
-  const cur = { sideW: 264, chatW: 560, rightW: 480 };
-  const paneState = { sidebar: false, chat: false, reader: false, right: false, floating: false };
+  const cur = { sideW: 264, chatW: 560 };
+  const paneState = { sidebar: false, chat: false, reader: false, floating: false };
 
   try {
     const saved = JSON.parse(localStorage.getItem("pipaper.panes") || "{}");
     if (Number.isFinite(saved.sideW)) cur.sideW = saved.sideW;
     if (Number.isFinite(saved.chatW)) cur.chatW = saved.chatW;
-    if (Number.isFinite(saved.rightW)) cur.rightW = saved.rightW;
     const savedState = JSON.parse(localStorage.getItem("pipaper.paneState") || "{}");
     for (const key of Object.keys(paneState)) if (typeof savedState[key] === "boolean") paneState[key] = savedState[key];
-    if (localStorage.getItem("pipaper.rightCollapsed") === "1") paneState.right = true;
   } catch {}
 
   const applyWidths = () => {
     root.style.setProperty("--side-w", Math.max(180, Math.min(520, cur.sideW)) + "px");
     root.style.setProperty("--chat-w", "min(" + Math.max(320, cur.chatW) + "px, 60vw)");
-    root.style.setProperty("--right-w", Math.max(280, Math.min(640, cur.rightW)) + "px");
   };
   applyWidths();
 
@@ -30,7 +27,6 @@ export function initPanes() {
     try {
       localStorage.setItem("pipaper.panes", JSON.stringify(cur));
       localStorage.setItem("pipaper.paneState", JSON.stringify(paneState));
-      localStorage.setItem("pipaper.rightCollapsed", paneState.right ? "1" : "0");
     } catch {}
     window.dispatchEvent(new Event("resize"));
   }
@@ -71,9 +67,6 @@ export function initPanes() {
     root.style.setProperty("--chat-w", "min(560px, 60vw)");
   });
 
-  const rightbar = $("#rightbar");
-  const rightToggle = $("#btn-rightbar-toggle");
-  const closeRight = $("#btn-rightbar-close");
   const sidebar = $("#sidebar");
   const chat = $("#chat-pane");
   const reader = $("#reader-pane");
@@ -85,12 +78,11 @@ export function initPanes() {
   const gutters = {
     sidebar: $("#gutter-1"),
     chat: $("#gutter-2"),
-    reader: $("#gutter-3"),
-    right: $("#gutter-3"),
+    reader: $("#gutter-2"),
   };
-  const paneElements = { sidebar, chat, reader, right: rightbar };
+  const paneElements = { sidebar, chat, reader };
 
-  const paneName = (key) => key === "sidebar" ? "文献库" : key === "chat" ? "对话" : key === "reader" ? "阅读器" : "检索/视频";
+  const paneName = (key) => key === "sidebar" ? "文献库" : key === "chat" ? "对话" : "阅读器";
   const setButton = (key, collapsed) => {
     const button = toggleButtons[key];
     if (!button) return;
@@ -101,7 +93,7 @@ export function initPanes() {
   };
 
   function syncProportionalWidths() {
-    const keys = ["sidebar", "chat", "reader", "right"];
+    const keys = ["sidebar", "chat", "reader"];
     const anyCollapsed = keys.some((key) => paneState[key]);
     for (const key of keys) {
       const element = paneElements[key];
@@ -143,15 +135,16 @@ export function initPanes() {
   }
 
   function updateCollapsedLayout() {
-    const anyCollapsed = ["sidebar", "chat", "reader", "right"].some((key) => paneState[key]);
+    const allKeys = ["sidebar", "chat", "reader"];
+    const anyCollapsed = allKeys.some((key) => paneState[key]);
     root.classList.toggle("has-collapsed", anyCollapsed);
-    root.classList.toggle("pane-all-collapsed", ["sidebar", "chat", "reader", "right"].every((key) => paneState[key]));
-    for (const key of ["sidebar", "chat", "reader", "right"]) {
+    root.classList.toggle("pane-all-collapsed", allKeys.every((key) => paneState[key]));
+    for (const key of allKeys) {
       root.classList.toggle(`pane-${key}-collapsed`, !!paneState[key]);
     }
     gutters.sidebar?.classList.toggle("has-hotspot", !!paneState.sidebar);
-    gutters.chat?.classList.toggle("has-hotspot", !!paneState.chat);
-    gutters.reader?.classList.toggle("has-hotspot", !!(paneState.reader || paneState.right));
+    gutters.chat?.classList.toggle("has-hotspot", !!(paneState.chat));
+    gutters.reader?.classList.toggle("has-hotspot", !!(paneState.reader));
     syncProportionalWidths();
   }
 
@@ -160,10 +153,6 @@ export function initPanes() {
     if (key === "sidebar") sidebar?.classList.toggle("is-collapsed", paneState[key]);
     if (key === "chat") chat?.classList.toggle("is-collapsed", paneState[key]);
     if (key === "reader") reader?.classList.toggle("is-collapsed", paneState[key]);
-    if (key === "right") {
-      rightbar?.classList.toggle("collapsed", paneState[key]);
-      rightToggle?.classList.toggle("active", !paneState[key]);
-    }
     setButton(key, paneState[key]);
     updateCollapsedLayout();
     if (save) persist();
@@ -193,9 +182,6 @@ export function initPanes() {
     });
   }
   $("#btn-chat-float")?.addEventListener("click", () => setFloating(!paneState.floating));
-  rightToggle?.addEventListener("click", () => setCollapsed("right", !paneState.right));
-  closeRight?.addEventListener("click", () => setCollapsed("right", true));
-  document.querySelectorAll(".rt-tab").forEach((tab) => tab.addEventListener("click", () => setCollapsed("right", false)));
   document.querySelectorAll(".pane-reopen").forEach((button) => {
     button.addEventListener("mousedown", (e) => e.stopPropagation());
     button.addEventListener("click", (e) => {
@@ -204,28 +190,6 @@ export function initPanes() {
       const key = button.dataset.pane;
       if (key) setCollapsed(key, false);
     });
-  });
-
-  // gutter-3 adjusts panel 4 and double-clicking it reopens that panel.
-  const g3 = gutters.reader;
-  g3?.addEventListener("dblclick", () => setCollapsed("right", false));
-  g3?.addEventListener("mousedown", (e) => {
-    e.preventDefault();
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    const move = (ev) => {
-      cur.rightW = Math.max(280, Math.min(640, window.innerWidth - ev.clientX));
-      root.style.setProperty("--right-w", cur.rightW + "px");
-    };
-    const up = () => {
-      document.removeEventListener("mousemove", move);
-      document.removeEventListener("mouseup", up);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      persist();
-    };
-    document.addEventListener("mousemove", move);
-    document.addEventListener("mouseup", up);
   });
 
   window.addEventListener("resize", () => { syncProportionalWidths(); applyFloatGeom(); });
@@ -320,6 +284,5 @@ export function initPanes() {
   setCollapsed("sidebar", paneState.sidebar, false);
   setCollapsed("chat", paneState.chat, false);
   setCollapsed("reader", paneState.reader, false);
-  setCollapsed("right", paneState.right, false);
   setFloating(paneState.floating, false);
 }

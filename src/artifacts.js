@@ -82,9 +82,6 @@ export function recordEvent(ev) {
 
 function renderList() {
   if (!listEl) return;
-  const badge = $("#tab-artifacts-count");
-  badge.hidden = !registry.size;
-  badge.textContent = registry.size || "";
   const n = registry.size ? ` ${registry.size}` : "";
   listCountEl.textContent = n;
   railLabelEl.textContent = "产出物" + n;
@@ -181,9 +178,5 @@ export function initArtifacts() {
     listBodyEl);
   collapsed = (() => { try { return localStorage.getItem(COLLAPSE_KEY) === "1"; } catch { return false; } })();
   applyCollapsed();
-  $("#tab-artifacts").addEventListener("click", async () => {
-    const { switchTab } = await import("./reader.js");
-    switchTab("artifacts");
-  });
   renderList();
 }
