@@ -1452,3 +1452,24 @@ select, #model-select, #think-select {
 #dock-drawer-body .dv-wm-s { font-size: 12px; line-height: 1.8; }
 /* dockview 标签字号贴合应用 */
 #dock-drawer-body .dv-tab { font-size: 12.5px !important; }
+
+/* ================= 抽屉打开时：chat 自动让位，保证工作区可用宽度 ================= */
+/* 窄窗口下 chat/sidebar 的持久化宽度会把抽屉挤到 166px，dockview 布局崩坏。
+   dock-open 期间 chat 上限 = max(320px, 100vw - sidebar - 540px)，抽屉稳定 ~480px；
+   关闭抽屉后 chat 立即恢复原宽。 */
+#app.dock-open > #chat-pane {
+  --chat-cap: max(320px, calc(100vw - var(--side-w) - 540px));
+  width: min(var(--chat-w), var(--chat-cap)) !important;
+  flex: 0 0 min(var(--chat-w), var(--chat-cap)) !important;
+  min-width: 320px !important;
+}
+#dock-drawer { min-width: 320px; }
+
+/* 窄面板防挤压：按钮/状态文字不竖排 */
+button.tool-btn, .icon-btn, .pane-toggle { white-space: nowrap; }
+.note-mod-bar, .note-toolbar { flex-wrap: wrap; row-gap: 4px; }
+.note-mod-bar .res-note, .note-toolbar .res-note {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
+}
+.note-mod-bar .note-mod-title { white-space: nowrap; }
+.dv-tab .dv-default-tab { white-space: nowrap; }
