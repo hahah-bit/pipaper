@@ -229,9 +229,12 @@ export function figureDrawerModule() {
     // 生成逻辑：单份 / 全部
     async function generate(kind) {
       if (!paper?.id) return;
+      const def = DOCS.find((d) => d.key === kind);
+      // 生成走临时会话读全文再写稿，约需 2–4 分钟：开局就给出预期，避免误以为卡住
+      setStatus(`已启动临时会话，AI 正在通读《${String(paper.title).slice(0, 24)}》并撰写${def?.full || "文档"}（约需 2–4 分钟，可先切回阅读器稍后再来）…`);
       try {
         await generateFigureDoc({ paperId: paper.id, title: paper.title }, kind, { onStatus: setStatus });
-        toast("已生成，图表分析已更新");
+        toast(`${def?.full || "文档"} 已生成，图表分析已更新`);
       } catch (e) { toast(String(e.message || e), true); }
       await render();
     }

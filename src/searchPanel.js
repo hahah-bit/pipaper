@@ -267,6 +267,11 @@ async function doSearch() {
   saveFilters();
   const sources = [...document.querySelectorAll("#sch-sources input:checked")].map((c) => c.dataset.sid);
   $("#sch-status").textContent = "检索中…";
+  // 多源聚合通常 10–20s：计时提示让等待可感知
+  const t0 = Date.now();
+  const timer = setInterval(() => {
+    $("#sch-status").textContent = `检索中… ${Math.round((Date.now() - t0) / 1000)}s（多源聚合通常 10–20s）`;
+  }, 500);
   $("#sch-results").replaceChildren();
   try {
     const params = new URLSearchParams({
@@ -282,8 +287,9 @@ async function doSearch() {
     if (state.currentPaper?.id) params.set("anchor", state.currentPaper.id);
     const r = await fetch("/api/search?" + params);
     const j = await r.json();
+    clearInterval(timer);
     if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
-    $("#sch-status").textContent = `共 ${j.total} 条` + (j.errors?.length ? `（部分源失败: ${j.errors.join("; ")}）` : "");
+    $("#sch-status").textContent = `共 ${j.total} 条（${((Date.now() - t0) / 1000).toFixed(1)}s）` + (j.errors?.length ? `（部分源失败: ${j.errors.join("; ")}）` : "");
     const box = $("#sch-results");
     box.replaceChildren();
     if (!j.results.length) {
@@ -295,6 +301,7 @@ async function doSearch() {
     }
     for (const r of j.results) box.append(resultCard(r));
   } catch (e) {
+    clearInterval(timer);
     $("#sch-status").textContent = "检索失败: " + e.message;
   }
 }
