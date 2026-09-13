@@ -210,7 +210,8 @@ input, select, textarea { font-family: inherit; }
 #dock-drawer-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #dock-drawer-body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; overflow: hidden; }
 #dock-drawer-body > .stab { flex: 1; min-height: 0; width: 100%; padding: 12px 14px; }
-#app.dock-open > #reader-pane, #app.dock-open > #gutter-2 { display: none !important; }
+#app.dock-open > #reader-pane { display: none !important; }
+/* gutter-2 在抽屉打开时保留：作为 chat|工作区 的可拖拽分隔条 */
 
 .rt-tab { flex: 1; border: 0; background: none; color: var(--fg1); padding: 6px 4px; border-radius: 7px; font-size: 12.5px; cursor: pointer; }
 .rt-tab.active { background: var(--bg3); color: var(--fg0); }
@@ -1260,7 +1261,7 @@ select, #model-select, #think-select {
   font-family: Consolas, "Courier New", monospace; font-size: 13px; line-height: 1.6;
   padding: 12px 14px; white-space: pre; overflow: auto;
 }
-.lm-pdf { flex: 1 1 46%; min-width: 0; border: 0; border-left: 1px solid var(--border); background: #fff; }
+.lm-pdf { flex: 1 1 46%; min-width: 0; border: 0; border-left: 1px solid var(--border); background: var(--bg1); }
 .lm-log {
   flex: none; height: 130px; overflow: auto; margin: 0;
   border-top: 1px solid var(--border); background: var(--pre-bg); color: var(--fg1);
@@ -1464,6 +1465,10 @@ select, #model-select, #think-select {
   min-width: 320px !important;
 }
 #dock-drawer { min-width: 320px; }
+
+/* 默认视图（抽屉关闭）：chat 也要给阅读器留出最小空间，
+   防止 chat 记忆宽度过大时 reader 被挤成窄条 */
+#chat-pane { width: min(var(--chat-w), calc(100vw - var(--side-w) - 530px)); }
 
 /* 窄面板防挤压：按钮/状态文字不竖排 */
 button.tool-btn, .icon-btn, .pane-toggle { white-space: nowrap; }

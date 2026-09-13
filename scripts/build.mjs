@@ -18,6 +18,9 @@ fs.cpSync(katexSrc, katexDst, { recursive: true });
 const workerSrc = path.join(ROOT, "node_modules", "pdfjs-dist", "build", "pdf.worker.min.mjs");
 fs.copyFileSync(workerSrc, path.join(PUB, "vendor", "pdf.worker.min.mjs"));
 
+// dockview-core 8.3 的 esm 入口是无样式构建：从 styled iife 提取内嵌 CSS 到 vendor
+await import(new URL("extract-dockview-css.mjs", import.meta.url).href);
+
 // mermaid: 打成懒加载的全局包（沉浸模式流程图模块首次使用时注入 <script>），不进主 bundle
 await esbuild.build({
   entryPoints: [path.join(ROOT, "scripts", "mermaid-entry.mjs")],

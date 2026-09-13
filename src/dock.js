@@ -121,6 +121,8 @@ function ensureWorkspace() {
     createComponent: makeRenderer,
     createWatermarkComponent: makeWatermark,
     theme: themeAbyss,
+    // 标签放不下时收进下拉（禁用换行：窄面板下换行会退化成一列竖排）
+    overflow: { mode: "dropdown" },
   });
   try {
     const saved = localStorage.getItem(LAYOUT_KEY);

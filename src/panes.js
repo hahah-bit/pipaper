@@ -15,6 +15,8 @@ export function initPanes() {
     if (Number.isFinite(saved.chatW)) cur.chatW = saved.chatW;
     const savedState = JSON.parse(localStorage.getItem("pipaper.paneState") || "{}");
     for (const key of Object.keys(paneState)) if (typeof savedState[key] === "boolean") paneState[key] = savedState[key];
+    // 阅读器是主工作区：折叠状态不跨会话记忆，启动始终展开（侧栏/对话的折叠仍会记住）
+    paneState.reader = false;
   } catch {}
 
   const applyWidths = () => {
@@ -60,7 +62,9 @@ export function initPanes() {
     root.style.setProperty("--side-w", "264px");
   });
   drag("#gutter-2", (x) => {
-    cur.chatW = Math.max(320, Math.min(window.innerWidth - cur.sideW - 420, x - cur.sideW));
+    // dock 抽屉打开时 reader 隐藏，预留量从 460 降到 380（给工作区更大空间）
+    const reserve = document.getElementById("app").classList.contains("dock-open") ? 380 : 460;
+    cur.chatW = Math.max(320, Math.min(window.innerWidth - cur.sideW - reserve, x - cur.sideW));
     root.style.setProperty("--chat-w", "min(" + cur.chatW + "px, 60vw)");
   }, () => {
     cur.chatW = 560;
