@@ -6,7 +6,7 @@
 <title>PiPaper · 论文精读工作台</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 <link rel="stylesheet" href="/vendor/dockview.css" />
-<link rel="stylesheet" href="/style.css?v=56812debf9" />
+<link rel="stylesheet" href="/style.css?v=b7a90f26dc" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -273,6 +273,15 @@
   <div id="settings-modal" class="modal">
     <div class="modal-head"><span>设置</span><button id="btn-settings-close" class="icon-btn">✕</button></div>
     <div class="modal-body">
+      <h4>界面</h4>
+      <label>界面字号（阅读正文 / 对话 / 侧栏同步缩放）
+        <select id="cfg-font-size">
+          <option value="compact">紧凑（适合高分屏小窗口）</option>
+          <option value="cozy">标准（默认）</option>
+          <option value="large">大</option>
+          <option value="xlarge">特大</option>
+        </select>
+      </label>
       <h4>Zotero</h4>
       <label>数据目录（zotero.sqlite 所在文件夹）
         <input id="cfg-zotero-dir" type="text" placeholder="例如 C:\Users\you\Zotero" />
@@ -350,6 +359,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=56812debf9"></script>
+<script src="/app.js?v=b7a90f26dc"></script>
 </body>
 </html>

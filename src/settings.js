@@ -11,15 +11,28 @@ export function initSettings() {
   });
   $("#btn-settings-save").addEventListener("click", saveSettings);
   $("#btn-zotero-sync").addEventListener("click", syncZotero);
+  $("#cfg-font-size").addEventListener("change", () => applyFontSize($("#cfg-font-size").value, true));
   $("#btn-open-setup").addEventListener("click", () => {
     backdrop.hidden = true;
     openSetup();
   });
 }
 
+// 界面字号四档：立即生效并持久化（boot 早期也会应用一次，见 app.js）
+export function applyFontSize(size, persist = false) {
+  const valid = ["compact", "cozy", "large", "xlarge"];
+  const value = valid.includes(size) ? size : "cozy";
+  document.documentElement.dataset.fs = value;
+  if (persist) {
+    try { localStorage.setItem("pipaper.fontSize", value); } catch {}
+    toast("界面字号：" + { compact: "紧凑", cozy: "标准", large: "大", xlarge: "特大" }[value]);
+  }
+}
+
 export async function openSettings() {
   const backdrop = $("#modal-backdrop");
   backdrop.hidden = false;
+  $("#cfg-font-size").value = (() => { try { return localStorage.getItem("pipaper.fontSize") || "cozy"; } catch { return "cozy"; } })();
   try {
     const [cfgRes, srcRes] = await Promise.all([api.getConfig(), api.searchSources()]);
     const { config, zotero } = cfgRes;

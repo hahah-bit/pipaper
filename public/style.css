@@ -28,6 +28,10 @@
   --side-w: 264px;
   --chat-w: min(520px, 40vw);
   --right-w: 480px;
+  /* 界面字号（设置里四档可调：compact/cozy/large/xlarge，见文件尾） */
+  --fs-doc: 16.5px;   /* 阅读正文 / 图表卡片解读 */
+  --fs-chat: 15.5px;  /* 对话正文 / 输入框 */
+  --fs-ui: 14.5px;    /* 界面文本：侧栏、按钮、下拉 */
   font-size: 15px;
 }
 * { box-sizing: border-box; }
@@ -80,11 +84,11 @@ input, select, textarea { font-family: inherit; }
 .icon-btn:hover { background: var(--bg3); color: var(--fg0); }
 #paper-search {
   background: var(--bg2); border: 1px solid var(--border); color: var(--fg0);
-  border-radius: 8px; padding: 7px 10px; outline: none; font-size: 13.5px;
+  border-radius: 8px; padding: 7px 10px; outline: none; font-size: var(--fs-ui, 14.5px);
 }
 #paper-search:focus { border-color: var(--accent); }
-#collections { max-height: 34vh; overflow: auto; font-size: 13.5px; }
-.coll-item { padding: 5px 8px; border-radius: 7px; color: var(--fg1); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#collections { max-height: 34vh; overflow: auto; font-size: var(--fs-ui, 14.5px); }
+.coll-item { padding: 5px 8px; border-radius: 7px; color: var(--fg1); font-size: var(--fs-ui, 14.5px); cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .coll-item:hover { background: var(--bg2); }
 .coll-item.active { background: var(--chip); color: var(--fg0); }
 .coll-children { margin-left: 14px; }
@@ -94,7 +98,7 @@ input, select, textarea { font-family: inherit; }
 }
 .paper-item:hover { background: var(--bg2); }
 .paper-item.active { background: var(--chip); border-color: var(--border); }
-.paper-item .t { font-size: 13.5px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.paper-item .t { font-size: var(--fs-ui, 14.5px); line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .paper-item .m { font-size: 11.5px; color: var(--fg2); margin-top: 3px; display: flex; gap: 6px; align-items: center; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--fg2); flex: none; }
 .dot.none { background: #4a5170; }
@@ -243,7 +247,7 @@ input, select, textarea { font-family: inherit; }
 .session-btn {
   width: 100%; display: flex; align-items: center; gap: 8px;
   background: var(--bg2); border: 1px solid var(--border); color: var(--fg0);
-  border-radius: 8px; padding: 6px 10px; font-size: 13px; text-align: left;
+  border-radius: 8px; padding: 6px 10px; font-size: var(--fs-ui, 14.5px); text-align: left;
 }
 .session-btn #session-title { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .caret { color: var(--fg2); }
@@ -266,7 +270,7 @@ select, #model-select, #think-select {
 .msg { max-width: 100%; display: flex; flex-direction: column; }
 .msg.user { align-items: flex-end; }
 .msg .bubble {
-  max-width: 92%; border-radius: 14px; padding: 9px 13px; font-size: 14px; line-height: 1.65;
+  max-width: 92%; border-radius: 14px; padding: 9px 13px; font-size: var(--fs-chat, 15.5px); line-height: 1.65;
   white-space: pre-wrap; word-break: break-word;
 }
 .msg.user .bubble { background: var(--bubble-user); border: 1px solid var(--bubble-user-border); color: var(--fg0); border-radius: 14px 14px 4px 14px; }
@@ -379,7 +383,7 @@ select, #model-select, #think-select {
 #composer { display: flex; gap: 8px; align-items: flex-end; }
 #composer-input {
   flex: 1; resize: none; background: var(--bg2); border: 1px solid var(--border);
-  color: var(--fg0); border-radius: 12px; padding: 10px 13px; font-size: 14px; line-height: 1.5;
+  color: var(--fg0); border-radius: 12px; padding: 10px 13px; font-size: var(--fs-chat, 15.5px); line-height: 1.5;
   outline: none; max-height: 180px;
 }
 #composer-input:focus { border-color: var(--accent); }
@@ -447,7 +451,7 @@ select, #model-select, #think-select {
 .empty-hint h3 { color: var(--fg1); }
 
 /* parsed document */
-.paper-doc { max-width: 860px; margin: 0 auto; padding: 34px 44px 120px; line-height: 1.75; font-size: 15px; background: var(--bg0); }
+.paper-doc { max-width: 860px; margin: 0 auto; padding: 34px 44px 120px; line-height: 1.8; font-size: var(--fs-doc, 16.5px); background: var(--bg0); }
 .doc-title { font-size: 24px; font-weight: 700; line-height: 1.35; margin: 0 0 6px; }
 .doc-meta { color: var(--fg2); font-size: 13px; margin-bottom: 26px; }
 .blk { position: relative; }
@@ -1324,7 +1328,7 @@ select, #model-select, #think-select {
 .figcard-missing .tool-btn { flex: none; }
 
 /* 图/表卡片内的 markdown：收紧 paper-doc 默认留白 */
-.figmd { max-width: none; padding: 10px 20px 16px; font-size: 14px; line-height: 1.7; }
+.figmd { max-width: none; padding: 10px 20px 16px; font-size: var(--fs-chat, 15.5px); line-height: 1.7; }
 .figmd h2, .figmd h3 { margin: .6em 0 .3em; }
 
 /* 综合解读折叠区（不属于单图/单表的小节） */
@@ -1342,7 +1346,7 @@ select, #model-select, #think-select {
 
 /* 复现大纲整篇文档 */
 .figana-doc { max-width: 920px; margin: 0 auto; }
-.figana-doc .note-prose { font-size: 14px; }
+.figana-doc .note-prose { font-size: var(--fs-chat, 15.5px); }
 
 /* 空态/生成卡片 */
 .figana-empty { text-align: center; color: var(--fg2); padding: 60px 0 30px; }
@@ -1478,3 +1482,9 @@ button.tool-btn, .icon-btn, .pane-toggle { white-space: nowrap; }
 }
 .note-mod-bar .note-mod-title { white-space: nowrap; }
 .dv-tab .dv-default-tab { white-space: nowrap; }
+
+/* ================= 界面字号四档（设置 → 界面字号；localStorage: pipaper.fontSize） ================= */
+html[data-fs="compact"] { --fs-doc: 15px;   --fs-chat: 14px;   --fs-ui: 13.5px; }
+html[data-fs="cozy"]    { --fs-doc: 16.5px; --fs-chat: 15.5px; --fs-ui: 14.5px; }
+html[data-fs="large"]   { --fs-doc: 18px;   --fs-chat: 17px;   --fs-ui: 15.5px; }
+html[data-fs="xlarge"]  { --fs-doc: 19.5px; --fs-chat: 18.5px; --fs-ui: 16.5px; }

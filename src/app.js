@@ -208,6 +208,11 @@ export function renderChips() {
 
 // ---------------- boot ----------------
 async function boot() {
+  // 界面字号在最早时机应用，避免正文先小后大的闪烁
+  try {
+    const { applyFontSize } = await import("./settings.js");
+    applyFontSize(localStorage.getItem("pipaper.fontSize") || "cozy");
+  } catch {}
   window.__bootStage = "start"; window.__initErrors = [];
   try { initPanes(); } catch (e) { window.__initErrors.push("initPanes: " + (e.message||e)); }
   try { initResources(); } catch (e) { window.__initErrors.push("initResources: " + (e.message||e)); }
