@@ -64,7 +64,8 @@ export function registerMdEditorModule() {
       const btnNew = el("button", { class: "tool-btn", title: "为当前论文新建一篇精读笔记", onclick: createNote }, "＋新建");
       const btnSave = el("button", { class: "tool-btn primary", title: "保存（Ctrl+S）", onclick: save }, "保存");
       const modeBtns = {};
-      const toolbar = el("div", { class: "mde-toolbar" }, fileSel, btnNew, mkInsertBar(), el("div", { class: "spacer" }), modeBtn("edit", "编辑"), modeBtn("split", "分屏"), modeBtn("preview", "预览"), btnSave, statusEl);
+      const aiToggle = el("button", { class: "tool-btn", title: "模型辅助改稿（点开指令栏）", onclick: () => { aiBar.hidden = !aiBar.hidden; aiToggle.classList.toggle("active", !aiBar.hidden); if (!aiBar.hidden) aiInput.focus(); } }, "🤖 AI");
+      const toolbar = el("div", { class: "mde-toolbar" }, fileSel, btnNew, mkInsertBar(), el("div", { class: "spacer" }), modeBtn("edit", "编辑"), modeBtn("split", "分屏"), modeBtn("preview", "预览"), aiToggle, btnSave, statusEl);
 
       function modeBtn(mode, label) {
         const b = el("button", { class: "tool-btn", onclick: () => setMode(mode) }, label);
@@ -138,7 +139,7 @@ export function registerMdEditorModule() {
         el("option", { value: "selection" }, "范围: 选中"));
       const aiInput = el("input", { class: "mde-ai-input", type: "text", placeholder: "告诉 AI 怎么改（如：把第 2 节改写成三段式；给公式加编号…），Enter 提交" });
       const aiRun = el("button", { class: "tool-btn primary", onclick: () => runAi() }, "▶ AI 改稿");
-      const aiBar = el("div", { class: "mde-ai" },
+      const aiBar = el("div", { class: "mde-ai", hidden: true },
         el("span", { class: "mde-ai-label" }, "🤖 模型辅助"),
         scopeSel, aiInput, aiRun,
         ...QUICK_ACTIONS.map((q) => el("button", { class: "tool-btn mde-quick", onclick: () => runAi(q) }, q.label)));

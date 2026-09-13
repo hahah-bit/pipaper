@@ -105,30 +105,32 @@ export function initPanes() {
       }
     }
     if (!anyCollapsed) return;
-    const visible = keys.filter((key) => !paneState[key] && !(key === "chat" && paneState.floating));
-    const sideWidth = Math.max(180, Math.min(520, cur.sideW));
-    const proportional = visible.filter((key) => key !== "sidebar");
-    const width = proportional.length
-      ? (paneState.sidebar ? root.clientWidth : Math.max(0, root.clientWidth - sideWidth)) / proportional.length
-      : 0;
+    // 折叠面板保留一条窄条（上面有展开按钮），其余空间由可见面板均分
+    const COLLAPSED_W = 44;
+    const floatingChat = paneState.floating;
+    const sideVisible = !paneState.sidebar;
+    const proportional = keys.filter((key) => !paneState[key] && key !== "sidebar" && !(key === "chat" && floatingChat));
+    const occupied = (sideVisible ? cur.sideW : COLLAPSED_W)
+      + keys.filter((key) => paneState[key] && !(key === "chat" && floatingChat)).length * COLLAPSED_W;
+    const width = proportional.length ? Math.max(240, (root.clientWidth - occupied) / proportional.length) : 0;
     for (const key of keys) {
       const element = paneElements[key];
       if (!element) continue;
-      if (paneState[key]) {
-        element.style.setProperty("flex", "0 0 0px", "important");
-        element.style.setProperty("width", "0px", "important");
-        element.style.setProperty("min-width", "0px", "important");
-      } else if (key === "chat" && paneState.floating) {
+      if (key === "chat" && floatingChat) {
         element.style.removeProperty("flex");
         element.style.removeProperty("width");
         element.style.removeProperty("min-width");
-      } else if (key === "sidebar" && !paneState.sidebar) {
-        element.style.setProperty("flex", `0 0 ${sideWidth}px`, "important");
-        element.style.setProperty("width", `${sideWidth}px`, "important");
-        element.style.setProperty("min-width", `${sideWidth}px`, "important");
-      } else if (key !== "chat" || !paneState.floating) {
-        element.style.setProperty("flex", `0 0 ${width}px`, "important");
-        element.style.setProperty("width", `${width}px`, "important");
+      } else if (paneState[key]) {
+        element.style.setProperty("flex", `0 0 ${COLLAPSED_W}px`, "important");
+        element.style.setProperty("width", `${COLLAPSED_W}px`, "important");
+        element.style.setProperty("min-width", `${COLLAPSED_W}px`, "important");
+      } else if (key === "sidebar") {
+        element.style.setProperty("flex", `0 0 ${cur.sideW}px`, "important");
+        element.style.setProperty("width", `${cur.sideW}px`, "important");
+        element.style.setProperty("min-width", `${cur.sideW}px`, "important");
+      } else {
+        element.style.setProperty("flex", `1 1 ${width}px`, "important");
+        element.style.setProperty("width", "0px", "important");
         element.style.setProperty("min-width", "0px", "important");
       }
     }

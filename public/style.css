@@ -769,27 +769,43 @@ select, #model-select, #think-select {
 /* rightbar 已移除：检索/视频由 dock 抽屉按需挂载（#dock-drawer） */
 
 /* 面板折叠与对话悬浮 */
-#sidebar.is-collapsed {
-  width: 48px; min-width: 48px; padding: 10px 6px; gap: 8px;
+/* 折叠 = 44px 窄条：条上保留展开按钮（顶部）+ 模块图标（居中），随时可点回 */
+#sidebar.is-collapsed,
+#chat-pane.is-collapsed,
+#reader-pane.is-collapsed {
+  width: 44px; min-width: 44px;
+  /* 窄条整体抬到 gutter 零宽热区之上，条上按钮不会被展开热区挡住 */
+  position: relative; z-index: 35;
 }
+#sidebar.is-collapsed { padding: 10px 4px; gap: 8px; }
 #sidebar.is-collapsed .side-head { justify-content: center; }
 #sidebar.is-collapsed .side-head > :not(#btn-sidebar-toggle),
 #sidebar.is-collapsed .project-bar,
 #sidebar.is-collapsed #stab-lib,
-#sidebar.is-collapsed #side-foot { display: none; }
+#sidebar.is-collapsed #side-foot { display: none !important; }
 #sidebar.is-collapsed #btn-sidebar-toggle { display: block; }
 #sidebar.is-collapsed + .gutter { width: 3px; min-width: 3px; }
+#sidebar.is-collapsed::after,
+#chat-pane.is-collapsed::after,
+#reader-pane.is-collapsed::after {
+  content: "📖"; flex: 1; display: grid; place-items: center;
+  font-size: 19px; opacity: .55; user-select: none; pointer-events: none;
+}
+#sidebar.is-collapsed::after { content: "📚"; }
+#chat-pane.is-collapsed::after { content: "💬"; }
+#reader-pane.is-collapsed::after { content: "📖"; }
 
 #chat-pane.is-collapsed {
-  width: 48px; min-width: 48px; background: var(--bg1); border-right: 1px solid var(--border);
+  background: var(--bg1); border-right: 1px solid var(--border);
 }
 #chat-pane.is-collapsed #chat-head { padding: 10px 6px; }
 #chat-pane.is-collapsed .session-row { flex-direction: column; gap: 7px; }
 #chat-pane.is-collapsed .session-row > :not(#btn-chat-toggle) { display: none; }
 #chat-pane.is-collapsed #btn-chat-toggle { display: block; transform: rotate(180deg); }
+#chat-pane.is-collapsed #messages, #chat-pane.is-collapsed #composer-wrap { display: none; }
 #chat-pane.is-collapsed + .gutter { width: 3px; min-width: 3px; }
 
-#reader-pane.is-collapsed { flex: 0 0 48px; min-width: 48px; }
+#reader-pane.is-collapsed #reader-body { display: none; }
 #reader-pane.is-collapsed #reader-head { padding: 10px 6px; flex-direction: column; gap: 7px; }
 #reader-pane.is-collapsed #reader-head > :not(#btn-reader-toggle) { display: none; }
 #reader-pane.is-collapsed #btn-reader-toggle { display: block; transform: rotate(180deg); }
@@ -837,13 +853,7 @@ select, #model-select, #think-select {
 #app.has-collapsed > #sidebar.is-collapsed,
 #app.has-collapsed > #chat-pane.is-collapsed,
 #app.has-collapsed > #reader-pane.is-collapsed {
-  flex: 0 0 0 !important;
-  width: 0 !important;
-  min-width: 0 !important;
-  height: auto !important;
-  padding: 0 !important;
-  border: 0 !important;
-  overflow: visible !important;
+  /* 折叠 = 44px 窄条（展开按钮留在条上，随时点回）；宽度由 panes.js 内联施加 */
 }
 #app.has-collapsed > .gutter {
   width: 0 !important;
@@ -851,11 +861,6 @@ select, #model-select, #think-select {
   flex: 0 0 0 !important;
   background: transparent !important;
   opacity: 1 !important;
-}
-#app.has-collapsed #sidebar.is-collapsed > *,
-#app.has-collapsed #chat-pane.is-collapsed > *,
-#app.has-collapsed #reader-pane.is-collapsed > * {
-  display: none !important;
 }
 
 /* 折叠面板之间的零宽热区：悬停显示展开按钮，点击恢复面板 */
@@ -1400,3 +1405,50 @@ select, #model-select, #think-select {
 .mde-diff-row.del { background: rgba(224, 108, 117, .10); color: #f0b6bb; text-decoration: line-through; text-decoration-color: rgba(224,108,117,.5); }
 .mde-diff-row.del .mde-diff-glyph { color: var(--err); }
 .mde-diff-row.same { color: var(--fg2); }
+
+/* ================= dockview 工作区（dock 抽屉）主题适配 ================= */
+#dock-drawer-body.dockview-theme-abyss {
+  --dv-group-view-background-color: var(--bg0) !important;
+  --dv-tabs-and-actions-container-background-color: var(--bg1) !important;
+  --dv-activegroup-visiblepanel-tab-background-color: var(--bg3) !important;
+  --dv-activegroup-visiblepanel-tab-color: var(--fg0) !important;
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--bg2) !important;
+  --dv-inactivegroup-visiblepanel-tab-color: var(--fg1) !important;
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg1) !important;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg1) !important;
+  --dv-hiddenpanel-tab-color: var(--fg2) !important;
+  --dv-separator-border: var(--border) !important;
+  --dv-tab-divider-color: var(--border) !important;
+  --dv-active-sash-color: var(--accent) !important;
+  --dv-drag-over-border: var(--accent) !important;
+  --dv-icon-hover-background-color: var(--bg3) !important;
+}
+#dock-drawer-body .dockview-theme-abyss,
+#dock-drawer-body.dockview-theme-abyss {
+  height: 100%; width: 100%;
+}
+/* 面板内容骨架：状态条 + 模块挂载点 */
+#dock-drawer-body .dvp {
+  height: 100%; display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+  background: var(--bg0);
+}
+#dock-drawer-body .dvp-status {
+  flex: none; padding: 5px 14px; border-bottom: 1px dashed var(--border);
+  color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#dock-drawer-body .dvp-body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; overflow: hidden; }
+#dock-drawer-body .dvp-body > .stab { flex: 1; min-height: 0; width: 100%; padding: 12px 14px; }
+#dock-drawer-body .dvp-body > .note-mod,
+#dock-drawer-body .dvp-body > .figana,
+#dock-drawer-body .dvp-body > .mde,
+#dock-drawer-body .dvp-body > .latex-mod { flex: 1; min-height: 0; }
+/* 空工作区水印 */
+#dock-drawer-body .dv-wm {
+  height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; color: var(--fg2); text-align: center;
+}
+#dock-drawer-body .dv-wm-icon { font-size: 42px; opacity: .5; }
+#dock-drawer-body .dv-wm-t { font-size: 15px; color: var(--fg1); font-weight: 600; }
+#dock-drawer-body .dv-wm-s { font-size: 12px; line-height: 1.8; }
+/* dockview 标签字号贴合应用 */
+#dock-drawer-body .dv-tab { font-size: 12.5px !important; }

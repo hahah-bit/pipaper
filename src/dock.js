@@ -4,9 +4,12 @@ import { figureDrawerModule } from "./figurePanel.js";
 import { openSetup } from "./setupPanel.js";
 import { openSettings } from "./settings.js";
 import { openNotesManage } from "./notesPanel.js";
+import { DockviewComponent, themeAbyss } from "dockview-core";
 
-// Dock：macOS dock 式功能导航。图标按大分类分组、悬浮放大并显示名称；
-// 点击 → 右侧抽屉（占满阅读器同区域），再点一次或 ✕ 关闭 → 回到默认的阅读器。
+// Dock：macOS dock 式功能导航。图标按大分类分组、悬浮放大并显示名称。
+// 点击 → 右侧抽屉（占满阅读器同区域）。抽屉是 dockview 工作区：
+// 每个功能 = 一个可拖动面板（拖标签分栏 / 重排 / 组合），布局持久化；
+// 再点击同一图标 = 关闭该面板，全部面板关闭时抽屉自动收起 → 回到默认的阅读器。
 // 新功能接入：注册一个模块（modules.js）并在 DOCK_GROUPS 里加一项即可。
 
 const DOCK_GROUPS = [
@@ -36,65 +39,156 @@ const DOCK_GROUPS = [
   ] },
 ];
 
-let activeKey = null;   // 当前抽屉里的 dock item key；null = 默认阅读器
-let mountedDef = null;
+const LAYOUT_KEY = "pipaper.workspace";
+
+let dv = null;                 // DockviewComponent 实例（抽屉打开期间存活）
+let panelSeq = 0;
+const mounted = new Map();     // moduleId → { def }；面板存在 = 模块挂载中
 
 function appRoot() { return document.getElementById("app"); }
-
-function unmountCurrent() {
-  try { mountedDef?.unmount?.(); } catch (e) { console.error(e); }
-  mountedDef = null;
-}
-
-function syncDockActive() {
-  for (const btn of document.querySelectorAll(".dock-btn")) {
-    const key = btn.dataset.key;
-    const item = findItem(key);
-    if (item?.special === "close") btn.classList.toggle("active", activeKey == null);
-    else btn.classList.toggle("active", activeKey === key);
-  }
-}
 
 function findItem(key) {
   for (const g of DOCK_GROUPS) for (const it of g.items) if (it.key === key) return it;
   return null;
 }
 
+function syncDockActive() {
+  const open = new Set((dv?.panels || []).map((p) => p.params?.moduleId).filter(Boolean));
+  for (const btn of document.querySelectorAll(".dock-btn")) {
+    const item = findItem(btn.dataset.key);
+    if (item?.special === "close") btn.classList.toggle("active", open.size === 0);
+    else btn.classList.toggle("active", open.has(btn.dataset.key));
+  }
+}
+
+// ---------------- dockview 工作区 ----------------
+function makeRenderer() {
+  let moduleId = null;
+  let def = null;
+  let dead = false;
+  const statusEl = el("div", { class: "dvp-status res-note", hidden: true });
+  const bodyEl = el("div", { class: "dvp-body" });
+  const root = el("div", { class: "dvp" }, statusEl, bodyEl);
+  return {
+    element: root,
+    init(parameters) {
+      moduleId = parameters.params?.moduleId || null;
+      def = moduleId ? getModule(moduleId) : null;
+      const item = moduleId ? findItem(moduleId) : null;
+      if (!def) {
+        bodyEl.append(el("div", { class: "res-note", style: { padding: "18px" } }, "模块未注册：" + (moduleId || "(未知)")));
+        return;
+      }
+      mounted.set(moduleId, { def, item });
+      try {
+        def.mount(bodyEl, {
+          setStatus: (t) => {
+            statusEl.textContent = t || "";
+            statusEl.hidden = !t;
+          },
+        });
+      } catch (e) {
+        console.error(e);
+        bodyEl.append(el("div", { class: "res-note", style: { padding: "18px" } }, `打开「${item?.name || moduleId}」失败: ${e.message || e}`));
+      }
+      syncDockActive();
+    },
+    dispose() {
+      if (dead) return;
+      dead = true;
+      if (def) { try { def.unmount?.(); } catch (e) { console.error(e); } }
+      if (moduleId) mounted.delete(moduleId);
+      syncDockActive();
+    },
+  };
+}
+
+function makeWatermark() {
+  return {
+    element: el("div", { class: "dv-wm" },
+      el("div", { class: "dv-wm-icon" }, "🧩"),
+      el("div", { class: "dv-wm-t" }, "工作区为空"),
+      el("div", { class: "dv-wm-s" }, "从右侧 Dock 点击功能图标打开面板", el("br"), "拖动面板标签可分栏 · 重排 · 组合，布局自动保存")),
+    init() {},
+  };
+}
+
+function ensureWorkspace() {
+  if (dv) return dv;
+  const body = $("#dock-drawer-body");
+  body.replaceChildren();
+  dv = new DockviewComponent(body, {
+    createComponent: makeRenderer,
+    createWatermarkComponent: makeWatermark,
+    theme: themeAbyss,
+  });
+  try {
+    const saved = localStorage.getItem(LAYOUT_KEY);
+    if (saved) {
+      const layout = JSON.parse(saved);
+      if (layout?.panels && Object.keys(layout.panels).length) dv.fromJSON(layout);
+    }
+  } catch (e) { console.warn("工作区布局恢复失败", e); }
+  dv.onDidLayoutChange(() => {
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(dv.toJSON())); } catch {}
+  });
+  dv.onDidRemovePanel(() => {
+    syncDockActive();
+    if (dv && !dv.panels.length) closeDrawer();
+  });
+  window.dispatchEvent(new Event("resize"));
+  return dv;
+}
+
+// ---------------- 打开 / 关闭 ----------------
 function openItem(item) {
   if (item.special === "close") { closeDrawer(); return; }
   if (item.dialog) { item.dialog(); return; }
   const m = getModule(item.key);
   if (!m) return toast(`「${item.name}」尚未就绪（模块未注册）`, true);
-  if (activeKey === item.key) { closeDrawer(); return; } // 再点一次 = 收起
-  unmountCurrent();
-  const body = $("#dock-drawer-body");
-  $("#dock-drawer-icon").textContent = item.icon;
-  $("#dock-drawer-title").textContent = item.name;
-  $("#dock-drawer-status").textContent = "";
-  try {
-    m.mount(body, { setStatus: (t) => { $("#dock-drawer-status").textContent = t || ""; } });
-  } catch (e) {
-    console.error(e);
-    toast(`打开「${item.name}」失败: ${e.message || e}`, true);
+  // 以 dv.panels 为权威状态：再点击已打开的图标 = 关闭该面板（最后一个面板关闭时抽屉一起收起）
+  const opened = dv?.panels.filter((p) => p.params?.moduleId === item.key) || [];
+  if (opened.length) {
+    opened.forEach((p) => p.api.close());
     return;
   }
-  // 检索/视频 stab 之前可能带着 hidden 属性（旧版 tab 逻辑遗留），搬入抽屉后强制可见
-  body.querySelectorAll(".stab[hidden]").forEach((n) => (n.hidden = false));
-  mountedDef = m;
-  activeKey = item.key;
   appRoot().classList.add("dock-open");
   $("#dock-drawer").hidden = false;
+  ensureWorkspace();
+  // 布局恢复可能已包含该模块的面板：有则直接激活（避免重复添加）
+  const existing = dv.panels.find((p) => p.params?.moduleId === item.key);
+  if (existing) {
+    existing.api.setActive();
+    $("#dock-drawer-icon").textContent = item.icon;
+    $("#dock-drawer-title").textContent = item.name;
+    syncDockActive();
+    return;
+  }
+  $("#dock-drawer-icon").textContent = item.icon;
+  $("#dock-drawer-title").textContent = item.name;
+  const panel = dv.addPanel({
+    id: `${item.key}#${++panelSeq}`,
+    component: "module",
+    title: `${item.icon} ${item.name}`,
+    params: { moduleId: item.key },
+  });
+  panel.api.setActive();
   syncDockActive();
   window.dispatchEvent(new Event("resize"));
 }
 
 export function closeDrawer() {
-  if (activeKey == null && $("#dock-drawer").hidden) return;
-  unmountCurrent();
+  const inst = dv;
+  dv = null;
+  if (inst) {
+    // dispose 之后 onDidLayoutChange 不再发出：先如实保存最终布局（面板全关 = 空布局）
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(inst.toJSON())); } catch {}
+    try { inst.dispose(); } catch (e) { console.error(e); } // dispose 逐面板触发 unmount
+  }
+  mounted.clear();
   $("#dock-drawer-body").replaceChildren();
   appRoot().classList.remove("dock-open");
   $("#dock-drawer").hidden = true;
-  activeKey = null;
   syncDockActive();
   window.dispatchEvent(new Event("resize"));
 }
@@ -127,7 +221,7 @@ export function initDock() {
   renderDock();
   $("#btn-drawer-close")?.addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && activeKey != null && !$("#dock-drawer").hidden && !document.querySelector("dialog[open]")) {
+    if (e.key === "Escape" && !$("#dock-drawer").hidden && !document.querySelector("dialog[open]")) {
       closeDrawer();
     }
   });
