@@ -38,7 +38,7 @@ export function createSessionEventChannel({ state, fetch: request = globalThis.f
       try {
         for (;;) {
           const chunk = await reader.read();
-          if (chunk.done) throw new Error("会话连接已断开，当前操作已停止。重新连接可恢复已保存的历史。");
+          if (chunk.done) throw new Error(current.takenOver || "会话连接已断开，当前操作已停止。重新连接可恢复已保存的历史。");
           buffer += decoder.decode(chunk.value, { stream: true });
           const parts = buffer.split(/\r?\n\r?\n/); buffer = parts.pop();
           for (const part of parts) {
@@ -47,10 +47,14 @@ export function createSessionEventChannel({ state, fetch: request = globalThis.f
             const event = JSON.parse(line.slice(6));
             if (event.seq <= current.sequence) continue;
             // Only an explicit replacement can transfer this channel to a new ID.
-            if (event.t !== "session_replaced" && event.sessionId !== current.id) continue;
+            if (event.t !== "session_replaced" && event.t !== "taken_over" && event.sessionId !== current.id) continue;
             if (event.t === "session_replaced" && event.oldSessionId !== current.id) continue;
             current.sequence = event.seq;
             if (event.t === "session_replaced") current.id = event.newSessionId;
+            if (event.t === "taken_over") {
+              // 本页面被另一个页面的连接接管：主动断开，消息里说明可点"重新连接"抢回
+              current.takenOver = "会话已在另一个页面打开——本页面已转为后台，点击「重新连接」可切回本页面";
+            }
             if (event.t === "connected") {
               // Startup extensions may wait for user input indefinitely. Limit
               // only the initial connection, never a connected startup dialog.

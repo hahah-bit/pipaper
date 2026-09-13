@@ -79,9 +79,16 @@ export class SessionController {
     if (!this.connection || this.connection.id !== controlId) throw fail("请先连接此会话；其他页面不能操作当前会话");
   }
   connect(send, close = () => {}) {
-    if (this.connection) throw fail("此会话已在另一个页面中打开，请先关闭该页面的会话");
     if (this.busy) throw fail("会话正在停止，请稍后重新连接");
-    const id = randomUUID(); this.connection = { id, send, close };
+    const prev = this.connection;
+    const id = randomUUID();
+    this.connection = { id, send, close };
+    if (prev) {
+      // 多页面接管：最后连接的页面成为 owner。旧页面收到 taken_over 后断开，
+      // 可随时点"重新连接"抢回；SDK 订阅独立于连接，进行中的任务不受影响。
+      try { prev.send({ t: "taken_over", sessionId: this.id, seq: ++this.sequence }); } catch { /* 旧连接可能已死 */ }
+      try { prev.close(); } catch { /* res close 事件里的 disconnect(旧id) 因 id 不匹配而无操作 */ }
+    }
     this.ui.connect(e => this.emit(e));
     this.emit({ t: "connected", controlId: id });
     this.emitSnapshot();

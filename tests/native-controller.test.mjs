@@ -163,14 +163,22 @@ test("command newSession replaces runtime, honors cancellation and keeps event o
     pi.registerCommand("new-test", { handler: (_args, ctx) => ctx.newSession() });
   });
   const c = await f.create(), events = [];
-  await c.connect(e => events.push(e)).ready;
+  let firstClosed = false;
+  await c.connect(e => events.push(e), () => { firstClosed = true; }).ready;
   const old = c.id;
   await c.submit("/new-test").completion; assert.equal(c.id, old);
   cancel = false; await c.submit("/new-test").completion; assert.notEqual(c.id, old);
   assert.ok(events.some(e => e.t === "session_replaced" && e.oldSessionId === old));
   assert.ok(events.every((e, i) => !i || e.seq > events[i - 1].seq));
-  assert.throws(() => c.connect(() => {}), /另一个页面/);
+  // 多页面接管：新连接成为 owner；旧连接收到 taken_over 并被关闭；旧 controlId 立即失效
+  const oldCount = events.length;
+  const takeover = c.connect(() => {});
+  await takeover.ready;
+  assert.ok(events.slice(oldCount).some(e => e.t === "taken_over"), "旧连接应收到 taken_over");
+  assert.ok(firstClosed, "旧连接的 close 回调应被调用");
   assert.throws(() => c.assertOwner("wrong"));
+  takeover.close();
+  await c.connect(e => events.push(e)).ready;
 });
 
 test("resource reload is transactional, and can retry after failure", async t => {

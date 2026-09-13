@@ -81,7 +81,6 @@ test("production HTTP harness: owner channel, model/tool dialogs, resource packa
   assert.equal((await request(`/sessions/${id}/binding`, { paperId: "fixture-paper", projectId: project.id })).status, 200);
   assert.equal((await request(`/sessions/${id}/state`)).body.meta.paperId, "fixture-paper");
   assert.equal((await request(`/sessions/${id}/name`, { name: "bad" }, "POST", "wrong")).status, 409);
-  const duplicate = await fetch(`${fixture.url}/api/sessions/${id}/events`); assert.equal(duplicate.status, 409); await duplicate.text();
   const complete = async (operation) => {
     assert.equal(operation.status < 400, true, JSON.stringify(operation.body));
     const end = await wait(e => e.t === "operation_end" && e.id === operation.body.operationId);
@@ -160,6 +159,29 @@ test("production HTTP harness: owner channel, model/tool dialogs, resource packa
     if (fs.existsSync(persisted) && JSON.parse(fs.readFileSync(persisted, "utf8"))[id]?.title === "新路径") break;
     await new Promise(r => setTimeout(r, 25));
   }
+  // 多页面接管（放最后：接管后第一个 SSE 流会被关闭，事件收集随之失效）
+  const second = await fetch(`${fixture.url}/api/sessions/${id}/events`);
+  assert.equal(second.status, 200);
+  await wait(e => e.t === "taken_over"); // 旧连接流里收到接管通知（服务端 connect 同步发出）
+  const secondEvents = [];
+  const secondReader = second.body.getReader();
+  const secondDecoder = new TextDecoder(); let secondBuf = "";
+  const secondReading = (async () => {
+    for (;;) {
+      const { done, value } = await secondReader.read(); if (done) break;
+      secondBuf += secondDecoder.decode(value, { stream: true });
+      const pieces = secondBuf.split("\n\n"); secondBuf = pieces.pop();
+      for (const piece of pieces) {
+        if (!piece.startsWith("data: ")) continue;
+        secondEvents.push(JSON.parse(piece.slice(6)));
+      }
+    }
+  })().catch(() => {});
+  await new Promise(r => setTimeout(r, 400));
+  assert.ok(secondEvents.some(e => e.t === "connected"), "新连接成为 owner");
+  assert.ok(secondEvents.some(e => e.t === "snapshot"), "新连接收到会话快照");
+  secondReader.cancel().catch(() => {});
+  await secondReading.catch(() => {});
   abort.abort(); await reading;
   await fixture.restart();
   const reopened = (await request(`/sessions/${id}`)).body;
@@ -168,4 +190,5 @@ test("production HTTP harness: owner channel, model/tool dialogs, resource packa
   assert.deepEqual((await request(`/pi/resources?sessionId=${id}`)).body.tools.filter(x => x.enabled).map(x => x.name).sort(), ["find", "grep", "ls", "read"]);
   const findLabel = nodes => nodes.some(n => n.label === "结论节点" || findLabel(n.children));
   assert.ok(findLabel((await request(`/sessions/${id}/tree`)).body.nodes));
+
 });
