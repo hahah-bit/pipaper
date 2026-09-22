@@ -253,6 +253,7 @@ export class SessionController {
   }
   tree() { return sessionTree(this.session); }
   async abort(kind) {
+    this.externalAbort?.abort();
     if (kind === "retry") this.session.abortRetry();
     else if (kind === "compaction") this.session.abortCompaction();
     else if (kind === "branchSummary") this.session.abortBranchSummary();

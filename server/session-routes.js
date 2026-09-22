@@ -11,8 +11,8 @@ export function registerSessionRoutes(api) {
     }
   };
   api.get("/models", route(async (req, res) => res.json(await h.modelList(req.query.sessionId))));
-  api.get("/sessions", route(async (_req, res) => res.json({ sessions: await h.listSessions() })));
-  api.post("/sessions", route(async (req, res) => res.json(await h.createChat(req.body))));
+  api.get("/sessions", route(async (_req, res) => res.json({ sessions: (await h.listSessions()).filter(s => !s.studyId) })));
+  api.post("/sessions", route(async (req, res) => res.json(await h.createChat({ paperId: req.body.paperId, projectId: req.body.projectId, title: req.body.title }))));
   api.get("/sessions/:id", route(async (req, res) => res.json(await h.sessionHistory(req.params.id))));
   api.get("/sessions/:id/state", route(async (req, res) => res.json(await h.sessionState(req.params.id))));
   api.get("/sessions/:id/tree", route(async (req, res) => res.json((await h.controllerFor(req.params.id)).tree())));
@@ -36,7 +36,10 @@ export function registerSessionRoutes(api) {
   api.post("/sessions/:id/model", route(async (req, res) => res.json(await h.setChatModel(req.params.id, req.body, owner(req)))));
   api.post("/sessions/:id/compact", route(async (req, res) => res.status(202).json(await h.compactSession(req.params.id, req.body.instructions, owner(req)))));
   api.post("/sessions/:id/fork", route(async (req, res) => res.status(202).json(await h.forkChat(req.params.id, req.body, owner(req)))));
-  api.delete("/sessions/:id", route(async (req, res) => { await h.deleteChat(req.params.id, owner(req)); res.json({ ok: true }); }));
+  api.delete("/sessions/:id", route(async (req, res) => {
+    if ((await h.controllerFor(req.params.id)).meta.studyId) throw Object.assign(new Error("请从研读任务菜单删除完整任务"), { status: 409 });
+    await h.deleteChat(req.params.id, owner(req)); res.json({ ok: true });
+  }));
   for (const action of ["binding", "name", "reload", "editor", "tree/navigate", "tree/label", "queue/take", "queue/mode", "tools"]) {
     api.post(`/sessions/:id/${action}`, route(async (req, res) => res.json(await h.operate(req.params.id, action, req.body, owner(req)))));
   }

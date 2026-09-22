@@ -4,6 +4,8 @@ import { figureDrawerModule } from "./figurePanel.js";
 import { openSetup } from "./setupPanel.js";
 import { openSettings } from "./settings.js";
 import { openNotesManage } from "./notesPanel.js";
+import { openResources } from "./resources.js";
+import { archifyModule } from "./archifyPanel.js";
 import { DockviewComponent, themeAbyss } from "dockview-core";
 
 // Dock：macOS dock 式功能导航。图标按大分类分组、悬浮放大并显示名称。
@@ -21,6 +23,7 @@ const DOCK_GROUPS = [
     { key: "note", icon: "📝", name: "粗读解析" },
     { key: "mindmap", icon: "🧠", name: "思维导图" },
     { key: "flow", icon: "🗺", name: "流程图" },
+    { key: "archify", icon: "◈", name: "Archify 图解", hint: "架构 · 流程 · 时序 · 数据流 · 状态图" },
   ] },
   { label: "创作 · 产出", items: [
     { key: "mdedit", icon: "✍️", name: "LaTeX·MD 编辑", hint: "手工 + AI 辅助编辑 Markdown 文档" },
@@ -33,7 +36,7 @@ const DOCK_GROUPS = [
   ] },
   { label: "系统", items: [
     { key: "notesmgr", icon: "🗂", name: "笔记管理", dialog: openNotesManage },
-    { key: "resources", icon: "🧩", name: "资源管理", dialog: () => $("#btn-resources")?.click() },
+    { key: "resources", icon: "🧩", name: "资源管理", dialog: openResources },
     { key: "setup", icon: "🩺", name: "环境检查", dialog: openSetup },
     { key: "settings", icon: "⚙", name: "设置", dialog: openSettings },
   ] },
@@ -219,6 +222,7 @@ export function initDock() {
   registerModule(reparentModule({ id: "video", name: "视频解析", icon: "🎬", selector: "#stab-video" }));
   registerModule(reparentModule({ id: "artifact", name: "产出物", icon: "📦", selector: "#artifacts-view", keepClasses: ["list-collapsed"] }));
   registerModule(figureDrawerModule());
+  registerModule(archifyModule());
 
   renderDock();
   $("#btn-drawer-close")?.addEventListener("click", closeDrawer);

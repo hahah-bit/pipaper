@@ -6,12 +6,11 @@ export function initPanes() {
   const root = document.getElementById("app");
   if (!root) return;
 
-  const cur = { sideW: 264, chatW: 560 };
+  const cur = { sideW: 280, chatW: 560 };
   const paneState = { sidebar: false, chat: false, reader: false, floating: false };
 
   try {
     const saved = JSON.parse(localStorage.getItem("pipaper.panes") || "{}");
-    if (Number.isFinite(saved.sideW)) cur.sideW = saved.sideW;
     if (Number.isFinite(saved.chatW)) cur.chatW = saved.chatW;
     const savedState = JSON.parse(localStorage.getItem("pipaper.paneState") || "{}");
     for (const key of Object.keys(paneState)) if (typeof savedState[key] === "boolean") paneState[key] = savedState[key];
@@ -20,7 +19,7 @@ export function initPanes() {
   } catch {}
 
   const applyWidths = () => {
-    root.style.setProperty("--side-w", Math.max(180, Math.min(520, cur.sideW)) + "px");
+    root.style.setProperty("--side-w", cur.sideW + "px");
     root.style.setProperty("--chat-w", "min(" + Math.max(320, cur.chatW) + "px, 60vw)");
   };
   applyWidths();
@@ -54,13 +53,6 @@ export function initPanes() {
     g.addEventListener("dblclick", () => { reset?.(); persist(); });
   }
 
-  drag("#gutter-1", (x) => {
-    cur.sideW = Math.max(180, Math.min(520, x));
-    root.style.setProperty("--side-w", cur.sideW + "px");
-  }, () => {
-    cur.sideW = 264;
-    root.style.setProperty("--side-w", "264px");
-  });
   drag("#gutter-2", (x) => {
     // dock 抽屉打开时 reader 隐藏，预留量从 460 降到 380（给工作区更大空间）
     const reserve = document.getElementById("app").classList.contains("dock-open") ? 380 : 460;

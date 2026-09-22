@@ -15,10 +15,12 @@ import { initTheme } from "./theme.js";
 import { initClipboard } from "./clipPanel.js";
 import { initSetupPanel } from "./setupPanel.js";
 import { initArtifacts } from "./artifacts.js";
-import { initImmersive } from "./immersive.js";
+import { registerBuiltinModules } from "./modules.js";
+import { registerNoteModules, initNotesManage } from "./notesPanel.js";
 import { registerLatexModule } from "./latexEditor.js";
 import { registerMdEditorModule } from "./mdEditor.js";
 import { initDock } from "./dock.js";
+import { openStudyCreate } from "./study/create.js";
 
 export const state = {
   papers: [],
@@ -208,6 +210,7 @@ export function renderChips() {
 
 // ---------------- boot ----------------
 async function boot() {
+  $("#btn-study")?.addEventListener("click", () => openStudyCreate({ paperId: state.currentPaper?.id, projectId: state.projectId }).catch(e => toast(e.message, true)));
   // 界面字号在最早时机应用，避免正文先小后大的闪烁
   try {
     const { applyFontSize } = await import("./settings.js");
@@ -220,10 +223,10 @@ async function boot() {
   try { initChat(); } catch (e) { window.__initErrors.push("initChat: " + (e.message||e)); }
   try { initReader(); } catch (e) { window.__initErrors.push("initReader: " + (e.message||e)); }
   try { initArtifacts(); } catch (e) { window.__initErrors.push("initArtifacts: " + (e.message||e)); }
-  window.__bootStage = "immersive";
+  window.__bootStage = "modules";
   try { registerLatexModule(); } catch (e) { window.__initErrors.push("registerLatexModule: " + (e.message||e)); }
   try { registerMdEditorModule(); } catch (e) { window.__initErrors.push("registerMdEditorModule: " + (e.message||e)); }
-  try { initImmersive(); } catch (e) { window.__initErrors.push("initImmersive: " + (e.message||e)); }
+  try { registerBuiltinModules(); registerNoteModules(); initNotesManage(); } catch (e) { window.__initErrors.push("initModules: " + (e.message||e)); }
   window.__bootStage = "dock"; try { initDock(); } catch (e) { window.__initErrors.push("initDock: " + (e.message||e)); }
   try { initSettings(); } catch (e) { window.__initErrors.push("initSettings: " + (e.message||e)); }
   try { initSetupPanel(); } catch (e) { window.__initErrors.push("initSetupPanel: " + (e.message||e)); }

@@ -4,6 +4,8 @@ library/*.pdf
 public/vendor/
 public/app.js
 public/app.js.map
+public/study.js
+public/study.js.map
 *.log
 .DS_Store
 .zcode/

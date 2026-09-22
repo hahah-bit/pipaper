@@ -21,6 +21,9 @@ import { registerLatexRoutes } from "./latex-editor.js";
 import { changePackage } from "./pi-packages.js";
 import { setupStatus, setupTest } from "./setup-status.js";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { registerStudyRoutes } from "./studies.js";
+import { registerTranslationRoutes } from "./translation-routes.js";
+import { registerArchifyRoutes } from "./archify.js";
 
 const UA = "PiPaper/0.5 (academic reader; local app)";
 
@@ -28,10 +31,12 @@ const app = express();
 app.use(express.json({ limit: "24mb" }));
 app.use((req, res, next) => {
   // raw body for uploads (PUT /api/papers/import)
-  if (req.method === "PUT" && req.path.startsWith("/api/papers/import")) {
+  if (req.method === "PUT" && ["/api/papers/import", "/api/studies/import"].includes(req.path)) {
     const chunks = [];
-    req.on("data", (c) => chunks.push(c));
+    let size = 0, rejected = false;
+    req.on("data", (c) => { size += c.length; if (size > 100 * 1024 * 1024) { if (!rejected) res.status(413).json({ error: "PDF 最大 100 MB" }); rejected = true; chunks.length = 0; } else if (!rejected) chunks.push(c); });
     req.on("end", () => {
+      if (rejected) return;
       req.rawBody = Buffer.concat(chunks);
       next();
     });
@@ -194,6 +199,7 @@ api.get("/papers/:id/file/*", (req, res) => {
 });
 
 registerSessionRoutes(api);
+registerArchifyRoutes(api);
 registerNoteRoutes(api);
 registerLatexRoutes(api);
 
@@ -424,25 +430,9 @@ for (const [endpoint, remove, globalOnly] of [["install", false, false], ["remov
   });
 }
 
-// ---- translation (LibreTranslate from our docker stack) ----
-api.post("/translate", async (req, res) => {
-  const { text, target = "zh", source = "auto" } = req.body || {};
-  if (!text?.trim()) return res.status(400).json({ error: "空文本" });
-  const url = getConfig().translate?.url || "http://localhost:5001";
-  try {
-    const r = await fetch(`${url}/translate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ q: String(text).slice(0, 5000), source, target, format: "text" }),
-      signal: AbortSignal.timeout(60000),
-    });
-    const j = await r.json();
-    if (!r.ok) return res.status(502).json({ error: j.error || `HTTP ${r.status}` });
-    res.json({ translated: j.translatedText, detected: j.detectedLanguage });
-  } catch (e) {
-    res.status(502).json({ error: "翻译服务不可用（docker compose up -d 启动 libretranslate）：" + String(e.message || e).slice(0, 160) });
-  }
-});
+// ---- versioned Pi translation and guided paper studies ----
+registerTranslationRoutes(api);
+registerStudyRoutes(api);
 
 // ---- video proxy (fixes CORS + allows frame capture for remote URLs) ----
 api.get("/video/proxy", async (req, res) => {
@@ -676,6 +666,7 @@ api.delete("/search/toread/:id", (req, res) => {
 
 app.use("/api", api);
 app.use(express.static(PUBLIC_DIR));
+app.get("/study/:id", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "study.html")));
 app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 
 const port = Number(process.env.PORT || getConfig().port || 4318);

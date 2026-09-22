@@ -107,19 +107,16 @@ const REGISTRY = [
     },
   },
   {
-    id: "libretranslate",
-    group: "docker",
-    label: "LibreTranslate 翻译",
-    why: "阅读器段落悬停「译」的即时翻译，Docker sidecar，无需密钥",
+    id: "translation",
+    group: "core",
+    label: "Pi 精确翻译",
+    why: "阅读器逐段翻译和整篇双语使用当前 Pi 模型，保留公式、数值及表格结构",
     async probe() {
-      const url = getConfig().translate?.url || "http://localhost:5001";
-      const r = await probeHttp(url.replace(/\/$/, "") + "/languages");
-      if (r.ok) return { status: "ok", detail: `翻译服务可用（${url}）` };
-      return { status: "todo", detail: `翻译服务未启动（${url} 无响应）${r.error ? "：" + r.error : ""}` };
+      const { count } = await chatProbe();
+      return count ? { status: "ok", detail: "已发现可用 Pi 模型；翻译时使用当前对话模型" } : { status: "todo", detail: "请先在 Pi 中登录或配置模型" };
     },
     setup: {
-      command: "docker compose up -d",
-      links: [LINKS.docker],
+      links: [LINKS.pi],
     },
   },
   {
@@ -228,8 +225,8 @@ export async function setupTest(id) {
     const snap = syncZotero(getConfig().zotero);
     return { id, ok: true, detail: `同步成功：${snap.items.length} 篇（${snap.dataDir || dir}）` };
   }
-  if (id === "unstructured" || id === "libretranslate") {
-    const url = id === "unstructured" ? "http://localhost:8000/healthcheck" : (getConfig().translate?.url || "http://localhost:5001").replace(/\/$/, "") + "/languages";
+  if (id === "unstructured") {
+    const url = "http://localhost:8000/healthcheck";
     const r = await probeHttp(url, 8000);
     return { id, ok: r.ok, detail: r.ok ? `连通（${url}）` : `无响应：${url}${r.error ? " " + r.error : ""}` };
   }

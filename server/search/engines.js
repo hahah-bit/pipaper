@@ -263,7 +263,7 @@ async function searchScholarMirror(q, o, sourceDef) {
   }
   const results = [];
   // scholar result blocks: <div class="gs_r gs_or gs_scl" ...> ... </div> up to next block
-  const blocks = html.split('<div class="gs_r').slice(1);
+  const blocks = html.split(/<div class="gs_r(?=[\s"])/).slice(1);
   for (const b of blocks) {
     const titleM = b.match(/<h3 class="gs_rt"[^>]*>[\s\S]*?<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/);
     if (!titleM) continue;
@@ -372,7 +372,7 @@ export async function aggregateSearch(q, { sources, yearFrom, yearTo, oa, sort, 
   if (sort === "citations") merged.sort((a, b) => (b.citations || 0) - (a.citations || 0));
   else if (sort === "year") merged.sort((a, b) => (b.year || 0) - (a.year || 0));
   else if (sort === "if") merged.sort((a, b) => (b.sjr ?? -1) - (a.sjr ?? -1)); // 无分区/IF 的自然排到最后
-  return { results: merged.slice(0, 60), total: merged.length, errors };
+  return { results: merged.slice(0, 60), total: merged.length, errors, sourcesUsed: use };
 }
 
 // quality tier heuristic (open data only — no JCR): citations drive the tier

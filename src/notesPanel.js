@@ -28,7 +28,7 @@ async function readNoteFile(relUnderKnowledge) {
   return r.content || "";
 }
 
-// 思维导图大图查看：挂在全屏元素内（沉浸全屏时依然可见），markmap 自动铺满并可滚轮缩放
+// 思维导图大图查看：挂在当前全屏元素内，markmap 自动铺满并可滚轮缩放
 function openMindmapLightbox(md) {
   const host = document.fullscreenElement || document.body;
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -328,7 +328,7 @@ const fmtSize = (n) => (n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1
 function notesChanged() { window.dispatchEvent(new CustomEvent("pipaper:notes-changed")); }
 
 export function openNotesManage() {
-  // <dialog>.showModal 进入 top layer：浏览器全屏（沉浸模式）下依然可见可交互
+  // <dialog>.showModal 进入 top layer：浏览器全屏下依然可见可交互
   const dlg = $("#notes-backdrop");
   if (!dlg.open) dlg.showModal();
   refreshManage();
@@ -405,7 +405,5 @@ async function previewNote(category, paper, f) {
 }
 
 export function initNotesManage() {
-  $("#btn-notes-mgr")?.addEventListener("click", openNotesManage);
-  $("#btn-imm-notes")?.addEventListener("click", openNotesManage);
   $("#btn-notes-close")?.addEventListener("click", () => { try { $("#notes-backdrop").close(); } catch {} });
 }

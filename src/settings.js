@@ -4,7 +4,6 @@ import { openSetup } from "./setupPanel.js";
 
 export function initSettings() {
   const backdrop = $("#modal-backdrop");
-  $("#btn-settings").addEventListener("click", openSettings);
   $("#btn-settings-close").addEventListener("click", () => (backdrop.hidden = true));
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) backdrop.hidden = true;

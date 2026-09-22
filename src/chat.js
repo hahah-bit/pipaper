@@ -265,7 +265,10 @@ function handleSessionEvent(ev) {
   else if (ev.t === "thinking") streamNode().thinking += ev.text;
   else if (ev.t === "tool_start") recordEvent(ev), addToolCard(streamNode().node, ev.id, ev.name, ev.args);
   else if (ev.t === "tool_update") liveToolText(streamNode().node, ev.id, ev.content.filter(c => c.type === "text").map(c => c.text).join(""));
-  else if (ev.t === "tool_end") recordEvent(ev), fillToolCard(ev.id, ev.name, ev.content.filter(c => c.type === "text").map(c => c.text).join("\n"), ev.isError, ev.content, ev.details);
+  else if (ev.t === "tool_end") {
+    recordEvent(ev); fillToolCard(ev.id, ev.name, ev.content.filter(c => c.type === "text").map(c => c.text).join("\n"), ev.isError, ev.content, ev.details);
+    if (ev.name === "archify" && ev.details?.ok && ev.details.artifact) window.dispatchEvent(new CustomEvent("pipaper:archify-changed", { detail: ev.details.artifact }));
+  }
   else if (ev.t === "entry" && ev.message.role === "custom") {
     const root = el("details", { class: "native-message" }, el("summary", {}, ev.message.customType)); renderContent(ev.message.parts, root); $("#messages").append(root);
   }

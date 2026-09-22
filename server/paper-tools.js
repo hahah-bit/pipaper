@@ -5,12 +5,14 @@ import { defineTool, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { APP_ROOT, getConfig } from "./config.js";
 import { listPapers, getPaper, sessionMeta, readBlocks } from "./store.js";
 import { blocksToContext } from "./parser/mdblocks.js";
+import { readVersion } from "./parser/versions.js";
 export const SYSTEM_PROMPT = `你是 PiPaper 论文精读工作台中的研究助手（论文阅读专用 agent）。
 
 你的工作方式：
 - 用户的对话通常绑定了一篇"当前论文"。通过 read_paper 工具阅读论文（不带 paper_id 时读当前论文）。
 - 读长文前先 read_paper mode=outline 看结构，再 mode=section 精读相关章节；需要精确定位时用 mode=search。
 - list_library / search_library 可以跨论文检索用户文献库。
+- 用户要求 Archify 或交互图解时使用 archify 工具：先 help 获取所选类型的规范，再 render 生成。支持架构、流程、时序、数据流和状态图；用 list/read 找回已有图继续修改。只有工具返回 ok=true 才能报告完成，并返回实际预览链接；图解不能替代论文证据。
 - search_papers 可以在线聚合检索学术文献（OpenAlex/arXiv/Semantic Scholar 等），download_paper 可把开放获取论文下载入库；用户想"找论文/查相关工作"时优先用这两个工具。
 - 会话绑定论文或 Zotero 项目时，你还会加载"论文综合"技能组（zotero 文献管理、nature 系列学术技能）。zotero_search / zotero_item 用于管理用户 Zotero 库。
 - 用户消息里可能出现"引用块"（以【选中】或【截图】开头的附件上下文），那是用户从阅读器里框选或划选的内容，优先围绕这些内容回答。
@@ -126,7 +128,8 @@ export function buildPaperTools(idHolder) {
           details: {},
         };
       }
-      const parsed = readBlocks(paper.id) || [];
+      const binding = idHolder.id ? sessionMeta(idHolder.id) : null;
+      const parsed = binding?.studyVersionId && binding.paperId === paper.id ? readVersion(paper.id, binding.studyVersionId) : readBlocks(paper.id) || [];
       const rawBlocks = Array.isArray(parsed) ? parsed : parsed.blocks || parsed.readingBlocks || [];
       const versionNote = parsed.meta?.versionId ? `[解析版本 ${parsed.meta.versionId}; 内容指纹 ${parsed.meta.contentHash || "legacy"}]\n` : "[旧解析结果，尚未通过新版结构校验]\n";
       const md = rawBlocks.length ? versionNote + blocksToContext(rawBlocks) : "";
@@ -236,7 +239,7 @@ export function buildPaperTools(idHolder) {
       if (!r.results.length) return { content: [{ type: "text", text: `“${query}” 没有检索到结果。${r.errors.length ? "部分源出错: " + r.errors.join("; ") : ""}` }], details: {} };
       const lines = r.results.slice(0, 12).map((x, i) => {
         const tier = tierOf(x);
-        return `${i + 1}. ${x.title}\n   ${x.authors.slice(0, 3).join(", ")}${x.authors.length > 3 ? " 等" : ""} | ${x.year || "?"} | ${x.venue || "无 venue"} | 被引 ${x.citations ?? "?"} [${tier.label}]${x.oa ? " [OA]" : ""}\n   DOI: ${x.doi || "-"} | PDF: ${x.pdfUrl ? "有" : "无"}\n   摘要: ${x.abstract.slice(0, 160)}…`;
+        return `${i + 1}. ${x.title}\n   ${x.authors.slice(0, 3).join(", ")}${x.authors.length > 3 ? " 等" : ""} | ${x.year || "?"} | ${x.venue || "无 venue"} | 被引 ${x.citations ?? "?"} [${tier.label}]${x.oa ? " [OA]" : ""}\n   DOI: ${x.doi || "-"} | PDF: ${x.pdfUrl || "无开放全文"} | 页面: ${x.url || (x.doi ? "https://doi.org/" + x.doi : "无")}\n   摘要: ${x.abstract.slice(0, 160)}…`;
       });
       return { content: [{ type: "text", text: clamp(`“${query}” 检索到 ${r.total} 条（前 12 条）：\n\n` + lines.join("\n"), 12000) }], details: {} };
     },

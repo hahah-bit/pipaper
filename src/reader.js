@@ -14,9 +14,12 @@ let boxMode = false;
 let renderSeq = 0;
 let parseVersions = [];
 let previewing = false;
+let translatingAll = false;
+let translationAbort = null;
 
 // ---------------- load paper ----------------
 export async function readerLoadPaper(p) {
+  translatingAll = false; translationAbort?.abort();
   $("#tab-parsed").click();
   $("#reader-status").textContent = p.title ? p.title.slice(0, 42) : "";
   document.title = `${p.title || "PiPaper"} · PiPaper`;
@@ -59,6 +62,20 @@ function renderBlocks(paper, blocks, meta, document = {}) {
   wrap.append(el("h1", { class: "doc-title" }, paper.title || "(无标题)"));
   const metaBits = [(paper.creators || []).slice(0, 4).join(", "), paper.year, paper.publication, paper.doi ? `DOI: ${paper.doi}` : "", `引擎: ${document.meta?.engine || meta?.parse?.engine || "?"}`].filter(Boolean);
   wrap.append(el("div", { class: "doc-meta" }, metaBits.join(" · ")));
+  const translationStatus = el("span", { class: "res-note" });
+  const translateAll = el("button", { class: "tool-btn", onclick: async () => {
+    if (translatingAll) { translatingAll = false; translationAbort?.abort(); return; }
+    translatingAll = true; translateAll.textContent = "暂停翻译";
+    try {
+      for (let i = 0; i < blocks.length && translatingAll; i++) {
+        if (state.currentPaper?.id !== paper.id) break;
+        translationStatus.textContent = `双语翻译 ${i + 1}/${blocks.length}`;
+        const blockEl = wrap.querySelector(`.blk[data-idx="${i}"]`);
+        if (blockEl) await translateBlock(blockEl, blocks[i], paper, document.meta, { show: true, index: i });
+      }
+    } finally { translatingAll = false; translateAll.textContent = "整篇双语 / 继续翻译"; translationStatus.textContent = "已保存译文，可随时继续"; }
+  } }, "整篇双语 / 继续翻译");
+  wrap.append(el("div", { class: "sch-row" }, translateAll, translationStatus));
   const notes = document.quality;
   if (notes?.warnings?.length || notes?.errors?.length) wrap.append(el("div", { class: "doc-quality" }, `需核对 ${notes.warnings.length} 项 · 结构错误 ${notes.errors.length} 项`));
 
@@ -99,9 +116,9 @@ function renderBlocks(paper, blocks, meta, document = {}) {
     }, "＋ 对话");
     const transBtn = el("button", {
       class: "add-btn",
-      title: "翻译该段（LibreTranslate）",
+      title: "精确翻译该段（当前 Pi 模型）",
       style: { right: "58px" },
-      onclick: (e) => { e.stopPropagation(); translateBlock(blk); },
+      onclick: (e) => { e.stopPropagation(); translateBlock(blk, b, paper, document.meta, { index: idx }); },
     }, "译");
     if (!previewing) blk.append(addBtn, transBtn);
     if (b.id && document.v === 4) {
@@ -362,29 +379,32 @@ function renderTplEditor(back) {
   );
 }
 
-// per-block translation via the self-hosted LibreTranslate service
-async function translateBlock(blkEl) {
+// Per-block translation reads the original versioned block and uses the current Pi model.
+async function translateBlock(blkEl, block, paper, meta, { show = false, index = 0 } = {}) {
   let box = blkEl.querySelector(".trans-result");
-  if (box) {
+  if (box && !show) {
     box.remove();
     return;
   }
-  const text = blkEl.querySelector(".md-body, p, .tbl-wrap, .formula-blk")?.innerText?.trim() || blkEl.innerText.trim();
-  if (!text) return;
+  if (box?.dataset.complete) return;
+  box?.remove();
   box = el("div", { class: "trans-result" }, "翻译中…");
   blkEl.append(box);
   try {
+    translationAbort = new AbortController();
     const res = await fetch("/api/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.slice(0, 4500), target: "zh" }),
+      body: JSON.stringify({ paperId: paper.id, versionId: meta?.versionId, blockId: block.id || `legacy_${index}`, sessionId: state.sessionId }),
+      signal: translationAbort.signal,
     });
     const j = await res.json();
     if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
-    box.textContent = j.translated;
-    box.append(el("div", { class: "trans-meta" }, "LibreTranslate · 点击「译」收起"));
+    renderMd(j.translated, box); box.dataset.complete = "true";
+    box.append(el("div", { class: "trans-meta" }, `${j.model?.id || "Pi 模型"} · 已检查公式、数值和结构 · 点击「译」收起`));
+    for (const warning of j.warnings || []) box.append(el("div", { class: "trans-meta" }, warning));
   } catch (e) {
-    box.textContent = "翻译失败: " + e.message;
+    box.textContent = e.name === "AbortError" ? "翻译已暂停，点击「译」重试" : "翻译失败: " + e.message;
   }
 }
 
@@ -488,8 +508,7 @@ async function renderPage(pno) {
   }
   const canvas = pageEl.querySelector("canvas");
   const textDiv = pageEl.querySelector(".textLayer");
-  // 沉浸模式下栏位更宽：放开 900px 上限，让 PDF 铺满栏位
-  const maxW = document.getElementById("immersive")?.hidden === false ? 1600 : 900;
+  const maxW = 900;
   const cssWidth = Math.min(maxW, holder.clientWidth - 48);
   const scale = cssWidth / page.getViewport({ scale: 1 }).width;
   const viewport = page.getViewport({ scale });

@@ -9,7 +9,6 @@ let saving = false;
 
 export function initResources() {
   window.addEventListener("pi:resources", () => { if (!$("#resources-backdrop").hidden) loadResources(); });
-  $("#btn-resources").addEventListener("click", openResources);
   $("#btn-resources-close").addEventListener("click", () => ($("#resources-backdrop").hidden = true));
   $("#resources-backdrop").addEventListener("click", (e) => {
     if (e.target.id === "resources-backdrop") e.target.hidden = true;
@@ -24,7 +23,7 @@ export function initResources() {
   );
 }
 
-async function openResources() {
+export async function openResources() {
   $("#resources-backdrop").hidden = false;
   try {
     resData = await api.resources();

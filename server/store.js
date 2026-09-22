@@ -90,8 +90,15 @@ export function getPapers() {
   return papers;
 }
 
-export function listPapers() {
-  return papers.papers;
+export function listPapers({ includeTemporary = false } = {}) {
+  return includeTemporary ? papers.papers : papers.papers.filter(p => !p.studyOnly);
+}
+
+export function removeTemporaryPaper(id) {
+  const paper = getPaper(id);
+  if (!paper?.studyOnly) throw new Error("只能清理研读暂存论文");
+  papers.papers = papers.papers.filter(p => p.id !== id);
+  persist();
 }
 
 export function getPaper(id) {
@@ -218,6 +225,13 @@ export function importPdfFile(origName, buf) {
   // dedupe: same content already managed (from any source) -> reuse identity + parse state
   const existing = findByHash(hash);
   if (existing) {
+    if (existing.studyOnly) {
+      const target = path.join(LIBRARY_DIR, hash.slice(0, 16) + "-" + safe);
+      fs.writeFileSync(target, buf);
+      existing.pdfPath = target;
+      existing.studyOnly = false;
+      existing.source = "library";
+    }
     const alias = safe.replace(/\.pdf$/i, "");
     existing.aliases = [...new Set([...(existing.aliases || []), alias])].filter(Boolean);
     existing.sources = [...new Set([...(existing.sources || []), "library", existing.source].filter(Boolean))];

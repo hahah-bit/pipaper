@@ -134,8 +134,8 @@ export function renderCollections() {
   const wrap = $("#collections");
   wrap.replaceChildren();
   const cols = state.collections || [];
+  wrap.hidden = !cols.length;
   if (!cols.length) {
-    wrap.append(el("div", { class: "coll-item", style: { color: "var(--fg2)" } }, "（无分类目录）"));
     return;
   }
   const byParent = new Map();
@@ -187,18 +187,18 @@ export function renderPapers() {
     const authors = (p.creators || []).slice(0, 2).join(", ");
     const inProject = proj?.paperIds.includes(p.id);
     const item = el(
-      "div",
-      { class: "paper-item" + (state.currentPaper?.id === p.id ? " active" : ""), onclick: () => selectPaper(p) },
-      el("div", { class: "t" }, p.title || "(无标题)"),
-      el("div", { class: "m" },
+      "article",
+      { class: "paper-item" + (state.currentPaper?.id === p.id ? " active" : ""), "data-paper-id": p.id },
+      el("button", { type: "button", class: "paper-open", "aria-label": p.title || "(无标题)", onclick: () => selectPaper(p) },
+        el("span", { class: "t" }, p.title || "(无标题)"),
+        el("span", { class: "m" },
         el("span", { class: "dot " + status, title: "解析状态: " + status }),
-        el("span", { class: "m-text" }, [authors, p.year, p.source === "zotero" ? collectionName((p.collectionIds || [])[0]) || "Zotero" : "本地导入"].filter(Boolean).join(" · ")),
+        el("span", { class: "m-text" }, [authors, p.year, p.source === "zotero" ? collectionName((p.collectionIds || [])[0]) || "Zotero" : "本地导入"].filter(Boolean).join(" · ")))),
         el("button", {
           class: "p-proj" + (inProject ? " in" : ""),
           title: proj ? (inProject ? "从项目中移除" : "加入当前项目") : "加入项目（先在顶部选择项目）",
           onclick: (e) => { e.stopPropagation(); togglePaperInProject(p.id); },
         }, inProject ? "✓" : "📁")
-      )
     );
     wrap.append(item);
   }
@@ -206,6 +206,7 @@ export function renderPapers() {
 
 export async function selectPaper(p) {
   state.currentPaper = state.papers.find((x) => x.id === p.id) || p;
+  window.dispatchEvent(new CustomEvent("pipaper:paper-changed"));
   renderPapers();
   const { readerLoadPaper } = await import("./reader.js");
   readerLoadPaper(p);

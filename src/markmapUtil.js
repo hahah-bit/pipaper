@@ -1,4 +1,4 @@
-// markmap 思维导图渲染：视频面板与沉浸工作台共用的入口。
+// markmap 思维导图渲染：视频面板与知识库工作区共用的入口。
 // 返回 Markmap 实例，调用方可做 fit()/rescale() 等后续操作。
 // 注意：必须等 setData 的布局/过渡完成后再 fit，否则会按错误的尺寸缩放（截断或过小）。
 export async function renderMarkmap(svgEl, md, opts = {}) {

@@ -21,7 +21,7 @@ fs.copyFileSync(workerSrc, path.join(PUB, "vendor", "pdf.worker.min.mjs"));
 // dockview-core 8.3 的 esm 入口是无样式构建：从 styled iife 提取内嵌 CSS 到 vendor
 await import(new URL("extract-dockview-css.mjs", import.meta.url).href);
 
-// mermaid: 打成懒加载的全局包（沉浸模式流程图模块首次使用时注入 <script>），不进主 bundle
+// mermaid: 打成懒加载的全局包（流程图模块首次使用时注入 <script>），不进主 bundle
 await esbuild.build({
   entryPoints: [path.join(ROOT, "scripts", "mermaid-entry.mjs")],
   bundle: true,
@@ -44,6 +44,8 @@ await esbuild.build({
 });
 
 // cache-bust: stamp bundle/css versions into index.html
+await esbuild.build({ entryPoints: [path.join(ROOT, "src", "study", "app.js")], bundle: true,
+  outfile: path.join(PUB, "study.js"), format: "iife", target: "es2022", sourcemap: true, logLevel: "info" });
 const js = fs.readFileSync(path.join(PUB, "app.js"));
 const css = fs.readFileSync(path.join(PUB, "style.css"));
 const v = crypto.createHash("sha1").update(js).update(css).digest("hex").slice(0, 10);

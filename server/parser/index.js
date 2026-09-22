@@ -34,7 +34,7 @@ export function startParse(paperId, requestedEngine = "hybrid", replayFrom) {
   const log = (msg) => { job.log.push(msg); console.log("[parse:" + run.id + "] " + msg); };
   jobs.set(job.id, job);
   writeParseState(paperId, { status: "running", engine, error: null, jobId: job.id, startedAt: job.startedAt });
-  (async () => {
+  job.completion = (async () => {
     try {
       const doc = await executePipeline(paper, engine, run, log, replayFrom);
       const result = saveResult(run, doc);
@@ -54,6 +54,9 @@ export function startParse(paperId, requestedEngine = "hybrid", replayFrom) {
     } finally { job.endedAt = new Date().toISOString(); }
   })();
   return job;
+}
+export async function settlePaperParsing(paperId) {
+  await Promise.all([...jobs.values()].filter(j => parsedDir(j.paperId) === parsedDir(paperId)).map(j => j.completion));
 }
 export function paperWithParseStatus(p) {
   const doc = readBlocks(p.id);

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 export const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const DATA_DIR = process.env.PIPAPER_DATA_DIR ? path.resolve(process.env.PIPAPER_DATA_DIR) : path.join(APP_ROOT, "data");
-export const LIBRARY_DIR = path.join(APP_ROOT, "library");
+export const LIBRARY_DIR = process.env.PIPAPER_LIBRARY_DIR ? path.resolve(process.env.PIPAPER_LIBRARY_DIR) : path.join(APP_ROOT, "library");
 export const PARSED_DIR = path.join(DATA_DIR, "parsed");
 export const TMP_DIR = path.join(DATA_DIR, "tmp");
 export const PUBLIC_DIR = path.join(APP_ROOT, "public");
@@ -23,6 +23,7 @@ const DEFAULTS = {
   },
   translate: { url: "http://localhost:5001" },
   chat: { thinkingLevel: "high" },
+  archify: { path: "" }, // Reuse an existing upstream repository / skill directory.
   setup: { onboardedAt: null }, // 首次引导面板「不再显示」后写入时间戳
 };
 
