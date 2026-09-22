@@ -1,0 +1,297 @@
+{
+  "edition": 2026,
+  "retrievedAt": "2026-09-22",
+  "url": "https://www.ccf.org.cn/ccf/contentcore/resource/download?ID=112CF3BF7E1140ACEB271ADAED12A67ADFABB8FF099E40C2759502A85C8A281F",
+  "announcement": "https://www.ccf.org.cn/Academic_Evaluation/By_category/",
+  "scope": "CCF 第七版 A 类会议；正式长文。未适配的会议保留待核验。",
+  "entries": [
+    {
+      "page": 5,
+      "row": "2 FAST USENIX Conference on File and Storage Technologies USENIX http://dblp.uni-trier.de/db/conf/fast/",
+      "key": "fast",
+      "acronym": "FAST"
+    },
+    {
+      "page": 5,
+      "row": "3 DAC Design Automation Conference ACM https://dblp.uni-trier.de/db/conf/dac/",
+      "key": "dac",
+      "acronym": "DAC"
+    },
+    {
+      "page": 5,
+      "row": "4 HPCA IEEE International Symposium on High Performance Computer Architecture IEEE http://dblp.uni-trier.de/db/conf/hpca/",
+      "key": "hpca",
+      "acronym": "HPCA"
+    },
+    {
+      "page": 5,
+      "row": "5 MICRO IEEE/ACM International Symposium on Microarchitecture IEEE/ ACM https://dblp.uni-trier.de/db/conf/micro/index.html",
+      "key": "micro",
+      "acronym": "MICRO"
+    },
+    {
+      "page": 5,
+      "row": "7 ASPLOS International Conference on Architectural Support for Programming Languages and Operating Systems ACM http://dblp.uni-trier.de/db/conf/asplos/",
+      "key": "asplos",
+      "acronym": "ASPLOS"
+    },
+    {
+      "page": 5,
+      "row": "8 ISCA International Symposium on Computer Architecture IEEE/ ACM http://dblp.uni-trier.de/db/conf/isca/",
+      "key": "isca",
+      "acronym": "ISCA"
+    },
+    {
+      "page": 5,
+      "row": "10 EuroSys European Conference on Computer Systems ACM http://dblp.uni-trier.de/db/conf/eurosys/",
+      "key": "eurosys",
+      "acronym": "EuroSys"
+    },
+    {
+      "page": 5,
+      "row": "11 HPDC The International ACM Symposium on High-Performance Parallel and Distributed Computing IEEE http://dblp.uni-trier.de/db/conf/hpdc/",
+      "key": "hpdc",
+      "acronym": "HPDC"
+    },
+    {
+      "page": 13,
+      "row": "2 MobiCom ACM International Conference on Mobile Computing and Networking ACM http://dblp.uni-trier.de/db/conf/mobicom/",
+      "key": "mobicom",
+      "acronym": "MobiCom"
+    },
+    {
+      "page": 13,
+      "row": "3 INFOCOM IEEE International Conference on Computer Communications IEEE http://dblp.uni-trier.de/db/conf/infocom/",
+      "key": "infocom",
+      "acronym": "INFOCOM"
+    },
+    {
+      "page": 13,
+      "row": "4 NSDI Symposium on Network System Design and Implementation USENIX http://dblp.uni-trier.de/db/conf/nsdi/",
+      "key": "nsdi",
+      "acronym": "NSDI"
+    },
+    {
+      "page": 20,
+      "row": "1 CCS ACM Conference on Computer and Communications Security ACM http://dblp.uni-trier.de/db/conf/ccs/",
+      "key": "ccs",
+      "acronym": "CCS"
+    },
+    {
+      "page": 20,
+      "row": "2 EUROCRYPT International Conference on the Theory and Applications of Cryptographic Techniques Springer http://dblp.uni-trier.de/db/conf/eurocrypt/",
+      "key": "eurocrypt",
+      "acronym": "EUROCRYPT"
+    },
+    {
+      "page": 20,
+      "row": "4 CRYPTO International Cryptology Conference Springer http://dblp.uni-trier.de/db/conf/crypto/",
+      "key": "crypto",
+      "acronym": "CRYPTO"
+    },
+    {
+      "page": 20,
+      "row": "5 USENIX Security USENIX Security Symposium USENIX Association http://dblp.uni-trier.de/db/conf/uss/",
+      "key": "uss",
+      "acronym": "USENIX"
+    },
+    {
+      "page": 20,
+      "row": "6 NDSS Network and Distributed System Security Symposium ISOC http://dblp.uni-trier.de/db/conf/ndss/",
+      "key": "ndss",
+      "acronym": "NDSS"
+    },
+    {
+      "page": 27,
+      "row": "1 PLDI ACM SIGPLAN Conference on Programming Language Design and Implementation ACM http://dblp.uni-trier.de/db/conf/pldi/",
+      "key": "pldi",
+      "acronym": "PLDI"
+    },
+    {
+      "page": 27,
+      "row": "2 POPL ACM SIGPLAN-SIGACT Symposium on Principles of Programming Languages ACM http://dblp.uni-trier.de/db/conf/popl/",
+      "key": "popl",
+      "acronym": "POPL"
+    },
+    {
+      "page": 27,
+      "row": "3 FSE ACM International Conference on the Foundations of Software Engineering ACM http://dblp.uni-trier.de/db/conf/sigsoft/",
+      "key": "sigsoft",
+      "acronym": "FSE"
+    },
+    {
+      "page": 27,
+      "row": "4 SOSP ACM Symposium on Operating Systems Principles ACM http://dblp.uni-trier.de/db/conf/sosp/",
+      "key": "sosp",
+      "acronym": "SOSP"
+    },
+    {
+      "page": 27,
+      "row": "6 ASE International Conference on Automated Software Engineering IEEE/ ACM http://dblp.uni-trier.de/db/conf/kbse/",
+      "key": "kbse",
+      "acronym": "ASE"
+    },
+    {
+      "page": 27,
+      "row": "7 ICSE International Conference on Software Engineering IEEE/ ACM http://dblp.uni-trier.de/db/conf/icse/",
+      "key": "icse",
+      "acronym": "ICSE"
+    },
+    {
+      "page": 27,
+      "row": "8 ISSTA International Symposium on Software Testing and Analysis ACM http://dblp.uni-trier.de/db/conf/issta/",
+      "key": "issta",
+      "acronym": "ISSTA"
+    },
+    {
+      "page": 27,
+      "row": "9 OSDI USENIX Symposium on Operating Systems Design and Implementation USENIX http://dblp.uni-trier.de/db/conf/osdi/",
+      "key": "osdi",
+      "acronym": "OSDI"
+    },
+    {
+      "page": 27,
+      "row": "10 FM International Symposium on Formal Methods FME http://dblp.uni-trier.de/db/conf/fm/",
+      "key": "fm",
+      "acronym": "FM"
+    },
+    {
+      "page": 35,
+      "row": "1 SIGMOD ACM SIGMOD Conference ACM http://dblp.uni-trier.de/db/conf/sigmod/",
+      "key": "sigmod",
+      "acronym": "SIGMOD"
+    },
+    {
+      "page": 35,
+      "row": "2 SIGKDD ACM SIGKDD Conference on Knowledge Discovery and Data Mining ACM http://dblp.uni-trier.de/db/conf/kdd/",
+      "key": "kdd",
+      "acronym": "SIGKDD"
+    },
+    {
+      "page": 35,
+      "row": "3 ICDE IEEE International Conference on Data Engineering IEEE http://dblp.uni-trier.de/db/conf/icde/",
+      "key": "icde",
+      "acronym": "ICDE"
+    },
+    {
+      "page": 35,
+      "row": "4 SIGIR International ACM SIGIR Conference on Research and Development in Information Retrieval ACM http://dblp.uni-trier.de/db/conf/sigir/",
+      "key": "sigir",
+      "acronym": "SIGIR"
+    },
+    {
+      "page": 35,
+      "row": "5 VLDB International Conference on Very Large Data Bases Morgan Kaufmann/ ACM http://dblp.uni-trier.de/db/conf/vldb/",
+      "key": "vldb",
+      "acronym": "VLDB"
+    },
+    {
+      "page": 41,
+      "row": "1 STOC ACM Symposium on the Theory of Computing ACM http://dblp.uni-trier.de/db/conf/stoc/",
+      "key": "stoc",
+      "acronym": "STOC"
+    },
+    {
+      "page": 41,
+      "row": "2 SODA ACM-SIAM Symposium on Discrete Algorithms SIAM http://dblp.uni-trier.de/db/conf/soda/",
+      "key": "soda",
+      "acronym": "SODA"
+    },
+    {
+      "page": 41,
+      "row": "3 CAV International Conference on Computer Aided Verification Springer http://dblp.uni-trier.de/db/conf/cav/",
+      "key": "cav",
+      "acronym": "CAV"
+    },
+    {
+      "page": 41,
+      "row": "4 FOCS IEEE Annual Symposium on Foundations of Computer Science IEEE http://dblp.uni-trier.de/db/conf/focs/",
+      "key": "focs",
+      "acronym": "FOCS"
+    },
+    {
+      "page": 41,
+      "row": "5 LICS ACM/IEEE Symposium on Logic in Computer Science IEEE http://dblp.uni-trier.de/db/conf/lics/",
+      "key": "lics",
+      "acronym": "LICS"
+    },
+    {
+      "page": 47,
+      "row": "1 ACM MM ACM International Conference on Multimedia ACM http://dblp.uni-trier.de/db/conf/mm/",
+      "key": "mm",
+      "acronym": "ACM"
+    },
+    {
+      "page": 57,
+      "row": "1 AAAI AAAI Conference on Artificial Intelligence AAAI http://dblp.uni-trier.de/db/conf/aaai/",
+      "key": "aaai",
+      "acronym": "AAAI"
+    },
+    {
+      "page": 57,
+      "row": "2 NeurIPS Conference on Neural Information Processing Systems MIT Press http://dblp.uni-trier.de/db/conf/nips/",
+      "key": "nips",
+      "acronym": "NeurIPS"
+    },
+    {
+      "page": 57,
+      "row": "3 ACL Annual Meeting of the Association for Computational Linguistics ACL http://dblp.uni-trier.de/db/conf/acl/",
+      "key": "acl",
+      "acronym": "ACL"
+    },
+    {
+      "page": 57,
+      "row": "4 CVPR IEEE/CVF Computer Vision and Pattern Recognition Conference IEEE http://dblp.uni-trier.de/db/conf/cvpr/",
+      "key": "cvpr",
+      "acronym": "CVPR"
+    },
+    {
+      "page": 57,
+      "row": "5 ICCV International Conference on Computer Vision IEEE http://dblp.uni-trier.de/db/conf/iccv/",
+      "key": "iccv",
+      "acronym": "ICCV"
+    },
+    {
+      "page": 57,
+      "row": "6 ICML International Conference on Machine Learning ACM http://dblp.uni-trier.de/db/conf/icml/",
+      "key": "icml",
+      "acronym": "ICML"
+    },
+    {
+      "page": 57,
+      "row": "7 ICLR International Conference on Learning Representations OpenReview https://dblp.uni-trier.de/db/conf/iclr/index.html",
+      "key": "iclr",
+      "acronym": "ICLR"
+    },
+    {
+      "page": 64,
+      "row": "1 CSCW ACM Conference On Computer-Supported Cooperative Work And Social Computing ACM http://dblp.uni-trier.de/db/conf/cscw",
+      "key": "cscw",
+      "acronym": "CSCW"
+    },
+    {
+      "page": 64,
+      "row": "2 CHI ACM Conference on Human Factors in Computing Systems ACM http://dblp.uni-trier.de/db/conf/chi",
+      "key": "chi",
+      "acronym": "CHI"
+    },
+    {
+      "page": 64,
+      "row": "3 UbiComp ACM international joint conference on Pervasive and Ubiquitous Computing ACM https://dblp.uni-trier.de/db/conf/huc/",
+      "key": "huc",
+      "acronym": "UbiComp"
+    },
+    {
+      "page": 64,
+      "row": "4 UIST ACM Symposium on User Interface Software and Technology ACM http://dblp.uni-trier.de/db/conf/uist/",
+      "key": "uist",
+      "acronym": "UIST"
+    },
+    {
+      "page": 70,
+      "row": "2 RTSS IEEE Real-Time Systems Symposium IEEE http://dblp.uni-trier.de/db/conf/rtss/",
+      "key": "rtss",
+      "acronym": "RTSS"
+    }
+  ]
+}

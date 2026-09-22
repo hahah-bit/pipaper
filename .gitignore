@@ -6,6 +6,8 @@ public/app.js
 public/app.js.map
 public/study.js
 public/study.js.map
+public/topics.js
+public/topics.js.map
 *.log
 .DS_Store
 .zcode/

@@ -24,6 +24,7 @@ const DEFAULTS = {
   translate: { url: "http://localhost:5001" },
   chat: { thinkingLevel: "high" },
   archify: { path: "" }, // Reuse an existing upstream repository / skill directory.
+  topicAnalysis: { openalexApiKey: "" },
   setup: { onboardedAt: null }, // 首次引导面板「不再显示」后写入时间戳
 };
 
@@ -66,5 +67,6 @@ export function redactedConfig() {
   const mask = (s) => (s ? (s.length <= 6 ? "***" : s.slice(0, 3) + "***" + s.slice(-3)) : "");
   if (clone.parse?.mineru?.token) clone.parse.mineru.token = mask(clone.parse.mineru.token);
   if (clone.parse?.unstructured?.apiKey) clone.parse.unstructured.apiKey = mask(clone.parse.unstructured.apiKey);
+  if (clone.topicAnalysis?.openalexApiKey) clone.topicAnalysis.openalexApiKey = mask(clone.topicAnalysis.openalexApiKey);
   return clone;
 }

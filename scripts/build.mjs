@@ -47,6 +47,11 @@ await esbuild.build({
 await esbuild.build({ entryPoints: [path.join(ROOT, "src", "study", "app.js")], bundle: true,
   outfile: path.join(PUB, "study.js"), format: "iife", target: "es2022", sourcemap: true, logLevel: "info" });
 const js = fs.readFileSync(path.join(PUB, "app.js"));
+await esbuild.build({ entryPoints: [path.join(ROOT, "src", "topics", "app.js")], bundle: true,
+  outfile: path.join(PUB, "topics.js"), format: "iife", target: "es2022", sourcemap: true, logLevel: "info" });
+const topicVersion = crypto.createHash("sha1").update(fs.readFileSync(path.join(PUB, "topics.js"))).update(fs.readFileSync(path.join(PUB, "topics.css"))).digest("hex").slice(0, 10);
+const topicHtml = path.join(PUB, "topics.html");
+fs.writeFileSync(topicHtml, fs.readFileSync(topicHtml, "utf8").replace(/topics\.(js|css)(\?v=[a-f0-9]+)?"/g, (_m, ext) => `topics.${ext}?v=${topicVersion}"`));
 const css = fs.readFileSync(path.join(PUB, "style.css"));
 const v = crypto.createHash("sha1").update(js).update(css).digest("hex").slice(0, 10);
 const htmlPath = path.join(PUB, "index.html");

@@ -24,6 +24,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { registerStudyRoutes } from "./studies.js";
 import { registerTranslationRoutes } from "./translation-routes.js";
 import { registerArchifyRoutes } from "./archify.js";
+import { registerTopicRoutes } from "./topics/routes.js";
 
 const UA = "PiPaper/0.5 (academic reader; local app)";
 
@@ -433,6 +434,7 @@ for (const [endpoint, remove, globalOnly] of [["install", false, false], ["remov
 // ---- versioned Pi translation and guided paper studies ----
 registerTranslationRoutes(api);
 registerStudyRoutes(api);
+registerTopicRoutes(api);
 
 // ---- video proxy (fixes CORS + allows frame capture for remote URLs) ----
 api.get("/video/proxy", async (req, res) => {
@@ -667,6 +669,7 @@ api.delete("/search/toread/:id", (req, res) => {
 app.use("/api", api);
 app.use(express.static(PUBLIC_DIR));
 app.get("/study/:id", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "study.html")));
+app.get(["/topics", "/topics/:id"], (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "topics.html")));
 app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 
 const port = Number(process.env.PORT || getConfig().port || 4318);
