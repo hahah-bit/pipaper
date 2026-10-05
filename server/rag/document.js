@@ -62,20 +62,22 @@ export function validateCandidate(original, candidate) {
   }
   if (candidate.kind === "formula") {
     try {
+      if (typeof candidate.latex !== "string" || !candidate.latex.trim())
+        throw new Error("empty formula");
       katex.renderToString(candidate.latex || "", {
         throwOnError: true,
         trust: false,
         strict: "ignore",
       });
+      if (
+        original.nativeText &&
+        missingGlyphs(candidate.latex || "", original.nativeText).length &&
+        !candidate.humanVerified
+      )
+        issues.push("math-source-conflict");
     } catch {
       issues.push("formula-syntax");
     }
-    if (
-      original.nativeText &&
-      missingGlyphs(candidate.latex || "", original.nativeText).length &&
-      !candidate.humanVerified
-    )
-      issues.push("math-source-conflict");
   }
   if (
     ["text", "code", "note"].includes(candidate.kind) &&
@@ -84,7 +86,8 @@ export function validateCandidate(original, candidate) {
     issues.push("empty-candidate");
   if (
     ["image", "table", "formula"].includes(candidate.kind) &&
-    !candidate.shortDescription?.trim()
+    (typeof candidate.shortDescription !== "string" ||
+      !candidate.shortDescription.trim())
   )
     issues.push("missing-description");
   return [...new Set(issues)];
@@ -360,7 +363,24 @@ export function normalizeDocument(
         const exact = matches.filter((e) => e.subfigure === ref.subfigure);
         matches = exact.length ? exact : matches.filter((e) => !e.subfigure);
       }
-      if (matches.length !== 1) {
+      // Explicit continuations form one logical table; repeated independent numbers remain ambiguous.
+      const tableParts = matches
+        .slice()
+        .sort((a, b) => a.page - b.page || a.order - b.order);
+      const continued = /\bcontinued\b|续表|接上页|续上页/i;
+      const isContinuation =
+        ref.kind === "table" &&
+        tableParts.length > 1 &&
+        !continued.test(tableParts[0].caption) &&
+        tableParts.every(
+          (e, i) =>
+            i === 0 ||
+            (continued.test(e.caption) &&
+              e.sectionId === tableParts[0].sectionId &&
+              Number.isFinite(e.page) &&
+              e.page === tableParts[i - 1].page + 1),
+        );
+      if (matches.length !== 1 && !isContinuation) {
         reviews.push({
           id: "ref_" + hash([t.id, ref]),
           ...t,
@@ -372,14 +392,19 @@ export function normalizeDocument(
         t.quality = "needs_review";
         continue;
       }
-      const e = matches[0];
-      if (used.has(e.id)) continue;
-      used.add(e.id);
-      if (e.quality !== "ready") {
+      const selected = (isContinuation ? tableParts : matches).filter(
+        (e) => !used.has(e.id),
+      );
+      if (!selected.length) continue;
+      for (const e of selected) used.add(e.id);
+      if (selected.some((e) => e.quality !== "ready")) {
         t.quality = "needs_review";
         continue;
       }
-      insertions.push({ at: ref.at, text: placeholder(e), id: e.id });
+      insertions.push({
+        at: ref.at,
+        text: selected.map(placeholder).join(" "),
+      });
     }
     for (const add of insertions.sort((a, b) => b.at - a.at))
       t.text = t.text.slice(0, add.at) + add.text + t.text.slice(add.at);

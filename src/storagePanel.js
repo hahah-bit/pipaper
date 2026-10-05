@@ -91,7 +91,7 @@ export function storageModule() {
             `${labels[r.kind] || r.kind} · ${labels[r.lifecycle]} · ${labels[r.availability] || r.availability} · 修订 ${r.revision}${r.indexStale ? " · 索引已过期" : ""}`,
           ),
         );
-      if (pending)
+      if (pending) {
         row.append(
           el(
             "div",
@@ -99,10 +99,10 @@ export function storageModule() {
             `${labels[pending.status]} · ${labels[pending.stage] || pending.stage} · ${pending.progress || 0}% ${pending.detail || ""}`,
           ),
           el("progress", { max: 100, value: pending.progress || 0 }),
-          pending.error
-            ? el("div", { class: "res-note" }, pending.error)
-            : null,
         );
+        if (pending.error)
+          row.append(el("div", { class: "res-note" }, pending.error));
+      }
       const controls = el("div", { class: "storage-actions" });
       if (r.lifecycle === "active") {
         if (

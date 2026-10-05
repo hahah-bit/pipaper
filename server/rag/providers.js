@@ -210,47 +210,76 @@ export async function expand(chunk, context, options = {}) {
   ]);
   const cached = readState("expansion:" + fingerprint, null);
   if (cached) return cached;
-  const result = await modelJson({
-    ...options,
-    system:
-      "根据给定论文正文生成一段检索背景和四个语义不同的问题，其中两条中文、两条英文。仅使用正文和已核验背景中明确支持的事实，不补充数值或外部知识。输出的 JSON 顶层必须是 background（背景字符串）、questions（含 language 和 text 的四个问题对象）以及 unsupported（布尔值）；不要复述输入或将结果放入 format。若无法依据原文生成，设置 unsupported=true。",
-    text: JSON.stringify({
-      titlePath: chunk.sectionPath,
-      text: chunk.text,
-      verifiedContext: context,
-      format: {
-        background: "一段背景说明",
-        questions: [
-          { language: "zh", text: "中文问题一" },
-          { language: "zh", text: "中文问题二" },
-          { language: "en", text: "English question one" },
-          { language: "en", text: "English question two" },
-        ],
-        unsupported: false,
-      },
-    }),
-  });
-  const v = result.value;
-  if (
-    v.unsupported !== false ||
-    !v.background?.trim() ||
-    !Array.isArray(v.questions) ||
-    v.questions.length !== 4 ||
-    v.questions.filter((q) => q.language === "zh").length !== 2 ||
-    v.questions.filter((q) => q.language === "en").length !== 2 ||
-    v.questions.some((q) => !q.text?.trim()) ||
-    new Set(v.questions.map((q) => q.text)).size !== 4
-  )
-    throw fault("扩写结构不合格", 422);
+  let result, rejection;
   const sourceNumbers = new Set(
     (chunk.text + context).match(/\d+(?:\.\d+)?/g) || [],
   );
-  if (
-    (JSON.stringify(v).match(/\d+(?:\.\d+)?/g) || []).some(
-      (n) => !sourceNumbers.has(n),
-    )
-  )
-    throw fault("扩写包含来源未支持的数值", 422);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    options.signal?.throwIfAborted();
+    try {
+      result = await modelJson({
+        ...options,
+        system:
+          "根据给定论文正文生成一段检索背景和四个语义不同的问题，其中两条中文、两条英文。仅使用正文和已核验背景中明确支持的事实，不补充数值或外部知识。输出的 JSON 顶层必须是 background（背景字符串）、questions（含 language 和 text 的四个问题对象）以及 unsupported（布尔值）；不要复述输入或将结果放入 format。若无法依据原文生成，设置 unsupported=true。",
+        text: JSON.stringify({
+          titlePath: chunk.sectionPath,
+          text: chunk.text,
+          verifiedContext: context,
+          ...(rejection ? { validationFeedback: rejection } : {}),
+          format: {
+            background: "一段背景说明",
+            questions: [
+              { language: "zh", text: "中文问题一" },
+              { language: "zh", text: "中文问题二" },
+              { language: "en", text: "English question one" },
+              { language: "en", text: "English question two" },
+            ],
+            unsupported: false,
+          },
+        }),
+      });
+      const v = result.value;
+      if (
+        v.unsupported !== false ||
+        typeof v.background !== "string" ||
+        !v.background.trim() ||
+        !Array.isArray(v.questions) ||
+        v.questions.length !== 4 ||
+        v.questions.filter((q) => q?.language === "zh").length !== 2 ||
+        v.questions.filter((q) => q?.language === "en").length !== 2 ||
+        v.questions.some(
+          (q) => typeof q?.text !== "string" || !q.text.trim(),
+        ) ||
+        new Set(v.questions.map((q) => q.text)).size !== 4
+      )
+        throw fault("扩写结构不合格", 422);
+      if (
+        (JSON.stringify(v).match(/\d+(?:\.\d+)?/g) || []).some(
+          (n) => !sourceNumbers.has(n),
+        )
+      )
+        throw fault("扩写包含来源未支持的数值", 422);
+      break;
+    } catch (e) {
+      options.signal?.throwIfAborted();
+      if (e.status !== 422) throw e;
+      const diagnostics = {
+        error: e.message,
+        candidate: result?.value,
+        ...e.modelDiagnostics,
+      };
+      writeState(`expansion-rejected:${fingerprint}:${attempt}`, diagnostics);
+      if (attempt === 2)
+        throw Object.assign(e, { modelDiagnostics: diagnostics });
+      rejection = {
+        reason: e.message,
+        instruction:
+          "重新根据原文生成完整结构；必须两条 zh、两条 en，不得新增数值或事实。",
+      };
+      result = null;
+    }
+  }
+  const v = result.value;
   const saved = {
     ...v,
     fingerprint,

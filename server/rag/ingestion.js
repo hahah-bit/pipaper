@@ -75,7 +75,7 @@ function fingerprints(r, input) {
     parts = [
       cfg.parse,
       [cfg.rag.vision, r.reviewRevision || 0, "repair-v2"],
-      "normalize-v1",
+      "normalize-v3",
       cfg.rag.chunk,
       [cfg.rag.expansion, cfg.rag.expansionModel, expansionPromptVersion],
       cfg.rag.embedding,

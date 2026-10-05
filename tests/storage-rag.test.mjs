@@ -21,7 +21,7 @@ const {
 const { startIngestion, runJob, controlJob } = await import(
   "../server/rag/ingestion.js"
 );
-const { embed, waiting, modelJson } = await import(
+const { embed, waiting, modelJson, expand } = await import(
   "../server/rag/providers.js"
 );
 const { rrf, VectorIndex } = await import("../server/rag/milvus.js");
@@ -288,6 +288,46 @@ test("reference numbers resolve across pages, retain merged HTML and formula, an
   );
   assert.ok(parts.some((p) => p.type === "formula" && p.latex.includes("tag")));
 });
+test("explicit table continuations restore every page at a numbered reference without treating duplicates as continuations", () => {
+  const blocks = [
+    { id: "heading", type: "heading", level: 1, text: "Cities" },
+    { id: "intro", type: "para", page: 1, text: "Details are in Table 5." },
+    {
+      id: "main",
+      type: "table",
+      page: 2,
+      caption: "Table 5: City details",
+      html: "<table><tr><td>City A</td></tr></table>",
+    },
+    {
+      id: "continued",
+      type: "table",
+      page: 3,
+      caption: "Table 5 – Continued from previous page",
+      html: "<table><tr><td>City B</td></tr></table>",
+    },
+  ];
+  const doc = normalizeDocument({ blocks }, options);
+  assert.equal(doc.texts[0].quality, "ready");
+  assert.equal(doc.texts[0].elementIds.length, 2);
+  const chunk = chunkDocument(doc)[0];
+  assert.deepEqual(
+    hydrate(chunk, doc.elements)
+      .filter((p) => p.type === "table")
+      .map((p) => p.page),
+    [2, 3],
+  );
+  assert.equal(doc.body.filter((r) => r.kind === "table").length, 0);
+  const duplicate = normalizeDocument(
+    { blocks: [...blocks, { ...blocks[2], id: "independent", page: 4 }] },
+    options,
+  );
+  assert.equal(duplicate.texts[0].quality, "needs_review");
+  assert.ok(
+    duplicate.reviews.some((r) => r.issues.includes("ambiguous-reference")),
+  );
+});
+
 test("ambiguous scientific references and model uncertainty are quarantined", () => {
   const source = document();
   source.blocks.push({ ...source.blocks[4], id: "fig-duplicate" });
@@ -313,6 +353,45 @@ test("ambiguous scientific references and model uncertainty are quarantined", ()
       {},
       { kind: "formula", latex: "\\unknownbad", shortDescription: "equation" },
     ).includes("formula-syntax"),
+  );
+  const invalid = {
+    kind: "formula",
+    latex: "\\np_{ij}",
+    shortDescription: "transition",
+    uncertain: false,
+  };
+  assert.ok(
+    validateCandidate({}, { ...invalid, latex: "" }).includes("formula-syntax"),
+  );
+  assert.ok(
+    validateCandidate({}, { ...invalid, shortDescription: 42 }).includes(
+      "missing-description",
+    ),
+  );
+  assert.ok(
+    validateCandidate(
+      { nativeText: "pij", issues: ["math-source-conflict"] },
+      invalid,
+    ).includes("formula-syntax"),
+  );
+  const withBadMath = normalizeDocument(
+    {
+      blocks: [
+        { id: "safe", type: "para", md: "可核验正文。" },
+        {
+          id: "bad",
+          type: "formula",
+          nativeText: "pij",
+          latex: "p_{ij}",
+          issues: ["math-source-conflict"],
+        },
+      ],
+    },
+    { ...options, repairs: { bad: invalid } },
+  );
+  assert.ok(withBadMath.reviews.some((v) => v.blockId === "bad"));
+  assert.ok(
+    chunkDocument(withBadMath).some((c) => c.text.includes("可核验正文")),
   );
 });
 test("recursive chunks obey UTF-8 budgets and preserve placeholders and title IDs", () => {
@@ -661,6 +740,53 @@ test("model format failures stay reviewable rather than becoming configuration e
     (e) => e.status === 422,
   );
 });
+test("expansion retries malformed or unsupported candidates without caching them as evidence", async () => {
+  let calls = 0;
+  const valid = {
+    background: "Source observation.",
+    unsupported: false,
+    questions: [
+      { language: "zh", text: "观测说明了什么？" },
+      { language: "zh", text: "来源包含哪些观测？" },
+      { language: "en", text: "What is observed?" },
+      { language: "en", text: "What does the source describe?" },
+    ],
+  };
+  const runtime = {
+    getAvailable: async () => [
+      { provider: "test", id: "expansion", input: ["text"] },
+    ],
+    streamSimple: async function* (_model, input) {
+      calls++;
+      const output =
+        calls === 1
+          ? { ...valid, background: 42 }
+          : calls === 2
+            ? { ...valid, background: "Observed 99 samples." }
+            : valid;
+      if (calls > 1)
+        assert.ok(
+          JSON.parse(input.messages[0].content[0].text).validationFeedback,
+        );
+      yield { type: "text_delta", delta: JSON.stringify(output) };
+    },
+  };
+  const chunk = {
+    text: "Source observation.",
+    sectionPath: ["expansion-retry"],
+  };
+  const opts = { runtime, models: [{ provider: "test", id: "expansion" }] };
+  const result = await expand(chunk, "", opts);
+  assert.equal(calls, 3);
+  assert.equal(result.background, valid.background);
+  assert.equal(
+    catalog.readState(`expansion-rejected:${result.fingerprint}:1`).error,
+    "扩写包含来源未支持的数值",
+  );
+  assert.deepEqual(await expand(chunk, "", opts), result);
+  assert.equal(calls, 3);
+});
+
 test("migration scan is read-only, application is idempotent and rollback preserves files", () => {
   const sandbox = path.join(root, "migration-fixture"),
     data = path.join(sandbox, "data"),
