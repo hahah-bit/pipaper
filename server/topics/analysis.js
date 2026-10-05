@@ -74,10 +74,11 @@ export function validateDirections(value, papers, docs, profile, period = years(
     for (const e of d.extensions || []) { e.paperId = canonical(e.paperId); e.parentId = canonical(e.parentId); }
     if (["cpu", "api"].includes(d.hardware?.mode) && d.hardware.gpuCount === 0 && d.hardware.vramGB == null) d.hardware.vramGB = 0;
     if (![d.name, d.problem, d.rationale, d.story, d.smallPaper, d.critique, d.experiment].every(x => typeof x === "string" && x.trim()) || !Array.isArray(d.baselineIds) || new Set(d.baselineIds).size < 3 || !Array.isArray(d.evidenceIds) || !d.evidenceIds.length) throw fault("方向报告缺少问题、故事线、实验、挑刺或三个 baseline", 422);
-    if ([...d.baselineIds, ...d.evidenceIds].some(id => !byId.has(id))) throw fault("模型引用了检索结果之外的论文", 422);
+    const missingIds = [...d.baselineIds, ...d.evidenceIds].filter(id => !byId.has(id));
+    if (missingIds.length) throw fault(`模型引用了检索结果之外的论文：${missingIds.slice(0, 5).join("、")}。baselineIds 和 evidenceIds 必须填写给定 papers.id；evidence-N 是原文片段编号，不是论文编号。`, 422);
     const baselines = d.baselineIds.slice(0, 3).map(id => byId.get(id));
     if (baselines.some(p => !p.date || p.date < period.baselineFrom || p.date > period.to)) throw fault("Baseline 必须是滚动近三年内有确切日期的论文", 422);
-    if (baselines.some(p => !p.quality?.eligible || !((p.quality.system === "CAS" && p.quality.rank === 1) || (p.quality.system === "CCF" && p.quality.rank === "A")) || !safeURL(p.quality.sourceUrl) || !safeURL(p.quality.publicationUrl))) throw fault("Baseline 必须有中科院1区或CCF A正式长文的已核验发表证据，预印本/未核实来源不可入选", 422);
+    if (baselines.some(p => !p.quality?.eligible || !((p.quality.system === "CAS" && p.quality.rank === 1) || (p.quality.system === "CCF" && p.quality.rank === "A")) || (!safeURL(p.quality.sourceUrl) && !p.quality.sourceTable) || !safeURL(p.quality.publicationUrl))) throw fault("Baseline 必须有中科院1区或CCF A正式长文的已核验发表证据，预印本/未核实来源不可入选", 422);
     if (baselines[0].type === "review") throw fault("综述不能作为要复现的主 Baseline", 422);
     const baselineDocs = docs.filter(x => x.paperIds?.includes(baselines[0].id));
     const dataset = datasetEvidence(d.dataset, baselineDocs) && safeURL(d.dataset.downloadUrl) && baselineDocs.some(x => x.url === d.dataset.downloadUrl)

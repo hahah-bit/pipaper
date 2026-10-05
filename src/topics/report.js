@@ -9,7 +9,7 @@ const pill = text => node("span", { class: "topic-pill" }, text);
 function baseline(p, main = false, extensions = []) {
   const root = node("article", { class: main ? "baseline-main" : "baseline-small" }, node("div", { class: "baseline-meta" }, pill(main ? "主 Baseline · 从复现开始" : "对照 Baseline"), node("span", {}, `${p.date} · ${p.citations == null ? "引用量未提供" : `${p.citations}次引用`}`)), node(main ? "h3" : "h4", {}, p.title),
     main && node("p", {}, p.abstract?.slice(0, 650) || "该论文暂无可用摘要，请查看原文。"), p.availabilityNote && node("p", { class: "muted" }, p.availabilityNote),
-    p.quality?.eligible ? node("div", { class: "baseline-verification" }, pill(p.quality.system === "CAS" ? `中科院1区 · ${p.quality.year}` : `CCF A · ${p.quality.venue} · 目录${p.quality.year}`), link("正式发表记录 ↗", p.quality.publicationUrl), link("分区 / 目录依据 ↗", p.quality.sourceUrl)) : node("p", { class: "inline-error" }, "历史结果未通过当前 Baseline 来源标准，请重新分析。"),
+    p.quality?.eligible ? node("div", { class: "baseline-verification" }, pill(p.quality.system === "CAS" ? `中科院1区 · ${p.quality.year}` : `CCF A · ${p.quality.venue} · 目录${p.quality.year}`), link("正式发表记录 ↗", p.quality.publicationUrl), p.quality.sourceTable ? node("span", { class: "muted" }, `分区依据：导入的官方分区表 ${p.quality.year} 年版`) : link("分区 / 目录依据 ↗", p.quality.sourceUrl)) : node("p", { class: "inline-error" }, "历史结果未通过当前 Baseline 来源标准，请重新分析。"),
     node("div", { class: "topic-actions" }, link(p.pdf ? "论文 PDF ↗" : "论文原文 ↗", p.pdf || p.url), ...(p.code || []).flatMap(c => [link("作者项目仓库 ↗", c.url), c.downloadUrl && link("下载仓库 ZIP ↗", c.downloadUrl)]), !(p.code || []).length && node("small", { class: "muted" }, "代码入口未核实")));
   root.append(node("details", { class: "extension-capsule" }, node("summary", {}, `后续工作与改进关系 ${extensions.length ? `· ${extensions.length}篇` : "· 暂无已核实关系"}`),
     extensions.length ? extensions.map(e => node("div", { class: "extension-item" }, node("strong", {}, e.paper.title), node("p", {}, e.change), link("论文 / 下载", e.paper.pdf || e.paper.url), (e.paper.code || []).map(c => link("代码", c.url)), node("small", {}, e.quote))) : node("p", { class: "muted" }, "只有引用关系和原文明示的改进才归入此处，相关论文不自动视为衍生工作。")));
@@ -30,8 +30,9 @@ export function directionDetail(d) {
   const dlg = dialog("方向详细报告", body); dlg.classList.add("report-dialog");
 }
 export function directionCards(report) {
-  const root = node("div", { class: "report-directions" }, node("div", { class: "report-heading" }, node("div", {}, node("p", { class: "eyebrow" }, "THE RESEARCH SHORTLIST"), node("h2", {}, "先看值得研究的问题")), node("span", { class: "count-badge" }, String(report.conclusions.length).padStart(2, "0"))),
+  const root = node("div", { class: "report-directions" }, node("div", { class: "report-heading" }, node("div", {}, node("p", { class: "eyebrow" }, "THE RESEARCH SHORTLIST"), node("h2", {}, "先看值得研究的问题")), node("span", { class: "count-badge" }, String(report.conclusions.length + report.pending.length).padStart(2, "0"))),
     node("p", { class: "muted" }, `基于 ${report.corpusSize} 篇去重检索候选 · ${report.recentSize} 篇通过近期 Baseline 来源核验 · ${new Date(report.createdAt).toLocaleDateString()}`));
+  if (report.conclusions.length + report.pending.length) root.append(node("p", { class: "muted" }, `${report.conclusions.length + report.pending.length} 个候选方向 · ${report.conclusions.length} 个通过资源约束核验 · ${report.pending.length} 个待核验 / 暂不匹配`));
   const cards = (rows, pending = false) => rows.map((d, i) => {
     const b = node("button", { class: "direction-card" + (pending ? " pending" : ""), type: "button", onclick: () => directionDetail(d) }, node("div", { class: "direction-top" }, node("span", { class: "direction-number" }, String(i + 1).padStart(2, "0")), pill(d.name), node("span", { class: "card-arrow" }, "↗")), node("h3", {}, d.problem), node("p", {}, d.smallPaper),
       node("div", { class: "direction-bottom" }, node("span", {}, pending ? "◷ " + d.filterReasons.join(" · ") : "✓ 数据与执行路线有据"), node("small", {}, "3 篇近期 Baseline →")),
@@ -40,13 +41,14 @@ export function directionCards(report) {
   });
   if (report.overview) root.append(node("section", { class: "report-recommendation" }, node("p", { class: "eyebrow" }, "建议先从这里开始"), node("h3", {}, report.overview.recommendation), markdown(report.overview.why), node("h4", {}, "第一周怎么验证"), markdown(report.overview.firstWeek), node("p", { class: "muted" }, report.overview.boundaries)));
   root.append(...cards(report.conclusions));
-  if (!report.conclusions.length) root.append(node("div", { class: "evidence-callout amber" }, "暂未获得同时满足约束的方向。下面保留有研究价值但证据或资源条件不足的候选。"));
+  if (!report.conclusions.length) root.append(node("div", { class: "evidence-callout amber" }, report.phase === "evidence" ? "检索已结束，但通过发表核验的论文不足，暂不能生成可靠的方向结论。请查看下方诊断及中栏来源记录，修复来源或补充证据后重新分析。" : "暂未获得同时满足约束的方向。下面保留有研究价值但证据或资源条件不足的候选。"));
   if (report.pending.length) root.append(node("h3", { class: "pending-heading" }, "待核验 / 暂不匹配"), ...cards(report.pending, true));
   root.append(node("section", { class: "keyword-section" }, node("h3", {}, "近三个完整年度 · 具体关键词"), node("p", { class: "muted" }, report.keywordMethod || "去重论文样本内，每篇每词计一次；已排除学科门类。"), node("div", { class: "keyword-list" }, report.keywords.map(k => node("span", { title: Object.entries(k.years).map(([y, n]) => `${y}：${n ?? "未进入该年top200，未知"}`).join("；") }, k.name, node("b", {}, k.count))))));
   return root;
 }
 export function journalCards(report) {
   const root = node("div", {}, node("p", { class: "eyebrow" }, "WHERE YOUR WORK COULD BELONG"), node("h2", {}, "寻找适合讲这个故事的期刊"), node("p", { class: "muted" }, "中科院分区、会议等级独立核验。匹配分来自可解释统计，不代表录用率。"));
+  if (report.status === "partial") root.append(node("p", { class: "evidence-callout" }, `当前为阶段报告，已保存 ${report.journals.length} 个来源。期刊统计尚未全部完成，可先查看方向结论。`));
   const filters = node("div", { class: "journal-filters" }), grid = node("div", { class: "journal-grid" });
   const definitions = [["all", "全部"], ["cas1", "中科院1区"], ["cas2", "中科院2区"], ["cas3", "中科院3区"], ["cas4", "中科院4区"], ["conference", "会议"], ["unknown", "待核验分区"]];
   const matches = (j, key) => key === "all" || key === "conference" && j.type === "conference" || key === "unknown" && j.type === "journal" && !j.cas || key.startsWith("cas") && j.cas?.zone === Number(key.slice(3));
@@ -58,7 +60,7 @@ export function journalCards(report) {
       const details = node("details", { class: "journal-details" }, node("summary", {}, "查看偏好、来源与统计口径"), node("h4", {}, "发文偏好 · 样本推断"), markdown(j.preference), node("h4", {}, "为什么匹配"), markdown(j.fitReason), node("p", { class: "muted" }, j.scoreMethod),
         node("p", { class: "muted" }, `论文元数据样本 ${j.sampleSize} 篇；摘要覆盖 ${j.coverage}%；匹配分维度覆盖 ${j.scoreCoverage}%。${j.keywordMethod || ""}${j.countScope || ""}`), j.phrases?.length && node("p", { class: "muted" }, `计数短语：${j.phrases.join(" · ")}`), j.sources.map((u, i) => link(`统计来源 ${i + 1} ↗`, u)),
         j.evidenceIds.map(id => { const p = j.papers.find(p => p.id === id); return p && node("p", {}, link(p.title, p.url)); }),
-        j.cas && node("p", {}, link(`中科院 ${j.cas.year} · ${j.cas.category || "分类未注明"}`, j.cas.url), node("small", {}, j.cas.quote)),
+        j.cas && node("p", {}, j.cas.fromTable ? node("span", { class: "muted" }, `中科院 ${j.cas.year} 年版 · ${j.cas.category || "分类未注明"} · 来自导入分区表`) : [link(`中科院 ${j.cas.year} · ${j.cas.category || "分类未注明"}`, j.cas.url), node("small", {}, j.cas.quote)]),
         j.review && node("p", {}, link("审稿指标原文", j.review.url), node("small", {}, j.review.quote)));
       grid.append(node("article", { class: "journal-card" }, node("header", {}, node("div", {}, pill(j.type === "conference" ? `会议 ${j.conference?.rank || "等级待核实"}` : j.cas ? `中科院${j.cas.zone}区 · ${j.cas.year}` : "中科院分区待核实"), node("h3", {}, j.name)), node("div", { class: "match-score" }, node("strong", {}, j.match ?? "—"), node("small", {}, "检索匹配"))),
         node("div", { class: "journal-stats" }, node("div", {}, node("strong", {}, j.count ?? "—"), node("span", {}, "窗口内方向论文")), node("div", {}, node("strong", {}, j.growth == null ? "—" : `${j.growth > 0 ? "+" : ""}${j.growth}%`), node("span", {}, "完整三年首尾变化")), node("div", {}, node("strong", {}, j.review ? `${j.review.days} 天` : "待核实"), node("span", {}, j.review ? ({ "first-decision": "首次决定（非外审）", review: "外审周期", acceptance: "至录用周期" })[j.review.metric] : "审稿周期"))),

@@ -69,8 +69,19 @@ input, select, textarea { font-family: inherit; }
 .side-head { display: flex; align-items: center; gap: 7px; min-height: 30px; padding: 0 3px; }
 #btn-theme-slot { display: flex; flex: none; }
 #btn-theme-slot .icon-btn { width: 28px; height: 28px; padding: 0; font-size: 12px; }
-.side-primary-actions { display: grid; grid-template-columns: 1fr 82px; gap: 7px; }
-.side-primary-actions .tool-btn { min-width: 0; min-height: 32px; padding: 6px 8px; font-size: 12px; }
+/* 主操作区：读论文独占一行做主按钮；选题分析 / 导入 等分第二行 */
+.side-primary-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: -4px; }
+.side-primary-actions .tool-btn { min-width: 0; min-height: 34px; padding: 7px 10px; font-size: 13px; }
+.side-primary-actions .tool-btn.primary {
+  grid-column: 1 / -1; min-height: 40px; font-size: 14px; font-weight: 600; letter-spacing: 1px;
+  box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--accent) 70%, transparent);
+  transition: filter .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+.side-primary-actions .tool-btn.primary:hover {
+  filter: brightness(1.1); transform: translateY(-1px);
+  box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--accent) 80%, transparent);
+}
+.side-primary-actions .tool-btn.primary:active { transform: translateY(0); filter: brightness(.97); }
 .pane-toggle {
   flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border);
   border-radius: 7px; background: var(--bg2); color: var(--fg1); font-size: 17px; line-height: 1;

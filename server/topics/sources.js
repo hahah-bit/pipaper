@@ -5,6 +5,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { DOMParser } from "@xmldom/xmldom";
 import { getConfig } from "../config.js";
 import { fault } from "./store.js";
+import { withDeadline } from "./deadline.js";
+import { proxyFor, proxyDNSHosts, tunnelAgent, createResilientRequest, decodeResponse } from "./network.js";
 
 export function safeURL(value) {
   try { const u = new URL(String(value)); if (u.protocol !== "https:" || u.username || u.password || (u.port && u.port !== "443")) return null; return u.href; } catch { return null; }
@@ -15,16 +17,25 @@ export function privateAddress(address) {
   // Use public IPv4 DNS answers for document retrieval; IPv6 literals are rejected.
   return true;
 }
-export async function remote(url, { signal, maxBytes = 18000000, redirects = 0, method = "GET" } = {}) {
+export async function remote(url, options = {}) {
+  return withDeadline(signal => remoteRequest(url, { ...options, signal }), {
+    signal: options.signal, ms: options.timeoutMs || 35000, message: `${new URL(url).hostname} 请求超时（含 DNS、连接和下载）`,
+  });
+}
+async function remoteRequest(url, { signal, maxBytes = 18000000, redirects = 0, method = "GET" } = {}) {
   const clean = safeURL(url); if (!clean || redirects > 4) throw fault("仅支持公开 HTTPS 来源，或重定向过多");
   signal?.throwIfAborted(); const u = new URL(clean);
   const addresses = net.isIP(u.hostname) ? [{ address: u.hostname, family: 4 }] : await dns.lookup(u.hostname, { all: true, family: 4 });
+  signal?.throwIfAborted();
   if (!addresses.length || addresses.some(a => privateAddress(a.address))) throw fault("资料来源不能指向本机或内部网络");
-  // Pin the validated address through the connection, including each redirect.
-  const result = await new Promise((resolve, reject) => {
-    const req = https.request(u, { method, signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(35000)]),
-      lookup: (_host, options, callback) => options.all ? callback(null, [addresses[0]]) : callback(null, addresses[0].address, 4),
-      headers: { "User-Agent": "PiPaper-TopicAnalysis/1.0", "Accept-Encoding": "identity" } }, res => {
+  const proxy = proxyFor(clean), agent = proxy ? tunnelAgent(proxy, proxyDNSHosts.has(u.hostname) ? u.hostname : addresses[0].address, signal) : null;
+  // Direct connections can try every validated IPv4 address instead of pinning
+  // the first failing address forever. Redirects receive the same validation.
+  let result;
+  try { result = await new Promise((resolve, reject) => {
+    const req = https.request(u, { method, signal, ...(agent ? { agent } : { autoSelectFamily: true, autoSelectFamilyAttemptTimeout: 1500 }),
+      lookup: (_host, options, callback) => options.all ? callback(null, addresses) : callback(null, addresses[0].address, 4),
+      headers: { "User-Agent": "PiPaper-TopicAnalysis/1.0", Accept: "*/*", "Accept-Encoding": "gzip, deflate, br" } }, res => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode)) { res.resume(); resolve({ redirect: new URL(res.headers.location, u).href }); return; }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         const error = fault(`${u.hostname} 返回 HTTP ${res.statusCode}`, 502);
@@ -32,17 +43,22 @@ export async function remote(url, { signal, maxBytes = 18000000, redirects = 0, 
         error.retryAfter = Number(res.headers["retry-after"] || res.headers["x-ratelimit-reset"] || 0);
         const chunks = []; let size = 0;
         res.on("data", c => { if ((size += c.length) < 8000) chunks.push(c); });
-        res.on("end", () => {
-          try { const data = JSON.parse(Buffer.concat(chunks).toString()); if (data.dailyRemainingUsd != null) { error.quota = true; error.retryAfter ||= Number(data.retryAfter || 0); error.message += "（当日匿名/账号配额已用尽，已暂停该来源；不代表零篇论文）"; } } catch {}
+        res.on("end", async () => {
+          try { const data = JSON.parse((await decodeResponse(Buffer.concat(chunks), res.headers["content-encoding"], 8000)).toString()); if (data.dailyRemainingUsd != null) { error.quota = true; error.retryAfter ||= Number(data.retryAfter || 0); error.message += "（当日匿名/账号配额已用尽，已暂停该来源；不代表零篇论文）"; } } catch {}
           reject(error);
         }); res.on("error", reject); return;
       }
       const chunks = []; let bytes = 0;
       res.on("data", c => { bytes += c.length; if (bytes > maxBytes) res.destroy(fault("资料超过大小上限")); else chunks.push(c); });
-      res.on("end", () => resolve({ url: clean, buffer: Buffer.concat(chunks), contentType: String(res.headers["content-type"] || "") })); res.on("error", reject);
+      res.on("end", async () => {
+        try {
+          const buffer = method === "HEAD" ? Buffer.alloc(0) : await decodeResponse(Buffer.concat(chunks), res.headers["content-encoding"], maxBytes);
+          signal?.throwIfAborted(); resolve({ url: clean, buffer, contentType: String(res.headers["content-type"] || "") });
+        } catch (e) { reject(e); }
+      }); res.on("error", reject);
     }); req.on("error", reject); req.end();
-  });
-  return result.redirect ? remote(result.redirect, { signal, maxBytes, redirects: redirects + 1, method }) : result;
+  }); } finally { agent?.destroy(); }
+  return result.redirect ? remoteRequest(result.redirect, { signal, maxBytes, redirects: redirects + 1, method }) : result;
 }
 export function years(now = new Date()) {
   const y = now.getUTCFullYear(); const cutoff = new Date(now); cutoff.setUTCFullYear(y - 3);
@@ -76,6 +92,7 @@ export function arxivExpression(query) {
   return out.join(" ");
 }
 export function createSources({ request = remote, now = () => new Date() } = {}) {
+  request = createResilientRequest(request);
   let openalexBlockedUntil = 0, openalexQuotaError;
   const openalex = async (endpoint, params, signal) => {
     if (openalexBlockedUntil > Date.now()) throw openalexQuotaError;
@@ -108,15 +125,21 @@ export function createSources({ request = remote, now = () => new Date() } = {})
       const u = new URL("https://export.arxiv.org/api/query");
       u.searchParams.set("search_query", `(${arxivExpression(query)}) AND submittedDate:[${years(now()).baselineFrom.replaceAll("-", "")}0000 TO ${years(now()).to.replaceAll("-", "")}2359]`);
       u.searchParams.set("sortBy", "submittedDate"); u.searchParams.set("sortOrder", "descending"); u.searchParams.set("max_results", "25");
-      const r = await request(u.href, { signal }), doc = new DOMParser().parseFromString(r.buffer.toString("utf8"), "text/xml");
+      // arXiv's gateway rejects some form-encoded phrase/date expressions (406).
+      // Use URI-encoded spaces, preserving literal '+' as URLSearchParams' %2B.
+      const sourceUrl = u.href.replaceAll("+", "%20");
+      const r = await request(sourceUrl, { signal }), doc = new DOMParser().parseFromString(r.buffer.toString("utf8"), "text/xml");
+      if (doc.documentElement?.localName !== "feed" || doc.documentElement?.namespaceURI !== "http://www.w3.org/2005/Atom") throw fault("arXiv 未返回有效 Atom 检索结果，不能视为零篇", 502);
       const value = (e, tag) => e.getElementsByTagName(tag)[0]?.textContent?.trim() || "";
+      const errorEntry = Array.from(doc.getElementsByTagName("entry")).find(e => /arxiv\.org\/api\/errors/.test(value(e, "id")));
+      if (errorEntry) throw fault(`arXiv 查询失败：${value(errorEntry, "summary").slice(0, 300)}`, 502);
       const papers = Array.from(doc.getElementsByTagName("entry")).map(e => {
         const id = value(e, "id").replace(/^http:/, "https:");
         return { id, source: "arXiv", title: value(e, "title").replace(/\s+/g, " "), abstract: value(e, "summary"), date: value(e, "published").slice(0, 10), year: Number(value(e, "published").slice(0, 4)),
           url: id, pdf: id.replace("/abs/", "/pdf/"), citations: null, doi: value(e, "arxiv:doi") ? `https://doi.org/${value(e, "arxiv:doi")}` : null,
           keywords: Array.from(e.getElementsByTagName("category")).map(c => c.getAttribute("term")), references: [], venue: null, paperOpenAccess: true };
       }).filter(p => /arxiv\.org\/abs\//.test(p.id));
-      return { papers, sourceUrl: u.href, retrievedAt: now().toISOString() };
+      return { papers, sourceUrl, retrievedAt: now().toISOString() };
     }); arxivQueue = job; return job;
   }
   const crossref = async (query, { signal, limit = 40, doi } = {}) => {
@@ -127,7 +150,7 @@ export function createSources({ request = remote, now = () => new Date() } = {})
     if (data.status !== "ok" || !data.message || (!doi && !Array.isArray(data.message.items))) throw fault("Crossref 响应无效", 502);
     return { papers: (doi ? [data.message] : data.message.items).map(normalizeCrossref), total: data.message["total-results"] ?? (doi ? 1 : null), sourceUrl: u.href, retrievedAt: now().toISOString() };
   };
-  return { works, groups, arxiv, crossref, searchSources: (name, signal) => openalex("sources", { search: name, per_page: 5 }, signal), resolve: async (doi, signal) => {
+  return { request, works, groups, arxiv, crossref, searchSources: (name, signal) => openalex("sources", { search: name, per_page: 5 }, signal), resolve: async (doi, signal) => {
     const r = await openalex(`works/${encodeURIComponent(doi)}`, {}, signal); return normalizeWork(r);
   }, citations: (id, signal) => {
     const key = String(id).split("/").pop(); if (!/^W\d+$/.test(key)) throw fault("无效的论文 ID");

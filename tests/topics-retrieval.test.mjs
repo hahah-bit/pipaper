@@ -4,7 +4,7 @@ import { buildPlan } from "../server/topics/planning.js";
 import { conferenceLocator, verifyConference } from "../server/topics/quality.js";
 import { mergePapers, createSources } from "../server/topics/sources.js";
 import { retrieve } from "../server/topics/retrieval.js";
-import { samePaper, hasFullText, ownCode } from "../server/topics/reading.js";
+import { samePaper, hasFullText, ownCode, bindEvidence } from "../server/topics/reading.js";
 import { supported, hardwareEvidence, datasetEvidence } from "../server/topics/analysis.js";
 
 const concepts = { concepts: [{ zh: "工具学习", en: "tool learning", role: "task" }], directions: [{ parent: "智能体技能", name: "工具迁移", problem: "工具学习如何迁移", terms: [{ zh: "工具学习", en: "tool learning", synonyms: ["tool use"] }, { zh: "迁移", en: "transfer learning" }] }], policyTerms: ["工业智能体"] };
@@ -47,6 +47,21 @@ test("malformed OpenAlex response cannot silently become an empty corpus", async
   const sources = createSources({ request: async () => ({ buffer: Buffer.from('{"error":"quota"}') }) });
   await assert.rejects(sources.works("test"), /无效数据结构/);
 });
+
+test("same-day successful searches are reused while failed attempts are retried", async () => {
+  const plan = buildPlan(concepts, false), query = plan.queries[0].query;
+  let exactCalls = 0, retried = 0;
+  const sources = {
+    works: async (q, options) => { if (q === query && options.sort === "relevance_score:desc") exactCalls++; return { papers: [] }; },
+    crossref: async () => { retried++; return { papers: [] }; }, arxiv: async () => ({ papers: [] }),
+  };
+  const r = await retrieve(plan, { sources, getDoc: async () => null, cachedSearches: [
+    { source: "OpenAlex 相关度", query, status: "ok", papers: [{ id: "cached", title: "Cached paper", date: "2025-01-01" }] },
+    { source: "Crossref", query, status: "error", count: null },
+  ] });
+  assert.equal(exactCalls, 0); assert.ok(retried > 0); assert.equal(r.papers[0].id, "cached");
+  assert.ok(r.summary.attempts.some(a => a.cacheHit && a.query === query));
+});
 test("a wrong OA PDF cannot borrow identity from a reference to the requested paper", () => {
   const p = { title: "The requested research paper" };
   assert.equal(samePaper(p, { pages: [{ text: "An entirely different paper" }, { text: p.title }], text: p.title }), false);
@@ -68,4 +83,11 @@ test("publication abstracts, referenced repositories and commands cannot stand i
   assert.equal(datasetEvidence({ url, quote }, [{ url, text: quote }]), false);
   const mixed = "Experiments run on an Intel CPU and NVIDIA GPU with 64 GB RAM.";
   assert.equal(hardwareEvidence({ mode: "cpu", gpuCount: 0, vramGB: 0, url, quote: mixed }, [{ url, text: mixed }]), false);
+});
+
+test("supplied excerpt citations resolve to their proven paper IDs without inventing unknown references", () => {
+  const options = [{ id: "evidence-1", kind: "dataset", paperIds: ["paper-1", "paper-2"], url: "https://example.org/data", quote: "Publicly available dataset" }];
+  const value = bindEvidence({ directions: [{ evidenceIds: ["evidence-1", "paper-1", "evidence-999"], dataset: { evidenceId: "evidence-1" } }] }, options);
+  assert.deepEqual(value.directions[0].evidenceIds, ["paper-1", "paper-2", "evidence-999"]);
+  assert.equal(value.directions[0].dataset.quote, options[0].quote);
 });

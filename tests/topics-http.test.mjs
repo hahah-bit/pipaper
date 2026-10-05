@@ -61,9 +61,57 @@ test("persisted interrupted work recovers and insufficient evidence never claims
   const data = topicFixtureData();
   const { api } = await fixture(t, { sources: { ...data.sources, works: async () => ({ papers: [], total: 0 }), arxiv: async () => ({ papers: [] }) } });
   const task = (await api("/topics", { mode: "direction", researchArea: "没有数据的领域" })).body.task;
-  await api(`/topics/${task.id}/analyze`, {}); const done = await waitIdle(api, task.id); assert.equal(done.status, "failed"); assert.equal(done.reportId, null); assert.match(done.lastError, /不足/);
+  await api(`/topics/${task.id}/analyze`, {}); const done = await waitIdle(api, task.id); assert.equal(done.status, "insufficient"); assert.ok(done.reportId);
+  const diagnostic = (await api(`/topics/${task.id}/files/${done.reportId}`)).body.data;
+  assert.equal(diagnostic.phase, "evidence"); assert.equal(diagnostic.conclusions.length, 0); assert.ok(diagnostic.warnings.some(w => /不足/.test(w)));
   store.change(task.id, t => { t.status = "running"; t.chatBusy = true; t.chat = [{ role: "assistant", text: "半条回复", status: "streaming" }]; }); store.recover();
   const recovered = store.read(task.id); assert.equal(recovered.status, "interrupted"); assert.equal(recovered.chatBusy, false); assert.equal(recovered.chat[0].status, "interrupted");
+  await api(`/topics/${task.id}`, null, "DELETE");
+});
+
+test("directions are readable while journals are pending and survive stopping an unresponsive provider", async t => {
+  const data = topicFixtureData();
+  let entered; const waiting = new Promise(resolve => { entered = resolve; });
+  const { api } = await fixture(t, { model: options => {
+    if (options.input.task === "topic_venues") { entered(); return new Promise(() => {}); }
+    return data.model(options);
+  } });
+  const p = (await api("/topics/profiles", topicProfile)).body.profile;
+  const task = (await api("/topics", { mode: "topic", profileId: p.id })).body.task;
+  await api(`/topics/${task.id}/analyze`, {}); await waiting;
+  const working = (await api(`/topics/${task.id}`)).body;
+  assert.equal(working.task.status, "running"); assert.ok(working.task.reportId);
+  const report = (await api(`/topics/${task.id}/files/${working.task.reportId}`)).body.data;
+  assert.equal(report.status, "partial"); assert.equal(report.conclusions.length, 3); assert.equal(report.journals.length, 0);
+  assert.equal((await api(`/topics/${task.id}/stop`, {})).status, 200);
+  const stopped = await waitIdle(api, task.id);
+  assert.equal(stopped.status, "interrupted"); assert.equal(stopped.reportId, working.task.reportId);
+  await api(`/topics/${task.id}`, null, "DELETE");
+});
+
+test("analysis deadline releases the operation and rejects late model writes", async t => {
+  let release;
+  const { api } = await fixture(t, { analysisTimeoutMs: 60, model: () => new Promise(resolve => { release = resolve; }) });
+  const task = (await api("/topics", { mode: "direction", researchArea: "超时恢复测试" })).body.task;
+  await api(`/topics/${task.id}/analyze`, {});
+  const done = await waitIdle(api, task.id);
+  assert.equal(done.status, "failed"); assert.match(done.lastError, /时限/);
+  const revision = done.revision;
+  release({ value: {}, model: { provider: "test", id: "late" } }); await delay(30);
+  assert.equal((await api(`/topics/${task.id}`)).body.task.revision, revision);
+  await api(`/topics/${task.id}`, null, "DELETE");
+});
+
+test("chat receives actual analysis progress and successful evidence even after recent source failures", async t => {
+  const data = topicFixtureData(); let input;
+  const { api } = await fixture(t, { model: options => { input = options.input; return data.model(options); } });
+  const task = (await api("/topics", { mode: "direction", researchArea: "检索进度" })).body.task;
+  store.artifact(task.id, "search", "successful search", { status: "ok", query: "anomaly detection", papers: [{ title: "Saved evidence", url: "https://example.org/paper" }] });
+  for (let i = 0; i < 2; i++) store.artifact(task.id, "search", "failed search", { status: "error", error: "ETIMEDOUT" });
+  store.change(task.id, t => { t.stage = "search"; t.progress = { text: "来源请求超时" }; });
+  await api(`/topics/${task.id}/chat`, { text: "为什么还没出报告？" }); await waitIdle(api, task.id);
+  assert.equal(input.analysisState.savedSearches, 3); assert.equal(input.analysisState.progress.text, "来源请求超时");
+  assert.equal(input.searches[0].papers[0].title, "Saved evidence"); assert.equal(input.report, null);
   await api(`/topics/${task.id}`, null, "DELETE");
 });
 test("failed physical deletion retains a retryable lifecycle record and blocks new writes", async t => {

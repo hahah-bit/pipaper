@@ -69,10 +69,16 @@ export function evidenceOptions(documents) {
   return options;
 }
 export function bindEvidence(value, options) {
-  for (const d of value.directions || []) for (const kind of ["dataset", "hardware"]) {
-    const claim = d[kind]; if (!claim) continue;
-    const candidate = options.find(e => e.id === claim.evidenceId && e.kind === kind && (!claim.url || claim.url === e.url));
-    if (candidate) { d[kind].url = candidate.url; d[kind].quote = candidate.quote; }
+  const byId = new Map(options.map(e => [e.id, e]));
+  for (const d of value.directions || []) {
+    // Models sometimes put a supplied excerpt ID in the bibliography field.
+    // Resolve only the explicit excerpt→paper relation; unknown IDs stay invalid.
+    if (Array.isArray(d.evidenceIds)) d.evidenceIds = [...new Set(d.evidenceIds.flatMap(id => byId.get(id)?.paperIds?.length ? byId.get(id).paperIds : [id]))];
+    for (const kind of ["dataset", "hardware"]) {
+      const claim = d[kind]; if (!claim) continue;
+      const candidate = options.find(e => e.id === claim.evidenceId && e.kind === kind && (!claim.url || claim.url === e.url));
+      if (candidate) { d[kind].url = candidate.url; d[kind].quote = candidate.quote; }
+    }
   }
   return value;
 }

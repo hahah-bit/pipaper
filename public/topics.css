@@ -19,5 +19,47 @@
 .plan-question details { margin: 8px 0; font-size: 11px; }.plan-question summary { cursor: pointer; }
 .query-expression { display: block; margin: 8px 0; padding: 9px; border-radius: 5px; background: #f0f4f1; font-size: 11px; line-height: 1.8; white-space: normal; overflow-wrap: anywhere; }
 .plan-coverage { color: #286d58; }.baseline-verification { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 14px 0; font-size: 12px; }
+.topic-progress-panel { flex: 0 0 auto; max-height: 30vh; overflow: auto; }
+.topic-progress-panel:empty { display: none; }
+.topic-progress-panel .evidence-callout { margin: 12px 24px; padding: 12px 16px; font-size: 12px; overflow-wrap: anywhere; }
+.topic-progress-panel p { margin: 6px 0 0; }
 .report-recommendation { padding: 25px; margin: 24px 0; border: 1px solid #bad3c6; border-radius: 12px; background: #eff5f1; }
 .report-recommendation h3 { font-size: 21px; line-height: 1.65; margin: 8px 0 15px; }.report-recommendation h4 { margin: 22px 0 8px; }
+
+/* ── 阶段时间轴 · 行走小人（选题分析进度） ── */
+.stage-rail { margin: 2px 0 22px; }
+.stage-track { position: relative; height: 66px; margin: 10px 14px 0; }
+.stage-ground { position: absolute; left: 0; right: 0; bottom: 35px; height: 2px; border-radius: 2px; background: #dce6de; }
+.stage-fill { position: absolute; left: 0; bottom: 34px; height: 3px; border-radius: 3px; background: linear-gradient(90deg, #b9d4c2, var(--accent)); transition: width 1s ease; }
+.stage-station { position: absolute; bottom: 29px; transform: translateX(-50%); }
+.stage-station i { display: block; width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid #c7d4ca; transition: background .5s, border-color .5s; }
+.stage-station em { position: absolute; bottom: -15px; left: 50%; transform: translateX(-50%); font-style: normal; font-size: 10px; letter-spacing: .5px; line-height: 1; color: #98a49c; white-space: nowrap; transition: color .5s; }
+.stage-station.alt em { bottom: -30px; }
+.stage-station.done i { background: var(--accent); border-color: var(--accent); }
+.stage-station.done em { color: #5d7a6b; }
+.stage-station.current i { background: var(--accent); border-color: var(--accent); animation: station-pulse 1.5s ease-out infinite; }
+.stage-station.current em { color: var(--accent); font-weight: 650; }
+@keyframes station-pulse { 0% { box-shadow: 0 0 0 0 #286d5540; } 70% { box-shadow: 0 0 0 7px #286d5500; } 100% { box-shadow: 0 0 0 0 #286d5500; } }
+.stage-walker { position: absolute; bottom: 37px; width: 20px; height: 28px; transform: translateX(-50%); transition: left 1.1s cubic-bezier(.45, 0, .25, 1); }
+.stage-walker svg { display: block; overflow: visible; }
+.stage-walker .w-shadow { fill: #286d5522; }
+.stage-walker .w-head { fill: var(--accent); }
+.stage-walker line { stroke: var(--accent); stroke-width: 2; stroke-linecap: round; }
+.stage-walker .w-leg-a { transform-box: view-box; transform-origin: 11px 16.5px; animation: leg-swing-a .62s ease-in-out infinite; }
+.stage-walker .w-leg-b { transform-box: view-box; transform-origin: 11px 16.5px; animation: leg-swing-b .62s ease-in-out infinite; }
+.stage-walker .w-arm-a { transform-box: view-box; transform-origin: 11px 9.5px; animation: leg-swing-b .62s ease-in-out infinite; }
+.stage-walker .w-arm-b { transform-box: view-box; transform-origin: 11px 9.5px; animation: leg-swing-a .62s ease-in-out infinite; }
+@keyframes leg-swing-a { 0%, 100% { transform: rotate(24deg); } 50% { transform: rotate(-24deg); } }
+@keyframes leg-swing-b { 0%, 100% { transform: rotate(-24deg); } 50% { transform: rotate(24deg); } }
+.stage-rail[data-state="running"] .stage-walker svg { animation: walker-bob .62s ease-in-out infinite; }
+@keyframes walker-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-1px); } }
+.stage-rail:not([data-state="running"]) .w-leg-a, .stage-rail:not([data-state="running"]) .w-leg-b,
+.stage-rail:not([data-state="running"]) .w-arm-a, .stage-rail:not([data-state="running"]) .w-arm-b,
+.stage-rail:not([data-state="running"]) .stage-walker svg { animation: none; }
+.stage-rail[data-state="failed"] .w-head { fill: var(--amber); }
+.stage-rail[data-state="failed"] .stage-walker line { stroke: var(--amber); }
+.stage-rail[data-state="failed"] .stage-fill { background: linear-gradient(90deg, #e3d3b4, var(--amber)); }
+.stage-meta { display: flex; gap: 12px; margin: 8px 14px 0; font-size: 10px; color: var(--muted); }
+.stage-elapsed { color: var(--accent); font-weight: 600; }
+.topic-timeline[data-running="1"] .timeline-step:last-child .timeline-dot { background: var(--accent); animation: dot-breathe 1.5s ease-out infinite; }
+@keyframes dot-breathe { 0% { box-shadow: 0 0 0 0 #286d5538; } 70% { box-shadow: 0 0 0 7px #286d5500; } 100% { box-shadow: 0 0 0 0 #286d5500; } }

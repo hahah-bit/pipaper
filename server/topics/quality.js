@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { safeURL } from "./sources.js";
+import { lookup as casTableLookup } from "./cas-table.js";
 
 export const CCF = JSON.parse(fs.readFileSync(new URL("./ccf-2026.json", import.meta.url), "utf8"));
 export const BASELINE_POLICY = { journal: "CAS-1", conference: "CCF-A", edition: CCF.edition, label: "中科院大类 1 区 / CCF A 类正式长文", source: CCF.url };
@@ -76,6 +77,12 @@ export function verifyConference(p, locator, doc) {
   return result(locator.key, locator.url, locator.track || (locator.key === "icml" ? "ICML Proceedings" : "AAAI Technical Track"), doc);
 }
 export function verifyCAS(p, docs) {
+  // 导入的官方分区表整表：ISSN 命中即核验；2–4 区不算 Baseline，但不阻断会议核验路径。
+  const row = casTableLookup(p.venue?.issns, p.venue?.name);
+  if (row && row.zone === 1 && row.edition >= new Date().getUTCFullYear() - 1 && p.type !== "preprint") {
+    return { eligible: true, system: "CAS", rank: 1, year: row.edition, venue: p.venue.name, sourceUrl: null, sourceTable: true,
+      publicationUrl: p.doi || p.url, quote: `中科院${row.edition}年版分区表：大类 ${row.category || "未注明"} 1区${row.top ? " · Top 期刊" : ""}`, retrievedAt: row.importedAt };
+  }
   for (const d of docs) {
     if (!safeURL(d.url) || !/(^|\.)fenqubiao\.com$/.test(new URL(d.url).hostname) || d.venueId !== p.venue?.id || !d.venueId) continue;
     // Require an unambiguous single-journal official record, including ISSN and

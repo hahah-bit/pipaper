@@ -1,8 +1,9 @@
 import { mergePapers, years } from "./sources.js";
 import { conferenceLocator, qualifyPapers, BASELINE_POLICY } from "./quality.js";
 
-export async function retrieve(plan, { sources, signal, save = () => {}, log = () => {}, getDoc, documents = [], period = years() }) {
+export async function retrieve(plan, { sources, signal, save = () => {}, log = () => {}, getDoc, documents = [], period = years(), cachedSearches = [] }) {
   const rows = [], attempts = [], warnings = [], coverage = [], cache = new Map();
+  for (const r of cachedSearches) if (r.status === "ok" && Array.isArray(r.papers) && r.source && r.query) cache.set(`${r.source}:${r.query}`, r);
   const search = async (name, query, focus, run) => {
     signal?.throwIfAborted(); const startedAt = new Date().toISOString();
     try {
@@ -16,14 +17,14 @@ export async function retrieve(plan, { sources, signal, save = () => {}, log = (
       return r.papers;
     } catch (e) {
       signal?.throwIfAborted(); const attempt = { source: name, query, focus, startedAt, status: "error", count: null, error: e.message };
-      attempts.push(attempt); save("search", `${name} · 检索失败 · ${focus}`, attempt); warnings.push(`${name}：${e.message}`);
+      attempts.push(attempt); save("search", `${name} · 检索失败 · ${focus}`, { ...attempt, sourcePaused: !!e.sourcePaused }); warnings.push(`${name}：${e.message}`);
       log("search", `${name} 暂不可用，继续其他来源：${e.message}`); return [];
     }
   };
-  for (const q of plan.queries) {
+  for (const [questionIndex, q] of plan.queries.entries()) {
     let local = [];
     for (const [index, query] of (q.variants || [q.query]).entries()) {
-      log("search", `${q.parent || "细分问题"} / ${q.name || q.focus} · ${index ? "扩展" : "首轮"}：${query}`);
+      log("search", `问题 ${questionIndex + 1}/${plan.queries.length} · ${q.parent || "细分问题"} / ${q.name || q.focus} · ${index ? "扩展" : "首轮"}：${query}`);
       local.push(...await search("OpenAlex 相关度", query, q.name || q.focus, () => sources.works(query, { signal, sort: "relevance_score:desc", limit: 60 })));
       if (!index) {
         local.push(...await search("OpenAlex 高被引", query, q.name || q.focus, () => sources.works(query, { signal, sort: "cited_by_count:desc", limit: 40 })));
@@ -45,7 +46,9 @@ export async function retrieve(plan, { sources, signal, save = () => {}, log = (
   const queues = plan.queries.map(q => papers.filter(p => p.queries?.some(s => (q.variants || [q.query]).includes(s)) && p.date >= period.baselineFrom && p.date <= period.to).sort((a, b) => (b.citations || 0) - (a.citations || 0)));
   const ordered = [], seen = new Set();
   for (let i = 0; queues.some(q => i < q.length); i++) for (const queue of queues) if (queue[i] && !seen.has(queue[i].id)) { ordered.push(queue[i]); seen.add(queue[i].id); }
-  await qualifyPapers(ordered, { getDoc, documents, signal, limit: 72 });
+  log("quality", `已取回 ${papers.length} 篇去重文献，开始核验近期正式发表记录`);
+  let checked = 0;
+  await qualifyPapers(ordered, { getDoc: async (url, title) => { log("quality", `正在核验第 ${++checked} 篇发表记录 · ${title}`); return getDoc(url, title); }, documents, signal, limit: 72 });
   papers = mergePapers([...ordered, ...papers]);
   const eligible = papers.filter(p => p.quality?.eligible && p.date >= period.baselineFrom && p.date <= period.to && p.type !== "review");
   for (const c of coverage) { const q = plan.queries.find(q => q.id === c.id); c.verifiedCount = eligible.filter(p => p.queries?.some(s => q.variants.includes(s))).length; }
