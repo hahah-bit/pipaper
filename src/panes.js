@@ -57,7 +57,8 @@ export function initPanes() {
   drag("#gutter-2", (x) => {
     // dock 抽屉打开时 reader 隐藏，预留量从 460 降到 380（给工作区更大空间）
     const reserve = document.getElementById("app").classList.contains("dock-open") ? 380 : 460;
-    cur.chatW = Math.max(320, Math.min(window.innerWidth - cur.sideW - reserve, x - cur.sideW));
+    const visibleSideW = $("#sidebar").getBoundingClientRect().width;
+    cur.chatW = Math.max(320, Math.min(window.innerWidth - visibleSideW - reserve, x - visibleSideW));
     root.style.setProperty("--chat-w", "min(" + cur.chatW + "px, 60vw)");
   }, () => {
     cur.chatW = 560;

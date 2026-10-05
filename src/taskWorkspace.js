@@ -56,8 +56,12 @@ export function taskWorkspace(area, initial, onChange) {
     tabs.append(tools);
   }
   if (area.views.length === 1) tabs.hidden = true;
+  if (area.page && location.pathname !== area.page) {
+    tabs.hidden = false;
+    tabs.append(el("a", { href: area.page, target: "_blank", rel: "noopener", class: "workspace-page-link" }, "独立页面 ↗"));
+  }
   function updateContext() {
-    context.hidden = !area.contextual || active === "video";
+    context.hidden = !area.contextual;
     context.textContent = state.currentPaper
       ? "当前论文 · " + state.currentPaper.title
       : "先从左侧选择论文，再查看粗读、图表或生成图解";

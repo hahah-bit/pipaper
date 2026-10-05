@@ -1,5 +1,6 @@
 import { node, request, button, markdown, dialog, notify, confirmDelete } from "../study/ui.js";
 import { initPersistence } from "../persistence.js";
+import { initSharedTheme } from "../themeTokens.js";
 import { createAnalysis, manageProfiles, stageNames } from "./profiles.js";
 import { directionCards, journalCards, link } from "./report.js";
 
@@ -382,6 +383,7 @@ function divider(index) {
 }
 async function boot() {
   await initPersistence();
+  initSharedTheme();
   try { const r = await request("/api/topics/models"); models = r.models; } catch (e) { notify("模型列表加载失败：" + e.message, true); }
   await loadCasInfo().catch(() => {});
   modelSelect.replaceChildren(node("option", { value: "" }, "使用 Pi 默认模型"), ...models.map(m => node("option", { value: `${m.provider}|${m.id}` }, m.name)));

@@ -677,7 +677,7 @@ app.use("/api", api);
 app.use(express.static(PUBLIC_DIR));
 app.get("/study/:id", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "study.html")));
 app.get(["/topics", "/topics/:id"], (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "topics.html")));
-app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
+app.get(["/", "/videos"], (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 
 const port = Number(process.env.PORT || getConfig().port || 4318);
 migrateLibrary();

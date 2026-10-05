@@ -30,13 +30,14 @@ export const WORKSPACES = [
         name: "图解",
         hint: "把知识结构、方法流程和架构关系画清楚",
       },
-      {
-        id: "video",
-        name: "视频解析",
-        hint: "播放视频、截帧提问与时间轴解析",
-        secondary: true,
-      },
     ],
+  },
+  {
+    id: "media",
+    name: "视频",
+    icon: "video",
+    page: "/videos",
+    views: [{ id: "video", name: "视频解析", hint: "播放视频、截帧提问与时间轴解析" }],
   },
   {
     id: "writing",
@@ -94,7 +95,9 @@ export function migrateWorkspace(source) {
   const areas = new Map(),
     keep = new Set();
   for (const [id, panel] of entries) {
-    const destination = panel.params?.workspaceId
+    const destination = panel.params?.workspaceId === "insight" && panel.params.activeView === "video"
+      ? { ...panel.params, workspaceId: "media" }
+      : panel.params?.workspaceId
       ? panel.params
       : moduleDestination(panel.params?.moduleId);
     if (!destination || !workspaceById(destination.workspaceId)) {

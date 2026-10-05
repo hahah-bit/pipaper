@@ -7,7 +7,8 @@
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 <link rel="stylesheet" href="/vendor/dockview.css" />
 <link rel="stylesheet" href="/study.css" />
-<link rel="stylesheet" href="/style.css?v=2ff676f8e1" />
+<link rel="stylesheet" href="/style.css?v=1dfcb5052c" />
+<link rel="stylesheet" href="/theme.css?v=1dfcb5052c" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -21,7 +22,6 @@
     </div>
     <div class="side-primary-actions">
       <button id="btn-study" class="tool-btn primary">✦ 读论文</button>
-      <a href="/topics" class="tool-btn" id="btn-topics">◎ 选题分析</a>
       <button id="btn-import" class="tool-btn" title="导入本地 PDF">＋ 导入</button>
     </div>
     <div class="project-bar">
@@ -69,7 +69,6 @@
     <div id="composer-wrap">
       <div id="cmd-menu"></div>
       <div id="chips"></div>
-      <div id="quick-actions"></div>
       <div id="composer">
         <textarea id="composer-input" rows="1" placeholder="问点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
         <button id="btn-send" title="发送">➤</button>
@@ -77,7 +76,18 @@
         <button id="btn-stop" title="停止" hidden>■</button>
       </div>
       <div id="chat-queue" aria-live="polite" hidden></div>
-      <div id="composer-keys">Enter 发送 · Shift+Enter 换行</div>
+      <div class="composer-footer">
+        <div id="composer-keys">Enter 发送 · Shift+Enter 换行</div>
+        <details id="composer-more" class="composer-more">
+          <summary>更多</summary>
+          <div class="composer-more-body">
+            <section><h4>论文快捷提问</h4><div id="quick-actions"></div></section>
+            <section id="composer-session-actions"><h4>会话管理</h4></section>
+            <section id="composer-queue-actions"><h4>消息队列与恢复</h4></section>
+            <section id="composer-clipboard-actions"><h4>摘录</h4></section>
+          </div>
+        </details>
+      </div>
       <div id="composer-hint"></div>
     </div>
   </section>
@@ -207,6 +217,11 @@
           <span>视频管理</span><span class="vd-caret">▾</span>
         </div>
         <div id="video-list"></div>
+        <div id="video-empty" class="video-empty">
+          <h3>添加一个视频</h3>
+          <p>支持本地视频与视频链接。播放时可以截帧提问，也可以生成时间轴、思维导图和内容摘要。</p>
+          <small>本地视频仅在当前页面使用，刷新后需重新选择。</small>
+        </div>
         <div id="video-player-card" class="video-player-card" hidden>
           <div id="video-stage">
             <video id="video-el" controls style="width:100%; background:#000; border-radius:8px;"></video>
@@ -237,8 +252,8 @@
             <div id="va-summary" style="max-height:200px;overflow:auto;font-size:12.5px;color:var(--fg1);white-space:pre-wrap"></div>
           </div>
         </div>
-        <button id="btn-va-batch" class="tool-btn" style="width:100%;margin-top:8px">🧠 批量解析所选<span id="va-batch-count"></span> → 综合思维导图</button>
-        <p class="res-note">勾选列表中的视频后可批量解析；AI 解析调用会话中的 video-use 技能，基于等间隔关键帧生成时间轴/思维导图/脉络。</p>
+        <button id="btn-va-batch" class="tool-btn" style="width:100%;margin-top:8px" hidden>批量解析所选<span id="va-batch-count"></span> → 综合思维导图</button>
+        <p id="video-batch-help" class="res-note" hidden>勾选多个视频后，可以合并分析并生成综合思维导图。</p>
       </div>
     </div>
   </div>
@@ -346,6 +361,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=2ff676f8e1"></script>
+<script src="/app.js?v=1dfcb5052c"></script>
 </body>
 </html>

@@ -169,18 +169,20 @@ function renderDock() {
   const items = [
     { id: "reader", name: "阅读", icon: "reader" },
     ...WORKSPACES,
+    { id: "topics", name: "选题", icon: "topics", href: "/topics" },
     { id: "settings", name: "设置", icon: "settings" },
   ];
   for (const item of items) {
     const button = el(
-      "button",
+      item.href ? "a" : "button",
       {
         class: "dock-btn" + (item.id === "settings" ? " dock-settings" : ""),
         "data-key": item.id,
         "data-name": item.name,
         "aria-label": item.name,
         title: item.name,
-        onclick: () =>
+        ...(item.href ? { href: item.href, target: "_blank", rel: "noopener", title: "选题分析 · 在独立页面打开" } : {}),
+        onclick: () => item.href ? undefined :
           item.id === "reader"
             ? closeDrawer()
             : item.id === "settings"

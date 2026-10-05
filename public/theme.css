@@ -1,0 +1,98 @@
+:root {
+  --bg0: #0f1117;
+  --bg1: #151823;
+  --bg2: #1b1f2e;
+  --bg3: #232840;
+  --border: #2a3050;
+  --fg0: #e8eaf2;
+  --fg1: #aab1c7;
+  --fg2: #767e99;
+  --accent: #7c9cff;
+  --accent2: #9d7cff;
+  --ok: #4cc38a;
+  --warn: #e5c07b;
+  --err: #e06c75;
+  --chip: #242b45;
+  --panel: #141828;
+  --panel2: #171c2f;
+  --bubble-user: #232a47;
+  --bubble-user-border: #3a4470;
+  --code-bg: #232a44;
+  --pre-bg: #1a1f33;
+  --quote-bg: #1a2036;
+  --table-border: #3a4166;
+  --trans-bg: #202a42;
+  --trans-fg: #eef3ff;
+  --trans-meta: #b4c2df;
+  --on-accent: var(--bg0);
+  color-scheme: dark;
+}
+/* ================= 主题（一键切换） ================= */
+/* Paper · 暖纸浅色 —— 长文阅读友好（参考 GitHub Light / Solarized Light 气质） */
+[data-theme="paper"] {
+  color-scheme: light;
+  --on-accent: #fff;
+  --bg0: #f6f4ef; --bg1: #efede6; --bg2: #e7e4da; --bg3: #dcd8cb;
+  --border: #d3cebf; --chip: #e2dfd4;
+  --fg0: #33322e; --fg1: #55534b; --fg2: #8a877c;
+  --accent: #3b6e8f; --accent2: #8a6d3b;
+  --ok: #2e7d4f; --warn: #b08223; --err: #b3423f;
+  --panel: #f0eee7; --panel2: #eceae1; --bubble-user: #dfe7ec; --bubble-user-border: #c3d3dd;
+  --code-bg: #e4e1d6; --pre-bg: #eceae1; --quote-bg: #eae7dc; --table-border: #c9c4b4;
+  --trans-bg: #e8f1f8; --trans-fg: #20364d; --trans-meta: #4b6680;
+}
+/* Nord —— 北欧蓝灰（参考 nordtheme.com） */
+[data-theme="nord"] {
+  --bg0: #2e3440; --bg1: #3b4252; --bg2: #434c5e; --bg3: #4c566a;
+  --border: #4c566a; --chip: #434c5e;
+  --fg0: #eceff4; --fg1: #d8dee9; --fg2: #9aa5b8;
+  --accent: #88c0d0; --accent2: #b48ead;
+  --ok: #a3be8c; --warn: #ebcb8b; --err: #bf616a;
+  --panel: #3b4252; --panel2: #3b4252; --bubble-user: #434c5e; --bubble-user-border: #4c566a;
+  --code-bg: #434c5e; --pre-bg: #3b4252; --quote-bg: #3b4252; --table-border: #4c566a;
+  --trans-bg: #273448; --trans-fg: #f0f5ff; --trans-meta: #b7c7df;
+}
+/* GitHub Dark —— 官方暗色（参考 primer） */
+[data-theme="ghdark"] {
+  --bg0: #0d1117; --bg1: #161b22; --bg2: #21262d; --bg3: #30363d;
+  --border: #30363d; --chip: #21262d;
+  --fg0: #e6edf3; --fg1: #adbac7; --fg2: #768390;
+  --accent: #539bf5; --accent2: #b083f0;
+  --ok: #57ab5a; --warn: #c69026; --err: #f47067;
+  --panel: #161b22; --panel2: #1c2128; --bubble-user: #1f6feb33; --bubble-user-border: #388bfd66;
+  --code-bg: #21262d; --pre-bg: #161b22; --quote-bg: #1c2128; --table-border: #3d444d;
+  --trans-bg: #1c3048; --trans-fg: #e9f2ff; --trans-meta: #b1c8e4;
+}
+/* Gruvbox Dark —— 暖棕高对比（参考 morhetz/gruvbox） */
+[data-theme="gruvbox"] {
+  --bg0: #282828; --bg1: #32302f; --bg2: #3c3836; --bg3: #504945;
+  --border: #504945; --chip: #3c3836;
+  --fg0: #fbf1c7; --fg1: #ebdbb2; --fg2: #a89984;
+  --accent: #83a598; --accent2: #d3869b;
+  --ok: #b8bb26; --warn: #fabd2f; --err: #fb4934;
+  --panel: #32302f; --panel2: #3c3836; --bubble-user: #45403d; --bubble-user-border: #504945;
+  --code-bg: #3c3836; --pre-bg: #282828; --quote-bg: #32302f; --table-border: #504945;
+  --trans-bg: #3b3a32; --trans-fg: #fff5d0; --trans-meta: #cdbd95;
+}
+/* Solarized Light —— 经典护眼浅色 */
+[data-theme="solar-light"] {
+  color-scheme: light;
+  --on-accent: #fff;
+  --bg0: #fdf6e3; --bg1: #f3ecd9; --bg2: #eee8d5; --bg3: #ddd6c1;
+  --border: #ddd6c1; --chip: #eee8d5;
+  --fg0: #073642; --fg1: #4a5b66; --fg2: #93a1a1;
+  --accent: #268bd2; --accent2: #d33682;
+  --ok: #859900; --warn: #b58900; --err: #dc322f;
+  --panel: #f3ecd9; --panel2: #eee8d5; --bubble-user: #e3e9dd; --bubble-user-border: #c5d0bd;
+  --code-bg: #eee8d5; --pre-bg: #f3ecd9; --quote-bg: #eee8d5; --table-border: #d5cfba;
+  --trans-bg: #e6f0f4; --trans-fg: #164052; --trans-meta: #557181;
+}
+
+
+/* Shared palette and scroll chrome for the main, topic and video workspaces. */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--fg2) 48%, transparent) transparent; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--fg2) 48%, transparent); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: var(--fg2); }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }

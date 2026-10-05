@@ -5,6 +5,34 @@ import path from "node:path";
 import { nativeHttpFixture } from "./helpers/native-http-fixture.mjs";
 import { createSessionEventChannel } from "../src/sessionEventChannel.js";
 
+test("video page has independent sessions and does not take over the reading conversation", { timeout: 30000 }, async t => {
+  const fixture = await nativeHttpFixture();
+  const mainState = {}, videoState = {};
+  const channel = state => createSessionEventChannel({ state, fetch: (url, options) => fetch(fixture.url + url, options) });
+  const main = channel(mainState), video = channel(videoState);
+  t.after(async () => { main.closeSessionEvents(); video.closeSessionEvents(); await fixture.dispose(); });
+  const api = async (url, body, owner) => {
+    const r = await fetch(fixture.url + "/api" + url, { method: body ? "POST" : "GET", headers: { "Content-Type": "application/json", ...(owner ? { "X-Pi-Control": owner } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    assert.ok(r.ok); return r.json();
+  };
+  const reading = await api("/sessions", { title: "Reading" });
+  await main.connectSessionEvents(reading.id, () => {});
+  const originalOwner = mainState.controlId;
+  await main.waitOperation((await api(`/sessions/${reading.id}/prompt`, { text: "persist reading" }, originalOwner)).operationId);
+  const media = await api("/sessions", { workspace: "video", title: "Video" });
+  await video.connectSessionEvents(media.id, () => {});
+  await video.waitOperation((await api(`/sessions/${media.id}/prompt`, { text: "persist video" }, videoState.controlId)).operationId);
+  assert.equal(mainState.controlId, originalOwner);
+  assert.deepEqual((await api("/sessions")).sessions.map(s => s.id), [reading.id]);
+  assert.deepEqual((await api("/sessions?workspace=video")).sessions.map(s => s.id), [media.id]);
+  const page = await fetch(fixture.url + "/videos");
+  assert.ok(page.ok); assert.ok((await page.text()).includes('id="stab-video"'));
+  main.closeSessionEvents(); video.closeSessionEvents();
+  await fixture.restart();
+  assert.deepEqual((await api("/sessions")).sessions.map(s => s.id), [reading.id]);
+  assert.deepEqual((await api("/sessions?workspace=video")).sessions.map(s => s.id), [media.id]);
+});
+
 test("disconnect during cold resource loading cannot leave a ghost SSE owner", { timeout: 20000 }, async t => {
   const fixture = await nativeHttpFixture();
   const state = {}, transport = createSessionEventChannel({ state, fetch: (route, options) => fetch(fixture.url + route, options) });

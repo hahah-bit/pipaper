@@ -11,8 +11,11 @@ export function registerSessionRoutes(api) {
     }
   };
   api.get("/models", route(async (req, res) => res.json(await h.modelList(req.query.sessionId))));
-  api.get("/sessions", route(async (_req, res) => res.json({ sessions: (await h.listSessions()).filter(s => !s.studyId) })));
-  api.post("/sessions", route(async (req, res) => res.json(await h.createChat({ paperId: req.body.paperId, projectId: req.body.projectId, title: req.body.title }))));
+  api.get("/sessions", route(async (req, res) => {
+    const workspace = req.query.workspace === "video" ? "video" : "main";
+    res.json({ sessions: (await h.listSessions()).filter(s => !s.studyId && (s.workspace || "main") === workspace) });
+  }));
+  api.post("/sessions", route(async (req, res) => res.json(await h.createChat({ paperId: req.body.paperId, projectId: req.body.projectId, title: req.body.title, workspace: req.body.workspace }))));
   api.get("/sessions/:id", route(async (req, res) => res.json(await h.sessionHistory(req.params.id))));
   api.get("/sessions/:id/state", route(async (req, res) => res.json(await h.sessionState(req.params.id))));
   api.get("/sessions/:id/tree", route(async (req, res) => res.json((await h.controllerFor(req.params.id)).tree())));

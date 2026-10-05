@@ -29,7 +29,8 @@ export function initSessionPanel(onReconnect) {
     button("压缩", async () => { const instructions = await askText({ title: "压缩会话", message: "压缩时需要保留的信息（可留空）", okText: "开始压缩" }); if (instructions !== null) await action("compact", { instructions }); }),
     button("重载资源", () => action("reload")),
     button("导出 HTML", () => download("html")), button("导出 JSONL", () => download("jsonl")));
-  const top = $("#messages"); top.before(toolbar, metrics, extensions);
+  $("#messages").before(metrics, extensions);
+  $("#composer-session-actions").append(toolbar);
   draftsBox = el("div", { class: "native-drafts" });
   queueControls = el("div", { class: "native-queue-controls" }, button("取回待发送消息", async () => {
     const result = await action("queue/take"); drafts.push(...result.items); renderDrafts();
@@ -40,7 +41,13 @@ export function initSessionPanel(onReconnect) {
     select.onchange = guard(() => action("queue/mode", { [key]: select.value })); queueControls.append(select);
   }
   queueControls.append(button("取消重试", () => action("abort", { kind: "retry" })), button("取消压缩/摘要", () => action("abort", { kind: state.nativeSession?.operations?.some(o => o.type === "tree") ? "branchSummary" : "compaction" })));
-  $("#chat-queue").after(queueControls, draftsBox);
+  $("#composer-queue-actions").append(queueControls);
+  $("#chat-queue").after(draftsBox);
+  const more = $("#composer-more");
+  document.addEventListener("pointerdown", event => { if (more.open && !more.contains(event.target)) more.open = false; });
+  more.addEventListener("keydown", event => {
+    if (event.key === "Escape") { more.open = false; more.querySelector("summary").focus(); }
+  });
   renderSessionConnection("initializing");
 }
 export function renderSessionConnection(phase, message) {
@@ -82,8 +89,8 @@ export function renderSessionState(value) {
   const resource = ({ applied: "资源已生效", pending: "资源待更新", failed: "资源加载失败" })[value.resources?.status] || "";
   const phase = value.retry ? `重试 ${value.retry.attempt}/${value.retry.maxAttempts}${value.retry.waiting ? ` · 等待 ${Math.ceil(value.retry.delayMs / 1000)} 秒` : ""}` : value.compacting ? "压缩/摘要中" : value.busy ? "执行中" : "空闲";
   if (state.connectionPhase === "ready") {
-    metrics.textContent = [phase, `上下文 ${used}`, `累计 ${stats?.tokens?.total ?? "未知"} tokens`, `缓存读/写 ${stats?.tokens?.cacheRead ?? "?"}/${stats?.tokens?.cacheWrite ?? "?"}`, stats?.cost != null ? `$${Number(stats.cost).toFixed(4)}` : "费用未知", resource].join(" · ");
-    metrics.title = value.resources?.error || value.retry?.errorMessage || "上下文占用与累计用量分别统计";
+    metrics.textContent = [phase, `上下文 ${used}`, value.resources?.status === "failed" ? resource : ""].filter(Boolean).join(" · ");
+    metrics.title = [value.resources?.error || value.retry?.errorMessage, `累计 ${stats?.tokens?.total ?? "未知"} tokens`, `缓存读/写 ${stats?.tokens?.cacheRead ?? "?"}/${stats?.tokens?.cacheWrite ?? "?"}`, stats?.cost != null ? `$${Number(stats.cost).toFixed(4)}` : "费用未知", resource].filter(Boolean).join(" · ");
   }
   for (const b of toolbar.querySelectorAll("button")) b.disabled = !!value.busy || !state.controlId || state.connectionPhase !== "ready";
   for (const key of ["steering", "followUp"]) { const s = $(`#native-mode-${key}`); if (s) s.value = value.queue?.[key + "Mode"] || "one-at-a-time"; }

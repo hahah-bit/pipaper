@@ -98,9 +98,10 @@ export async function controllerFor(id) {
   return opening.get(id);
 }
 export async function ownedController(id, controlId) { const c = await controllerFor(id); c.assertOwner(controlId); return c; }
-export async function createChat({ paperId = null, projectId = null, title = null, studyId = null, studyRole = null } = {}) {
+export async function createChat({ paperId = null, projectId = null, title = null, studyId = null, studyRole = null, workspace = "main" } = {}) {
   if (projectId && !getProject(projectId)) throw error("项目不存在");
-  const c = await makeController(SessionManager.create(APP_ROOT), { paperId, projectId, title, ...(studyId ? { studyId, studyRole } : {}) });
+  if (!["main", "video"].includes(workspace)) throw error("会话工作区无效");
+  const c = await makeController(SessionManager.create(APP_ROOT), { paperId, projectId, title, workspace, ...(studyId ? { studyId, studyRole } : {}) });
   if (studyId) {
     // Pi intentionally defers JSONL persistence until an assistant message exists.
     // Study sessions must survive a restart even before the first user prompt.

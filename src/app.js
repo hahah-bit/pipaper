@@ -21,7 +21,7 @@ import { registerBuiltinModules } from "./modules.js";
 import { registerNoteModules } from "./notesPanel.js";
 import { registerLatexModule } from "./latexEditor.js";
 import { registerMdEditorModule } from "./mdEditor.js";
-import { initDock } from "./dock.js";
+import { initDock, openWorkspace } from "./dock.js";
 import { openStudyCreate } from "./study/create.js";
 
 export const state = {
@@ -89,8 +89,8 @@ export const api = {
   createProject: (name, type) => jfetch("/api/projects", { method: "POST", body: { name, type } }),
   updateProject: (id, body) => jfetch(`/api/projects/${id}`, { method: "PUT", body }),
   deleteProject: (id) => jfetch(`/api/projects/${id}`, { method: "DELETE" }),
-  sessions: () => jfetch("/api/sessions"),
-  createSession: (paperId, projectId, title) => jfetch("/api/sessions", { method: "POST", body: { paperId, projectId, title } }),
+  sessions: () => jfetch("/api/sessions" + (location.pathname === "/videos" ? "?workspace=video" : "")),
+  createSession: (paperId, projectId, title) => jfetch("/api/sessions", { method: "POST", body: { paperId, projectId, title: title || (location.pathname === "/videos" ? "视频分析" : undefined), ...(location.pathname === "/videos" ? { workspace: "video" } : {}) } }),
   prompt: (id, body) => jfetch(`/api/sessions/${id}/prompt`, { method: "POST", body }),
   sessionAction: (id, action, body = {}) => jfetch(`/api/sessions/${id}/${action}`, { method: "POST", body }),
   sessionTree: (id) => jfetch(`/api/sessions/${id}/tree`),
@@ -238,6 +238,11 @@ async function boot() {
   initClipboard();
   window.__bootStage = "search"; try { initSearchPanel(); } catch (e) { window.__initErrors.push("initSearchPanel: " + (e.message||e)); }
   window.__bootStage = "video"; try { initVideoTab(); } catch (e) { window.__initErrors.push("initVideoTab: " + (e.message||e)); }
+  if (location.pathname === "/videos") {
+    document.body.classList.add("video-page");
+    document.title = "视频 · PiPaper";
+    openWorkspace("media", "video");
+  }
   try {
     const [paperData, models, projects] = await Promise.all([api.papers(), api.models(), api.projects()]);
     state.papers = paperData.papers;
@@ -276,6 +281,10 @@ export function updateZoteroFoot() {
 
 export function renderWelcome() {
   const msgs = $("#messages");
+  if (location.pathname === "/videos") {
+    msgs.replaceChildren(el("div", { class: "welcome" }, el("h3", {}, "视频工作台"), el("p", {}, "在右侧添加视频，可以截帧提问或生成时间轴分析。", el("br"), "视频对话单独保存，也可以在这里直接提问。")));
+    return;
+  }
   msgs.replaceChildren(
     el("div", { class: "welcome" },
       el("div", { class: "big" }), 

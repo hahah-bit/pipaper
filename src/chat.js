@@ -8,6 +8,7 @@ import { connectSessionEvents, closeSessionEvents, waitOperation } from "./sessi
 import { initSessionPanel, renderSessionState, renderSessionConnection } from "./sessionPanel.js";
 import { recordHistory, recordEvent } from "./artifacts.js";
 import { buildFineNotePrompt } from "./noteTemplates.js";
+import { ChatTurns, turnRecordLabel } from "./chatTurns.js";
 
 
 let autoScroll = true;
@@ -136,8 +137,8 @@ export async function openSession(id, { force = false } = {}) {
   state.sessionId = id;
   if (state.nativeSession?.id !== id) {
     state.nativeSession = null;
-    for (const n of liveNodes) finalizeActivity(n);
-    $("#messages").replaceChildren(); liveNodes.length = 0; activeStream = null;
+    for (const n of liveNodes) { finalizeActivity(n); clearTimeout(n.renderTimer); }
+    $("#messages").replaceChildren(); liveNodes.length = 0; activeStream = null; chatTurns.reset();
   }
   restoreBindingOnSnapshot = true; pendingBinding = null;
   renderSessionMenu();
@@ -158,17 +159,18 @@ function renderContent(parts, target) {
   }
 }
 function renderHistory(h) {
-  for (const n of liveNodes) finalizeActivity(n);
-  $("#messages").replaceChildren(); liveNodes.length = 0; activeStream = null;
+  for (const n of liveNodes) { finalizeActivity(n); clearTimeout(n.renderTimer); }
+  $("#messages").replaceChildren(); liveNodes.length = 0; activeStream = null; chatTurns.reset();
   for (const m of h.messages || []) {
     let root;
     if (m.role === "user") {
+      chatTurns.begin();
       const text = m.parts.filter(p => p.type === "text").map(p => p.text).join("\n");
       const node = addMessageEl("user", text, m.parts.filter(p => p.type === "image").map(p => 'data:' + p.mimeType + ';base64,' + p.data));
       if (m.entryId) addReaskButton(node, m.entryId, text);
       root = node;
     } else if (m.role === "assistant") {
-      const node = assistantSkeleton(); $("#messages").append(node.root); liveNodes.push(node);
+      const node = assistantSkeleton(); $("#messages").append(node.root); liveNodes.push(node); chatTurns.add(node);
       for (const p of m.parts || []) if (p.type === "toolCall") addToolCard(node, p.id, p.name, p.args, true);
       flushAssistant(node, m.parts.filter(p => p.type === "text").map(p => p.text).join(""), m.parts.filter(p => p.type === "thinking").map(p => p.text).join(""), false);
       collapseThinking(node); addMeta(node, m.usage, m.model); if (m.error) markError(node, m.error); root = node.root;
@@ -188,12 +190,13 @@ function renderHistory(h) {
   }
   if (!h.messages?.length) renderWelcome();
   recordHistory(h);
+  chatTurns.finish({ keepCurrent: !!h.busy });
   applySessionState(h); scrollBottom();
 }
 let activeStream = null;
 function streamNode() {
   if (!activeStream) {
-    const node = assistantSkeleton(); $("#messages").append(node.root); liveNodes.push(node);
+    const node = assistantSkeleton(); $("#messages").append(node.root); liveNodes.push(node); chatTurns.add(node);
     activeStream = { node, text: "", thinking: "" };
   }
   return activeStream;
@@ -210,7 +213,10 @@ function applySessionState(value) {
   if (value.model) $("#model-select").value = value.model.provider + "|" + value.model.id;
   const row = state.sessions.find(s => s.id === state.sessionId); if (row && value.name) row.title = value.name;
   $("#session-title").textContent = value.name || row?.title || "(空会话)";
-  if (!state.streaming) void settleSessionActions();
+  if (!state.streaming) {
+    chatTurns.finish(); activeStream = null;
+    void settleSessionActions();
+  }
 }
 function handleSessionEvent(ev) {
   if (ev.t === "connection_status") { renderSessionConnection(ev.phase); return; }
@@ -239,6 +245,7 @@ function handleSessionEvent(ev) {
   if (ev.t === "disconnected") {
     userInputUI.clear(); state.streaming = false; setStreamingUI(false);
     for (const n of liveNodes) finalizeActivity(n);
+    chatTurns.finish(); activeStream = null;
     renderSessionConnection("disconnected", ev.message);
     toast(ev.message, true); return;
   }
@@ -260,7 +267,7 @@ function handleSessionEvent(ev) {
     if (ev.error) toast(ev.error, true); else toast(ev.aborted ? "已取消压缩" : "上下文已压缩"); return;
   }
   if (ev.t === "assistant_start") { if (activeStream) flushAssistant(activeStream.node, activeStream.text, activeStream.thinking, false); activeStream = null; streamNode(); }
-  else if (ev.t === "user_start") { addMessageEl("user", ev.text, (ev.images || []).map(im => 'data:' + im.mimeType + ';base64,' + im.data)); }
+  else if (ev.t === "user_start") { chatTurns.begin(); activeStream = null; addMessageEl("user", ev.text, (ev.images || []).map(im => 'data:' + im.mimeType + ';base64,' + im.data)); }
   else if (ev.t === "delta") streamNode().text += ev.text;
   else if (ev.t === "thinking") streamNode().thinking += ev.text;
   else if (ev.t === "tool_start") recordEvent(ev), addToolCard(streamNode().node, ev.id, ev.name, ev.args);
@@ -682,14 +689,40 @@ function addMeta(node, usage, model) {
   if (usage) {
     bits.push(`↑${usage.input ?? "?"} ↓${usage.output ?? "?"}${usage.cost != null ? ` · $${Number(usage.cost).toFixed(4)}` : ""}`);
   }
-  node.root.append(el("div", { class: "meta" }, bits.join(" · ")));
+  node.meta = el("div", { class: "meta" }, bits.join(" · "));
+  node.root.append(node.meta);
 }
 
 function markError(node, msg) {
-  node.bubble.append(el("div", { style: { color: "var(--err)", marginTop: "8px", fontSize: "13px" } }, "⚠ " + msg));
+  node.bubble.append(el("div", { class: "msg-error", style: { color: "var(--err)", marginTop: "8px", fontSize: "13px" } }, "⚠ " + msg));
 }
 
 const liveNodes = [];
+const chatTurns = new ChatTurns(turn => {
+  for (const node of turn.nodes.slice(turn.archived)) {
+    finalizeActivity(node);
+    clearTimeout(node.renderTimer); node.renderTimer = null;
+    renderMd(node.textAcc, node.mdDiv);
+    if (node.activity || node.meta) {
+      if (!turn.record) {
+        const summary = el("summary", {});
+        const body = el("div", { class: "turn-record-body" });
+        turn.record = { root: el("details", { class: "turn-record" }, summary, body), summary, body };
+      }
+      const step = el("div", { class: "turn-record-step" });
+      if (node.root.dataset.entryId) step.dataset.entryId = node.root.dataset.entryId;
+      if (node.activity) step.append(node.activity.root);
+      if (node.meta) step.append(node.meta);
+      turn.record.body.append(step);
+    }
+    // Retain genuine answers, images and failures; only empty process bubbles disappear.
+    node.root.hidden = !node.textAcc.trim() && !node.bubble.querySelector(".native-result-image, .msg-error");
+  }
+  if (turn.record) {
+    turn.record.summary.textContent = turnRecordLabel(turn.nodes);
+    turn.nodes.at(-1).root.after(turn.record.root);
+  }
+});
 
 function scrollBottom(force = false) {
   const box = $("#messages");
@@ -919,6 +952,7 @@ export function updateComposerHint() {
   } else {
     hint.textContent = "未选择论文 — 仍可自由对话";
   }
+  hint.title = hint.textContent;
 }
 
 export function autoSizeInput() {

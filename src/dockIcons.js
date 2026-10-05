@@ -1,5 +1,6 @@
 // Distinct silhouettes keep book, chart and document tools recognizable on every platform.
 const shapes = {
+  topics: '<path d="M9 18h6m-5 3h4M8 14a6 6 0 1 1 8 0c-1 1-1 2-1 2H9s0-1-1-2Z"/><path d="M12 1v1M3 4l1 1m16-1-1 1M1 11h2m18 0h2"/>',
   reader:
     '<path d="M12 5v15M3 4c3-1 6 0 9 2 3-2 6-3 9-2v15c-3-1-6 0-9 2-3-2-6-3-9-2Z"/>',
   knowledge:

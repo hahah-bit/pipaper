@@ -1,24 +1,13 @@
 import { persistence } from "./persistence.js";
 import { $, el } from "./app.js";
+import { THEMES, THEME_KEY as LS_KEY, applyTheme, initSharedTheme } from "./themeTokens.js";
 
 // One-click theme switcher. Themes are pure CSS variable sets defined in
-// style.css under [data-theme="..."]; names参考成熟开源配色 (Nord / GitHub
+// theme.css under [data-theme="..."]; names参考成熟开源配色 (Nord / GitHub
 // Primer / Gruvbox / Solarized) + 一套纸白阅读主题。
 
-const THEMES = [
-  { id: "", name: "默认 · 午夜学术" },
-  { id: "paper", name: "纸白 · 长文阅读" },
-  { id: "nord", name: "Nord 北欧" },
-  { id: "ghdark", name: "GitHub Dark" },
-  { id: "gruvbox", name: "Gruvbox 暖棕" },
-  { id: "solar-light", name: "Solarized 浅色" },
-];
-
-const LS_KEY = "pipaper.theme";
-
 export function initTheme() {
-  const saved = persistence.getItem(LS_KEY) || "";
-  applyTheme(saved);
+  initSharedTheme();
   const btn = el("button", { id: "btn-theme", class: "icon-btn", title: "切换主题" }, "🎨");
   $("#btn-theme-slot").replaceChildren(btn);
   const menu = el("div", { id: "theme-menu" });
@@ -47,9 +36,4 @@ export function initTheme() {
   });
   document.addEventListener("click", () => menu.classList.remove("open"));
   menu.addEventListener("click", (e) => e.stopPropagation());
-}
-
-function applyTheme(id) {
-  if (id) document.documentElement.dataset.theme = id;
-  else delete document.documentElement.dataset.theme;
 }

@@ -81,6 +81,15 @@ test("功能归属保持明确，设置资源不混入文件资料", () => {
   });
   assert.equal(moduleDestination("mdedit").workspaceId, "writing");
   assert.equal(moduleDestination("resources"), null);
+  assert.deepEqual(moduleDestination("video"), { workspaceId: "media", activeView: "video" });
+});
+test("解读中的旧视频面板迁移到独立视频区，保留几何布局且可重复迁移", () => {
+  const source = { activeGroup: "main", panels: { old: { params: { workspaceId: "insight", activeView: "video" } } }, grid: { root: leaf("main", ["old"]) } };
+  const migrated = migrateWorkspace(source);
+  assert.equal(migrated.panels.old.params.workspaceId, "media");
+  assert.equal(migrated.grid.root.size, 420);
+  assert.deepEqual(migrateWorkspace(migrated), migrated);
+  assert.equal(source.panels.old.params.workspaceId, "insight");
 });
 test("资料提醒只采用每个资源的最新任务，不让历史失败一直报警", () => {
   const jobs = [

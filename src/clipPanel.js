@@ -52,6 +52,7 @@ function buildPanel() {
   const rz = el("div", { class: "clip-rz", title: "缩放" });
   panel.append(rz);
   document.body.append(panel);
+  $("#composer-clipboard-actions").append(el("button", { class: "tool-btn", onclick: () => toggle(true) }, "打开剪贴板"));
 
   // position/size restore
   Object.assign(panel.style, {
