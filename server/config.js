@@ -33,6 +33,8 @@ const DEFAULTS = {
     milvus: { address: "127.0.0.1:19530", collectionPrefix: "pipaper" },
     chunk: { targetBytes: 4500, maxBytes: 6000, overlapBytes: 300 },
     expansion: true,
+    retrieval: { selfRag: true, model: { provider: "deepseek", id: "deepseek-v4-flash" }, maxQueries: 4, candidates: 60, rerankCandidates: 32, maxRounds: 2, similarityThreshold: 0.9, mmrLambda: 0.85 },
+    rerank: { enabled: true, model: "qwen3.7-text-rerank", url: "", timeoutMs: 30000 },
   },
   setup: { onboardedAt: null }, // 首次引导面板「不再显示」后写入时间戳
 };
@@ -75,6 +77,10 @@ export function saveConfig(patch) {
     if(!url||!["http:","https:"].includes(url.protocol)||url.username||url.password||!Number.isInteger(e.dimension)||e.dimension<1||e.dimension>32768||typeof e.model!=="string"||!e.model.trim())throw Object.assign(new Error("Embedding 配置无效"),{status:422});
     if(!Number.isInteger(c.targetBytes)||!Number.isInteger(c.maxBytes)||!Number.isInteger(c.overlapBytes)||c.targetBytes<256||c.maxBytes>6000||c.targetBytes>c.maxBytes||c.overlapBytes<0||c.overlapBytes>300||c.overlapBytes>=c.targetBytes)throw Object.assign(new Error("分块预算无效：上限 6000 字节，重叠最多 300 字节"),{status:422});
     if(typeof rag.expansion!=="boolean"||!Array.isArray(rag.vision)||!rag.vision.length||rag.vision.some(m=>!m.provider||!m.id)||!rag.expansionModel?.provider||!rag.expansionModel?.id||!rag.milvus?.address||!/^[a-zA-Z][\w]{0,80}$/.test(rag.milvus.collectionPrefix))throw Object.assign(new Error("模型或 Milvus 配置无效"),{status:422});
+    const t=rag.retrieval, rr=rag.rerank;
+    if(!t||typeof t.selfRag!=="boolean"||!t.model?.provider||!t.model?.id||!Number.isInteger(t.maxQueries)||t.maxQueries<1||t.maxQueries>5||!Number.isInteger(t.candidates)||t.candidates<10||t.candidates>120||!Number.isInteger(t.rerankCandidates)||t.rerankCandidates<5||t.rerankCandidates>60||!Number.isInteger(t.maxRounds)||t.maxRounds<1||t.maxRounds>2||!Number.isFinite(t.similarityThreshold)||t.similarityThreshold<.7||t.similarityThreshold>1||!Number.isFinite(t.mmrLambda)||t.mmrLambda<.5||t.mmrLambda>1)throw Object.assign(new Error("检索预算或模型配置无效"),{status:422});
+    let rerankUrl;try{rerankUrl=rr.url?new URL(rr.url):null;}catch{throw Object.assign(new Error("重排地址无效"),{status:422});}
+    if(typeof rr.enabled!=="boolean"||!rr.model?.trim()||!Number.isInteger(rr.timeoutMs)||rr.timeoutMs<1000||rr.timeoutMs>60000||rerankUrl&&(!["http:","https:"].includes(rerankUrl.protocol)||rerankUrl.username||rerankUrl.password))throw Object.assign(new Error("重排配置无效"),{status:422});
   }
   cfg = next;
   writeJsonState(CONFIG_FILE, cfg);

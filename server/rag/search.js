@@ -1,5 +1,4 @@
-import { embed } from "./providers.js";
-import { vectorIndex, rrf } from "./milvus.js";
+import { retrieveEvidence } from "./selfrag.js";
 import { loadAsset } from "./ingestion.js";
 import { hydrate } from "./document.js";
 import {
@@ -9,7 +8,6 @@ import {
   record,
   records,
   generation as getGeneration,
-  digest,
   fault,
 } from "../storage/catalog.js";
 import { getProject } from "../store.js";
@@ -40,7 +38,8 @@ export function getKnowledgeElement(id, { generationId, imageBudget } = {}) {
     const image = loadAsset(row.assetId);
     if (
       image &&
-      (!imageBudget || Buffer.byteLength(image.data, "base64") <= imageBudget)
+      (imageBudget == null ||
+        Buffer.byteLength(image.data, "base64") <= imageBudget)
     )
       Object.assign(element, image);
     else element.pending = true;
@@ -57,11 +56,32 @@ export async function searchKnowledge(
     limit = 10,
     imageBudget = 12 * 1024 * 1024,
     services = {},
+    selfRag,
+    temporal,
+    signal,
+    onProgress,
   } = {},
 ) {
   query = String(query || "").trim();
   if (!query) return { results: [], total: 0 };
   if (Buffer.byteLength(query) > 8192) throw fault("查询过长", 422);
+  if (
+    resourceIds != null &&
+    (!Array.isArray(resourceIds) ||
+      resourceIds.some((id) => typeof id !== "string"))
+  )
+    throw fault("资源范围无效", 422);
+  if (
+    (selfRag != null && typeof selfRag !== "boolean") ||
+    (temporal != null &&
+      (typeof temporal !== "object" || Array.isArray(temporal)))
+  )
+    throw fault("检索选项无效", 422);
+  limit = Math.max(1, Math.min(20, Math.floor(Number(limit) || 10)));
+  imageBudget = Math.max(
+    0,
+    Math.min(12 * 1024 * 1024, Number(imageBudget) || 0),
+  );
   const project = projectId ? getProject(projectId) : null;
   if (projectId && !project) throw fault("项目不存在", 404);
   const selected = resources().filter(
@@ -77,40 +97,19 @@ export async function searchKnowledge(
   );
   const active = new Map(selected.map((r) => [r.id, published(r.id)]));
   if (!active.size) return { results: [], total: 0 };
-  const groups = new Map();
-  for (const g of active.values()) {
-    const key = digest([g.config.embedding, g.config.milvus]);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(g);
-  }
-  const lists = [];
-  for (const group of groups.values()) {
-    const [vector] = await (services.embed || embed)([query], {
-      type: "query",
-      config: group[0].config.embedding,
-    });
-    lists.push(
-      ...(await (services.index || vectorIndex(group[0].config)).search(
-        query,
-        vector,
-        {
-          generationIds: group.map((g) => g.id),
-          sourceType,
-          elementType,
-          limit: 50,
-        },
-      )),
-    );
-  }
-  const hits = rrf(lists, {
-    limit: Math.max(1, Math.min(50, Number(limit) || 10)),
-    valid: (hit) =>
-      resource(hit.resource_id)?.lifecycle === "active" &&
-      active.get(hit.resource_id)?.id === hit.generation_id,
+  const response = await retrieveEvidence(query, selected, active, {
+    services,
+    selfRag,
+    temporal,
+    elementType,
+    limit,
+    signal,
+    onProgress,
   });
   let remaining = imageBudget;
-  const results = hits
-    .map((hit) => {
+  const results = response.chosen
+    .map((candidate) => {
+      const hit = candidate.hit;
       const r = resource(hit.resource_id),
         g = active.get(r.id),
         all = records(g.id),
@@ -124,12 +123,19 @@ export async function searchKnowledge(
         title: r.title,
         sourceType: r.sourceType,
         stale: Boolean(r.indexStale),
-        score: hit.score,
+        id: candidate.id,
+        citationId: candidate.citationId,
+        score: candidate.relevance,
+        scores: candidate.scores,
+        retrieval: candidate.retrieval,
+        reflection: candidate.reflection,
+        date: candidate.date,
+        temporal: candidate.temporal,
         coverage: g.coverage,
       };
       const parts = (c) =>
         hydrate(c, all, {
-          loadImage: (e) => loadAsset(e.assetId),
+          loadImage: (e) => (e.assetId ? loadAsset(e.assetId) : null),
           imageBudget: remaining,
         });
       if (canonical.kind === "chunk") {
@@ -146,6 +152,7 @@ export async function searchKnowledge(
           pages: canonical.pages,
           modalities: canonical.modalities,
           parts: rendered,
+          evidence: rendered.filter((p) => p.type !== "text"),
         };
       }
       const element = getKnowledgeElement(canonical.id, {
@@ -160,6 +167,7 @@ export async function searchKnowledge(
         ...base,
         kind: "element",
         element,
+        evidence: [{ ...element, type: element.kind }],
         contexts: contexts.map((c) => {
           const rendered = parts(c);
           remaining -= rendered
@@ -172,5 +180,6 @@ export async function searchKnowledge(
       };
     })
     .filter(Boolean);
-  return { results, total: results.length };
+  const { chosen, ...details } = response;
+  return { ...details, results, total: results.length };
 }

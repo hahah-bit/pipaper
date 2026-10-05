@@ -275,8 +275,32 @@ export function registerStorageRoutes(api) {
   );
   api.post(
     "/rag/search",
-    route((req) => searchKnowledge(req.body.query, req.body)),
+    route((req) => searchKnowledge(req.body.query, searchOptions(req.body))),
   );
+  api.post("/rag/search/stream", async (req, res) => {
+    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache");
+    res.flushHeaders();
+    const controller = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) controller.abort();
+    });
+    const send = (event) => {
+      if (!res.destroyed) res.write(JSON.stringify(event) + "\n");
+    };
+    try {
+      const result = await searchKnowledge(req.body.query, {
+        ...searchOptions(req.body),
+        signal: controller.signal,
+        onProgress: (value) => send({ type: "progress", value }),
+      });
+      send({ type: "result", value: result });
+    } catch (e) {
+      if (!controller.signal.aborted)
+        send({ type: "error", error: e.message, status: e.status || 500 });
+    }
+    if (!res.destroyed) res.end();
+  });
   api.get(
     "/rag/elements/:id",
     route((req) =>
@@ -405,7 +429,18 @@ export function registerStorageRoutes(api) {
         throw fault("密钥请设置在服务端环境变量或本地 credentials 目录", 422);
       const previous = getConfig().rag;
       saveConfig({ rag: req.body });
-      if (JSON.stringify(previous) !== JSON.stringify(getConfig().rag))
+      const indexingConfig = (cfg) => [
+        cfg.vision,
+        cfg.expansionModel,
+        cfg.embedding,
+        cfg.milvus,
+        cfg.chunk,
+        cfg.expansion,
+      ];
+      if (
+        JSON.stringify(indexingConfig(previous)) !==
+        JSON.stringify(indexingConfig(getConfig().rag))
+      )
         for (const r of resources().filter(
           (r) => r.indexEnabled && r.lifecycle === "active",
         ))
@@ -442,6 +477,28 @@ export function registerStorageRoutes(api) {
       events.off("change", listener);
     });
   });
+}
+function searchOptions(body = {}) {
+  const {
+    resourceIds,
+    projectId,
+    sourceType,
+    elementType,
+    limit,
+    imageBudget,
+    selfRag,
+    temporal,
+  } = body;
+  return {
+    resourceIds,
+    projectId,
+    sourceType,
+    elementType,
+    limit,
+    imageBudget,
+    selfRag,
+    temporal,
+  };
 }
 function stateKey(namespace) {
   if (!/^[\w.-]{1,80}$/.test(namespace)) throw fault("状态命名空间无效");

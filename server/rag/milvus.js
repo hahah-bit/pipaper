@@ -178,7 +178,13 @@ export class VectorIndex {
         );
     }
   }
-  async search(
+  async search(query, vector, options = {}) {
+    const routes = await this.searchRoutes(query, vector, options);
+    if (routes.some((r) => r.error))
+      throw waiting(routes.find((r) => r.error).error);
+    return routes.map((r) => r.hits);
+  }
+  async searchRoutes(
     query,
     vector,
     { generationIds, sourceType, elementType, limit = 50 } = {},
@@ -198,7 +204,7 @@ export class VectorIndex {
       "kind",
       "text",
     ];
-    const lists = [];
+    const requests = [];
     for (const collection_name of elementType
       ? [this.collections[1]]
       : this.collections) {
@@ -206,26 +212,37 @@ export class VectorIndex {
         ["dense_vector", [vector], "COSINE"],
         ["sparse_vector", [query], "BM25"],
       ]) {
-        try {
-          const response = checked(
-            await this.client.search({
-              collection_name,
-              anns_field,
-              data,
-              metric_type,
-              expr,
-              limit,
-              output_fields,
-              consistency_level: "Strong",
-            }),
-          );
-          lists.push(response.results || []);
-        } catch (e) {
-          throw waiting("Milvus 检索失败：" + e.message);
-        }
+        requests.push(
+          (async () => {
+            try {
+              const response = checked(
+                await this.client.search({
+                  collection_name,
+                  anns_field,
+                  data,
+                  metric_type,
+                  expr,
+                  limit,
+                  output_fields,
+                  consistency_level: "Strong",
+                }),
+              );
+              return {
+                name: `${collection_name === this.collections[0] ? "body" : "elements"}-${metric_type === "COSINE" ? "dense" : "bm25"}`,
+                hits: response.results || [],
+              };
+            } catch (e) {
+              return {
+                name: `${collection_name === this.collections[0] ? "body" : "elements"}-${metric_type === "COSINE" ? "dense" : "bm25"}`,
+                hits: [],
+                error: "Milvus 检索失败：" + e.message,
+              };
+            }
+          })(),
+        );
       }
     }
-    return lists;
+    return Promise.all(requests);
   }
   async removeResource(id) {
     await this.ready();

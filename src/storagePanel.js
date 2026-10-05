@@ -5,6 +5,13 @@ import { renderMd } from "./chat.js";
 import { persistence } from "./persistence.js";
 import { openSettings } from "./settings.js";
 import {
+  streamKnowledgeSearch,
+  renderRetrievalAnalysis,
+  retrievalStages,
+  evidenceDate,
+  retrievalRouteName,
+} from "./knowledgeRetrieval.js";
+import {
   subscribeStorageEvents,
   storageSummary,
   latestStorageJobs,
@@ -185,7 +192,7 @@ export function storageModule() {
           el(
             "div",
             { class: "res-note" },
-            `${labels[r.kind] || r.kind} · ${labels[r.lifecycle]} · ${labels[r.availability] || r.availability} · 修订 ${r.revision}${r.publishedGeneration ? r.indexStale ? " · 索引待更新" : " · 已入库" : r.indexStale ? " · 索引已过期" : ""}${r.coverage?.partial ? " · 部分区域待核对" : ""}`,
+            `${labels[r.kind] || r.kind} · ${labels[r.lifecycle]} · ${labels[r.availability] || r.availability} · 修订 ${r.revision}${r.publishedGeneration ? (r.indexStale ? " · 索引待更新" : " · 已入库") : r.indexStale ? " · 索引已过期" : ""}${r.coverage?.partial ? " · 部分区域待核对" : ""}`,
           ),
         );
       if (pending) {
@@ -820,6 +827,7 @@ function renderParts(
       formula.innerHTML = katex.renderToString(part.latex || "", {
         throwOnError: false,
         trust: false,
+        displayMode: true,
       });
       container.append(formula);
     } else if (part.pending) {
@@ -842,7 +850,8 @@ function renderParts(
 }
 export function knowledgeModule() {
   let alive = false,
-    onProjectChanged;
+    onProjectChanged,
+    controller;
   return {
     id: "knowledge",
     name: "知识库检索",
@@ -877,8 +886,32 @@ export function knowledgeModule() {
           ].map(([value, name]) => el("option", { value }, name)),
         ),
         list = el("div", {}),
-        project = el("input", { type: "checkbox", checked: false });
-      let searchSequence = 0;
+        project = el("input", { type: "checkbox", checked: false }),
+        selfRag = el("input", { type: "checkbox", checked: true }),
+        timeMode = el(
+          "select",
+          { "aria-label": "证据时间策略" },
+          ...[
+            ["auto", "自动判断时间"],
+            ["relevance", "优先相关性"],
+            ["latest", "优先近期信息"],
+            ["as_of", "截至指定日期"],
+            ["range", "指定时间范围"],
+            ["compare", "历史变化对比"],
+          ].map(([value, label]) => el("option", { value }, label)),
+        ),
+        timeFrom = el("input", {
+          type: "date",
+          "aria-label": "起始日期",
+          hidden: true,
+        }),
+        timeTo = el("input", {
+          type: "date",
+          "aria-label": "截止日期",
+          hidden: true,
+        });
+      let searchSequence = 0,
+        selfRagPreference = false;
       try {
         const saved = JSON.parse(
           persistence.getItem("pipaper.workspace.knowledgeFilters") || "{}",
@@ -887,7 +920,21 @@ export function knowledgeModule() {
         source.value = saved.source || "";
         kind.value = saved.kind || "";
         project.checked = !!saved.project;
+        selfRagPreference = typeof saved.selfRag === "boolean";
+        selfRag.checked = saved.selfRag !== false;
+        timeMode.value = saved.timeMode || "auto";
+        timeFrom.value = saved.timeFrom || "";
+        timeTo.value = saved.timeTo || "";
       } catch {}
+      selfRag.addEventListener("change", () => {
+        selfRagPreference = true;
+      });
+      void storageApi("rag/config")
+        .then((data) => {
+          if (alive && !selfRagPreference)
+            selfRag.checked = data.config.retrieval.selfRag;
+        })
+        .catch(() => {});
       const remember = () =>
         persistence.setItem(
           "pipaper.workspace.knowledgeFilters",
@@ -896,6 +943,10 @@ export function knowledgeModule() {
             source: source.value,
             kind: kind.value,
             project: project.checked,
+            selfRag: selfRag.checked,
+            timeMode: timeMode.value,
+            timeFrom: timeFrom.value,
+            timeTo: timeTo.value,
           }),
         );
       onProjectChanged = () => {
@@ -904,24 +955,80 @@ export function knowledgeModule() {
       };
       onProjectChanged();
       window.addEventListener("pipaper:project-changed", onProjectChanged);
-      for (const field of [query, source, kind, project])
+      for (const field of [
+        query,
+        source,
+        kind,
+        project,
+        selfRag,
+        timeMode,
+        timeFrom,
+        timeTo,
+      ])
         field.addEventListener("change", remember);
+      const updateDates = () => {
+        timeFrom.hidden = timeMode.value !== "range";
+        timeTo.hidden = !["range", "as_of"].includes(timeMode.value);
+      };
+      timeMode.addEventListener("change", updateDates);
+      updateDates();
       query.setAttribute("aria-label", "知识库查询");
       source.setAttribute("aria-label", "知识来源");
       kind.setAttribute("aria-label", "检索元素类型");
       const search = async () => {
+        if (!query.value.trim()) {
+          query.focus();
+          return;
+        }
         remember();
         const ticket = ++searchSequence;
-        list.replaceChildren(el("p", {}, "检索中…"));
+        controller?.abort();
+        controller = new AbortController();
+        const status = el(
+          "p",
+          { role: "status", class: "knowledge-progress" },
+          "检索中…",
+        );
+        const cancel = button("停止检索", () => controller?.abort());
+        list.replaceChildren(
+          el("div", { class: "storage-actions" }, status, cancel),
+        );
         try {
-          const data = await storageApi("rag/search", {
-            query: query.value,
-            sourceType: source.value || undefined,
-            elementType: kind.value || undefined,
-            projectId: project.checked ? state.projectId : undefined,
-          });
+          const data = await streamKnowledgeSearch(
+            {
+              query: query.value,
+              sourceType: source.value || undefined,
+              elementType: kind.value || undefined,
+              projectId: project.checked ? state.projectId : undefined,
+              selfRag: selfRag.checked,
+              imageBudget: 4 * 1024 * 1024,
+              temporal: {
+                mode: timeMode.value,
+                from:
+                  timeMode.value === "range"
+                    ? timeFrom.value || undefined
+                    : undefined,
+                to: ["range", "as_of"].includes(timeMode.value)
+                  ? timeTo.value || undefined
+                  : undefined,
+              },
+            },
+            {
+              signal: controller.signal,
+              onProgress: (event) => {
+                if (alive && ticket === searchSequence)
+                  status.textContent = `${retrievalStages[event.stage] || event.stage}…${event.candidates ? ` ${event.candidates} 个候选` : ""}`;
+              },
+            },
+          );
           if (!alive || ticket !== searchSequence) return;
           list.replaceChildren();
+          const evidenceCards = new Map();
+          renderRetrievalAnalysis(data, list, (id) => {
+            const card = evidenceCards.get(id);
+            card?.scrollIntoView({ behavior: "smooth", block: "start" });
+            card?.focus({ preventScroll: true });
+          });
           const attachments = { displayed: new Map(), primary: new Set() };
           for (const row of data.results)
             for (const part of row.parts || [
@@ -941,23 +1048,104 @@ export function knowledgeModule() {
           for (const row of data.results) {
             const card = el(
               "article",
-              { class: "storage-card" },
-              el("h3", {}, row.title),
+              { class: "storage-card knowledge-result", tabindex: "-1" },
+              el("h3", {}, `${row.citationId || ""} · ${row.title}`),
               el(
                 "div",
                 { class: "res-note" },
                 `${row.sectionPath?.join(" > ") || "文档根节点"} · 页 ${row.pages?.join(", ") || "—"} · ${row.sourceType} · 版本 ${row.versionId?.slice(0, 12)}${row.stale ? " · 已过期版本" : ""}${row.coverage?.partial ? " · 部分区域待核对" : ""}`,
               ),
+              el(
+                "p",
+                { class: "res-note" },
+                `来源日期：${evidenceDate(row.date)} · ${row.date?.basis === "artifactCreatedAt" ? "成果生成时间" : row.sourceType === "original" ? "文献发表时间" : "内容标注时间"}${row.date?.sourcePublication?.value ? ` · 来源文献 ${evidenceDate(row.date.sourcePublication)}` : ""}`,
+              ),
             );
-            if (row.parts)
-              renderParts(row.parts, card, row.generationId, attachments);
-            else {
+            evidenceCards.set(row.id, card);
+            const metrics = el(
+              "details",
+              { class: "knowledge-scores" },
+              el("summary", {}, "相关度与召回依据"),
+            );
+            metrics.append(
+              el(
+                "p",
+                {},
+                `融合 ${row.scores?.fusion?.toFixed(3) || "—"} · 重排 ${row.scores?.rerank?.toFixed(3) || "未启用 / 不可用"} · 综合 ${row.score?.toFixed(3) || "—"}`,
+              ),
+              el(
+                "p",
+                { class: "res-note" },
+                "分数用于本次结果排序，不代表答案正确概率。",
+              ),
+            );
+            if (row.reflection)
+              metrics.append(el("p", {}, row.reflection.reason));
+            metrics.append(
+              el(
+                "ul",
+                {},
+                ...(row.retrieval || []).map((r) =>
+                  el(
+                    "li",
+                    {},
+                    `${retrievalRouteName(r.route)} · 第 ${r.rank} 名`,
+                  ),
+                ),
+              ),
+            );
+            card.append(metrics);
+            if (row.parts) {
+              const snippet = el("div", { class: "knowledge-snippet" });
+              for (const part of row.parts)
+                if (part.type === "text")
+                  renderParts([part], snippet, row.generationId);
+                else
+                  snippet.append(
+                    el(
+                      "span",
+                      { class: "knowledge-placeholder" },
+                      `［${{ image: "图", table: "表", formula: "公式", code: "算法" }[part.type] || "附件"}证据见下］`,
+                    ),
+                  );
+              card.append(snippet);
+              if (row.evidence?.length) {
+                const evidence = el(
+                  "div",
+                  { class: "knowledge-evidence" },
+                  el("h4", {}, "对应图、表与公式"),
+                );
+                renderParts(
+                  row.evidence,
+                  evidence,
+                  row.generationId,
+                  attachments,
+                );
+                card.append(evidence);
+              }
+            } else {
+              card.append(
+                el(
+                  "p",
+                  { class: "knowledge-snippet" },
+                  row.element.description ||
+                    row.element.shortDescription ||
+                    row.element.caption ||
+                    "元素证据",
+                ),
+              );
+              const evidence = el(
+                "div",
+                { class: "knowledge-evidence" },
+                el("h4", {}, "对应图、表与公式"),
+              );
               renderParts(
                 [{ ...row.element, type: row.element.kind }],
-                card,
+                evidence,
                 row.generationId,
                 attachments,
               );
+              card.append(evidence);
               for (const c of row.contexts) {
                 const context = el(
                   "details",
@@ -978,7 +1166,9 @@ export function knowledgeModule() {
           }
         } catch (e) {
           if (alive && ticket === searchSequence)
-            list.replaceChildren(el("p", {}, e.message));
+            list.replaceChildren(
+              el("p", {}, e.name === "AbortError" ? "检索已停止" : e.message),
+            );
         }
       };
       body.append(
@@ -995,6 +1185,10 @@ export function knowledgeModule() {
           source,
           kind,
           el("label", { class: "knowledge-scope" }, project, "当前项目"),
+          el("label", { class: "knowledge-scope" }, selfRag, "Self-RAG 分析"),
+          timeMode,
+          timeFrom,
+          timeTo,
         ),
         list,
       );
@@ -1004,6 +1198,7 @@ export function knowledgeModule() {
     },
     unmount() {
       alive = false;
+      controller?.abort();
       window.removeEventListener("pipaper:project-changed", onProjectChanged);
     },
   };

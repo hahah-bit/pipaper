@@ -11,7 +11,7 @@ import { parseModelJson } from "../study-flow.js";
 export const waiting = (message) =>
   Object.assign(fault(message, 503), { waitingConfiguration: true });
 export const expansionPromptVersion = "expansion-v2";
-const cleanError = (message) =>
+export const cleanError = (message) =>
   String(message)
     .replace(/sk-[\w.-]+/g, "[已隐藏密钥]")
     .slice(0, 500);
@@ -117,6 +117,8 @@ export async function modelJson({
   signal,
   models,
   runtime: injected,
+  timeoutMs = 240000,
+  maxTokens = 10000,
 }) {
   const runtime = injected || (await ModelRuntime.create());
   const available = await runtime.getAvailable();
@@ -156,9 +158,9 @@ export async function modelJson({
         {
           signal: AbortSignal.any([
             signal || new AbortController().signal,
-            AbortSignal.timeout(240000),
+            AbortSignal.timeout(timeoutMs),
           ]),
-          maxTokens: Math.min(10000, model.maxTokens || 10000),
+          maxTokens: Math.min(maxTokens, model.maxTokens || 10000),
           onPayload: (payload) =>
             model.provider === "deepseek"
               ? { ...payload, response_format: { type: "json_object" } }

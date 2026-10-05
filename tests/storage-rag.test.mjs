@@ -465,8 +465,13 @@ test("persistent ingestion deduplicates requests and publishes validated canonic
     ],
   };
   const found = await searchKnowledge("正文", {
+    selfRag: false,
     resourceIds: [r.id],
-    services: { embed: services.embed, index },
+    services: {
+      embed: services.embed,
+      index,
+      rerank: async (_q, docs) => docs.map((_, index) => ({ index, score: 1 })),
+    },
   });
   assert.equal(found.results.length, 1);
   files.trash(r.id);

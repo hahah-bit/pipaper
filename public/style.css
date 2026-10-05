@@ -1515,3 +1515,17 @@ html[data-fs="xlarge"]  { --fs-doc: 19.5px; --fs-chat: 18.5px; --fs-ui: 16.5px; 
 .settings-check input { width:auto; margin:0; }
 #settings-knowledge textarea { box-sizing:border-box; width:100%; margin-top:10px; padding:10px; color:var(--fg0); background:var(--bg2); border:1px solid var(--border); border-radius:8px; font-family:monospace; }
 @media (max-height:480px) { #dock { gap:3px; padding:6px 0; } .dock-btn { height:47px; } }
+/* Knowledge retrieval keeps analysis readable and evidence independently inspectable. */
+.knowledge-analysis p { line-height: 1.7; }
+.knowledge-warning { border-color: #b58b3b; background: color-mix(in srgb, var(--surface, #1d2030) 94%, #f5bd43); }
+.knowledge-warning li { margin: 6px 0; line-height: 1.55; }
+.knowledge-citation { border: 1px solid var(--border, #3e4565); border-radius: 5px; color: var(--accent, #90b8ff); background: transparent; cursor: pointer; padding: 2px 6px; margin: 0 3px; font-size: .85em; }
+.knowledge-trace, .knowledge-scores { margin: 12px 0; font-size: .85em; }
+.knowledge-trace summary, .knowledge-scores summary { cursor: pointer; }
+.knowledge-snippet { line-height: 1.65; overflow-wrap: anywhere; margin: 15px 0; }
+.knowledge-placeholder { color: var(--accent, #90b8ff); font-size: .9em; }
+.knowledge-evidence { border-top: 1px solid var(--border, #30354f); padding-top: 12px; }
+.knowledge-evidence h4 { margin: 0 0 12px; }
+.knowledge-result:focus { outline: 2px solid var(--accent, #90b8ff); outline-offset: 2px; }
+.knowledge-filters input[type="date"] { min-width: 140px; }
+.knowledge-progress { margin: 8px 0; line-height: 1.5; }

@@ -160,6 +160,14 @@ async function loadKnowledgeSettings() {
     type: "checkbox",
     checked: config.expansion,
   });
+  const rerankEnabled = el("input", {
+    type: "checkbox",
+    checked: config.rerank.enabled,
+  });
+  const selfRagEnabled = el("input", {
+    type: "checkbox",
+    checked: config.retrieval.selfRag,
+  });
   const advanced = el("textarea", {
     rows: 9,
     "aria-label": "知识库高级配置",
@@ -170,6 +178,7 @@ async function loadKnowledgeSettings() {
       vision: config.vision,
       expansionModel: config.expansionModel,
       chunk: config.chunk,
+      retrieval: config.retrieval,
     },
     null,
     2,
@@ -186,6 +195,17 @@ async function loadKnowledgeSettings() {
             ...config,
             ...JSON.parse(advanced.value),
             expansion: expansion.checked,
+            retrieval: {
+              ...config.retrieval,
+              ...JSON.parse(advanced.value).retrieval,
+              selfRag: selfRagEnabled.checked,
+            },
+            rerank: {
+              ...config.rerank,
+              enabled: rerankEnabled.checked,
+              model: fields.rerankModel.value.trim(),
+              url: fields.rerankUrl.value.trim(),
+            },
             embedding: {
               ...config.embedding,
               url: fields.url.value.trim(),
@@ -206,7 +226,7 @@ async function loadKnowledgeSettings() {
           const saved = await result.json();
           if (!result.ok) throw new Error(saved.error);
           status.textContent =
-            "已保存。下次处理将采用新配置；已有证据保留原版本。";
+            "已保存。检索设置立即用于下一次查询；解析与索引配置变化将标记受影响的证据。";
         } catch (error) {
           status.textContent = "保存失败：" + error.message;
         } finally {
@@ -232,10 +252,29 @@ async function loadKnowledgeSettings() {
     field("Milvus 地址", "address", config.milvus.address),
     field("集合前缀", "prefix", config.milvus.collectionPrefix),
     el("label", { class: "settings-check" }, expansion, "启用背景与问题扩写"),
+    el("h4", {}, "检索与重排"),
+    el(
+      "label",
+      { class: "settings-check" },
+      selfRagEnabled,
+      "默认启用 Self-RAG 分析",
+    ),
+    el("label", { class: "settings-check" }, rerankEnabled, "启用百炼重排"),
+    field("重排模型", "rerankModel", config.rerank.model),
+    field(
+      "重排地址（留空沿用百炼地域与业务空间）",
+      "rerankUrl",
+      config.rerank.url,
+    ),
+    el(
+      "p",
+      { class: "res-note" },
+      "重排使用服务端百炼凭据。时间与引用分析通过 Pi 模型运行时执行。",
+    ),
     el(
       "details",
       {},
-      el("summary", {}, "高级配置：视觉模型、扩写模型与分块"),
+      el("summary", {}, "高级配置：模型、分块与检索预算"),
       advanced,
     ),
     status,
