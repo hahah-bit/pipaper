@@ -4,6 +4,9 @@ import katex from "katex";
 import { renderMd } from "./chat.js";
 import { persistence } from "./persistence.js";
 import { openSettings } from "./settings.js";
+import { formulaIsInline, standaloneEvidence } from "../shared/knowledge-content.js";
+import { createKnowledgeSelection } from "./knowledgeSelection.js";
+import { renderKnowledgeSnippet } from "./knowledgeEvidence.js";
 import {
   streamKnowledgeSearch,
   renderRetrievalAnalysis,
@@ -823,12 +826,16 @@ function renderParts(
       });
       container.append(table);
     } else if (part.type === "formula") {
-      const formula = el("div", {});
-      formula.innerHTML = katex.renderToString(part.latex || "", {
+      const formula = el("div", { class: "knowledge-formula" });
+      if (!formulaIsInline(part)) formula.append(el("small", { class: "res-note" },
+        `${part.label ? "公式 " + part.label : "独立公式"}${part.page ? " · 第 " + part.page + " 页" : ""}`));
+      const math = el("div", { class: "knowledge-formula-math" });
+      math.innerHTML = katex.renderToString(part.latex || "", {
         throwOnError: false,
         trust: false,
-        displayMode: true,
+        displayMode: !formulaIsInline(part),
       });
+      formula.append(math);
       container.append(formula);
     } else if (part.pending) {
       const slot = el("div", { class: "knowledge-attachment" });
@@ -851,7 +858,8 @@ function renderParts(
 export function knowledgeModule() {
   let alive = false,
     onProjectChanged,
-    controller;
+    controller,
+    selection;
   return {
     id: "knowledge",
     name: "知识库检索",
@@ -859,6 +867,7 @@ export function knowledgeModule() {
     mount(body) {
       alive = true;
       body.classList.add("storage-panel");
+      selection = createKnowledgeSelection(body);
       const query = el("input", {
           placeholder: "检索文献、笔记、研读成果…",
           style: { flex: "1" },
@@ -982,6 +991,7 @@ export function knowledgeModule() {
         }
         remember();
         const ticket = ++searchSequence;
+        selection.reset();
         controller?.abort();
         controller = new AbortController();
         const status = el(
@@ -1062,6 +1072,8 @@ export function knowledgeModule() {
               ),
             );
             evidenceCards.set(row.id, card);
+            if (row.coverageGaps?.length) card.append(el("p", { class: "knowledge-warning", role: "note" },
+              `本页公式 ${[...new Set(row.coverageGaps.map(gap => gap.label || "未编号"))].join("、")} 待核对，当前证据未包含这些公式。可到资料 → 待核对查看原始证据。`));
             const metrics = el(
               "details",
               { class: "knowledge-scores" },
@@ -1097,26 +1109,18 @@ export function knowledgeModule() {
             card.append(metrics);
             if (row.parts) {
               const snippet = el("div", { class: "knowledge-snippet" });
-              for (const part of row.parts)
-                if (part.type === "text")
-                  renderParts([part], snippet, row.generationId);
-                else
-                  snippet.append(
-                    el(
-                      "span",
-                      { class: "knowledge-placeholder" },
-                      `［${{ image: "图", table: "表", formula: "公式", code: "算法" }[part.type] || "附件"}证据见下］`,
-                    ),
-                  );
+              renderKnowledgeSnippet(row.parts, snippet, { ...row, recordId: row.chunkId }, selection,
+                part => attachments.displayed.get(attachmentKey(part, row.generationId)));
               card.append(snippet);
-              if (row.evidence?.length) {
+              const standalone = standaloneEvidence(row.evidence || []);
+              if (standalone.length) {
                 const evidence = el(
                   "div",
                   { class: "knowledge-evidence" },
                   el("h4", {}, "对应图、表与公式"),
                 );
                 renderParts(
-                  row.evidence,
+                  standalone,
                   evidence,
                   row.generationId,
                   attachments,
@@ -1124,16 +1128,11 @@ export function knowledgeModule() {
                 card.append(evidence);
               }
             } else {
-              card.append(
-                el(
-                  "p",
-                  { class: "knowledge-snippet" },
-                  row.element.description ||
-                    row.element.shortDescription ||
-                    row.element.caption ||
-                    "元素证据",
-                ),
-              );
+              const description = el("div", { class: "knowledge-snippet" });
+              renderKnowledgeSnippet([{ type: "text", text: row.element.description || row.element.caption ||
+                (row.element.kind === "formula" ? (formulaIsInline(row.element) ? "原文行内表达式" : "原文独立公式") : row.element.shortDescription) || "元素证据" }],
+                description, { ...row, recordId: row.element.id }, selection);
+              card.append(description);
               const evidence = el(
                 "div",
                 { class: "knowledge-evidence" },
@@ -1152,13 +1151,12 @@ export function knowledgeModule() {
                   {},
                   el("summary", {}, "引用正文 · " + c.sectionPath.join(" > ")),
                 );
-                renderParts(
-                  c.parts,
-                  context,
-                  row.generationId,
-                  attachments,
-                  true,
-                );
+                const prose = el("div", { class: "knowledge-snippet" });
+                renderKnowledgeSnippet(c.parts, prose, { ...row, recordId: c.id, sectionPath: c.sectionPath, pages: c.pages }, selection,
+                  part => attachments.displayed.get(attachmentKey(part, row.generationId)));
+                context.append(prose);
+                const extra = standaloneEvidence(c.parts);
+                if (extra.length) renderParts(extra, context, row.generationId, attachments, true);
                 card.append(context);
               }
             }
@@ -1199,6 +1197,7 @@ export function knowledgeModule() {
     unmount() {
       alive = false;
       controller?.abort();
+      selection?.dispose();
       window.removeEventListener("pipaper:project-changed", onProjectChanged);
     },
   };

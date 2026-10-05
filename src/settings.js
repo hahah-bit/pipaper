@@ -148,6 +148,13 @@ async function loadKnowledgeSettings() {
   const response = await fetch("/api/rag/config"),
     data = await response.json();
   if (!response.ok) throw new Error(data.error);
+  const [application, available] = await Promise.all([api.getConfig(), api.models()]);
+  const translationModel = application.config.translate.model;
+  const translationChoice = el("select", { "aria-label": "选区翻译模型" });
+  const choices = available.models.map(model => ({ provider: model.provider, id: model.id }));
+  if (!choices.some(model => model.provider === translationModel.provider && model.id === translationModel.id)) choices.unshift(translationModel);
+  translationChoice.append(...choices.map(model => el("option", { value: JSON.stringify(model) }, `${model.id} · ${model.provider}`)));
+  translationChoice.value = JSON.stringify({ provider: translationModel.provider, id: translationModel.id });
   const config = data.config,
     fields = {};
   const field = (label, key, value, type = "text") => {
@@ -225,6 +232,7 @@ async function loadKnowledgeSettings() {
           });
           const saved = await result.json();
           if (!result.ok) throw new Error(saved.error);
+          await api.saveConfig({ translate: { model: JSON.parse(translationChoice.value) } });
           status.textContent =
             "已保存。检索设置立即用于下一次查询；解析与索引配置变化将标记受影响的证据。";
         } catch (error) {
@@ -277,6 +285,9 @@ async function loadKnowledgeSettings() {
       el("summary", {}, "高级配置：模型、分块与检索预算"),
       advanced,
     ),
+    el("h4", {}, "选区翻译"),
+    el("label", {}, "模型（默认 GLM）", translationChoice),
+    el("p", { class: "res-note" }, "选择正文后点击“翻译”，仅翻译选区并在其下方展开。模型使用服务端 Pi 凭据。"),
     status,
     save,
   );

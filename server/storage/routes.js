@@ -34,6 +34,7 @@ import {
 } from "../store.js";
 import { startIngestion, controlJob, loadAsset } from "../rag/ingestion.js";
 import { searchKnowledge, getKnowledgeElement } from "../rag/search.js";
+import { translateKnowledgeSelection } from "../rag/translation.js";
 import { validateCandidate } from "../rag/document.js";
 import { vectorIndex, removeResourceIndexes } from "../rag/milvus.js";
 import { embeddingKey } from "../rag/providers.js";
@@ -309,6 +310,12 @@ export function registerStorageRoutes(api) {
       }),
     ),
   );
+  api.post("/rag/translate", route(async (req, res) => {
+    const controller = new AbortController();
+    res.on("close", () => { if (!res.writableEnded) controller.abort(); });
+    const { resourceId, generationId, recordId, text } = req.body || {};
+    return translateKnowledgeSelection({ resourceId, generationId, recordId, text }, { signal: controller.signal });
+  }));
   api.get(
     "/rag/reviews",
     route((req) => {

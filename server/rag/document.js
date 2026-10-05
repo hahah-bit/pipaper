@@ -67,6 +67,7 @@ export function validateCandidate(original, candidate) {
       katex.renderToString(candidate.latex || "", {
         throwOnError: true,
         trust: false,
+        displayMode: true,
         strict: "ignore",
       });
       if (
@@ -279,6 +280,7 @@ export function normalizeDocument(
           kind: "formula",
           latex: math.latex,
           inline: true,
+          display: math.display,
           shortDescription: `行内公式：${math.latex}`,
           ...origin,
           quality: row.quality,
@@ -411,7 +413,7 @@ export function normalizeDocument(
     const inline = elements.filter((e) => e.inline && e.blockId === t.blockId);
     let mathIndex = 0;
     t.text = t.text.replace(
-      /\$\$[\s\S]*?\$\$|(?<!\\)\$(?:\\.|[^$\n])+\$/g,
+      /\$\$[\s\S]*?\$\$|\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+(?<!\\)\$/g,
       (match) => {
         const e = inline[mathIndex++];
         if (!e) return match;
@@ -613,6 +615,9 @@ export function hydrate(
       type: e.kind,
       elementId: e.id,
       description: e.shortDescription,
+      inline: e.inline,
+      display: e.display,
+      label: e.label,
       page: e.page,
       versionId: e.versionId,
     };

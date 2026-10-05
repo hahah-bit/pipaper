@@ -132,6 +132,10 @@ export async function searchKnowledge(
         date: candidate.date,
         temporal: candidate.temporal,
         coverage: g.coverage,
+        coverageGaps: all.filter(row => row.kind === "formula" && row.quality === "needs_review" &&
+          (!canonical.sectionId || row.sectionId === canonical.sectionId) &&
+          (canonical.kind === "chunk" ? canonical.pages?.includes(row.page) : row.page === canonical.page))
+          .map(row => ({ elementId: row.id, kind: row.kind, label: row.label, page: row.page, issues: row.issues })),
       };
       const parts = (c) =>
         hydrate(c, all, {

@@ -22,7 +22,7 @@ const DEFAULTS = {
     mineru: { mode: "off", token: "", cmd: "mineru", apiBase: "https://mineru.net" },
     unstructured: { mode: "off", apiKey: "", url: "https://api.unstructured.io" },
   },
-  translate: { url: "http://localhost:5001" },
+  translate: { url: "http://localhost:5001", model: { provider: "zai-coding-cn", id: "glm-4.7" } },
   chat: { thinkingLevel: "high" },
   archify: { path: "" }, // Reuse an existing upstream repository / skill directory.
   topicAnalysis: { openalexApiKey: "" },
@@ -69,6 +69,7 @@ export function getConfig() {
 
 export function saveConfig(patch) {
   const next=deepMerge(cfg,patch||{});
+  if(patch?.translate && (typeof next.translate.model?.provider !== "string" || !next.translate.model.provider.trim() || typeof next.translate.model?.id !== "string" || !next.translate.model.id.trim()))throw Object.assign(new Error("翻译模型配置无效"),{status:422});
   if(patch?.rag){
     const secretKeys=value=>value&&typeof value==="object"&&Object.entries(value).some(([k,v])=>/^(apiKey|token|secret|password|authorization)$/i.test(k)||secretKeys(v));
     if(secretKeys(patch.rag))throw Object.assign(new Error("RAG 密钥只能保存在服务端凭据中"),{status:422});
