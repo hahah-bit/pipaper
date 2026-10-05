@@ -1465,6 +1465,14 @@ html[data-fs="xlarge"]  { --fs-doc: 19.5px; --fs-chat: 18.5px; --fs-ui: 16.5px; 
 .archify-empty p { font-size: 13px; }
 /* Unified storage and version-aware knowledge retrieval */
 .storage-panel{overflow:auto;padding:18px;box-sizing:border-box;height:100%;color:var(--fg)}
+/* These modules own the panel body; override the dock's clipped flex layout. */
+#dock-drawer-body .dvp-body.storage-panel {
+  display: block;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
 .storage-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
 .storage-actions input,.storage-actions select{padding:8px;background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:6px;min-width:120px}
 .storage-card{padding:14px;margin:12px 0;border:1px solid var(--border);border-radius:10px;background:var(--bg2);overflow-wrap:anywhere}
