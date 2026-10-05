@@ -4,9 +4,11 @@ import * as casTable from "./cas-table.js";
 import { createSources, safeURL } from "./sources.js";
 import { analyze } from "./pipeline.js";
 import { catalog, complete } from "./model.js";
+import { resource, events, saveJob, digest } from "../storage/catalog.js";
 
 export function registerTopicRoutes(api, { sources, model = complete, models = catalog, analysisTimeoutMs } = {}) {
   const running = new Map(), listeners = new Map(), deleting = new Map();
+  events.on("lifecycle", event => { if(event.type === "trash") for(const id of event.affected||[event.id]) if(id.startsWith("topic:")) for(const j of running.get(id.slice(6))?.values()||[]) j.controller.abort(); });
   store.recover();
   const broadcast = (id, event = { type: "refresh" }) => { for (const send of listeners.get(id) || []) send(event); };
   const route = handler => async (req, res) => { try { await handler(req, res); } catch (e) { if (!res.headersSent) res.status(e.status || 400).json({ error: String(e.message || e) }); } };
@@ -20,13 +22,16 @@ export function registerTopicRoutes(api, { sources, model = complete, models = c
     const set = running.get(id);
     if (set.has(kind)) throw store.fault("同类操作正在进行，请先停止或等待完成", 409);
     const controller = new AbortController(), job = { id: randomUUID(), kind, controller, promise: null };
+    saveJob({id:job.id,resourceId:"topic:"+id,type:"topic",stage:kind,status:"running",fingerprint:digest([id,kind,task.revision])});
     set.set(kind, job);
     job.promise = Promise.resolve().then(() => work(controller.signal)).catch(e => {
+      job.error=e.message;
       try { store.change(id, t => { t.lastError = controller.signal.aborted ? "操作已停止；已保存的证据可继续查看，重跑会建立新报告。" : e.message;
         if (kind === "analysis") t.status = controller.signal.aborted ? "interrupted" : "failed";
         if (kind === "chat") for (const m of t.chat) if (m.status === "streaming") m.status = "interrupted";
       }); } catch {} broadcast(id, { type: "error", message: e.message });
     }).finally(() => {
+      saveJob({id:job.id,resourceId:"topic:"+id,type:"topic",stage:kind,status:controller.signal.aborted?"cancelled":job.error?"failed":"succeeded",error:job.error});
       set.delete(kind); if (!set.size) running.delete(id);
       if (kind === "chat") try { store.change(id, t => { t.chatBusy = false; }); } catch {}
       broadcast(id);
@@ -133,13 +138,15 @@ export function registerTopicRoutes(api, { sources, model = complete, models = c
   }));
   api.delete("/topics/:id/chat", route((req, res) => { idle(req.params.id); store.change(req.params.id, t => { t.chat = []; t.chatEpoch = (t.chatEpoch || 0) + 1; t.ui.chatDraft = ""; }); broadcast(req.params.id); res.json({ ok: true }); }));
   api.delete("/topics/:id", route(async (req, res) => {
-    const { id } = req.params; store.read(id);
+    const { id } = req.params;
+    if(resource("topic:"+id)?.lifecycle === "trashed") {store.removeTaskFiles(id);return res.json({ok:true});}
+    store.read(id);
     if (!deleting.has(id)) {
       store.change(id, t => { t.status = "deleting"; }, { deleting: true }); broadcast(id);
       const job = (async () => {
         await stop(id);
         try { store.removeTaskFiles(id); broadcast(id, { type: "deleted" }); }
-        catch (e) { store.change(id, t => { t.status = "delete-failed"; t.lastError = e.message; }, { deleting: true }); broadcast(id); throw e; }
+        catch (e) { if(resource("topic:"+id)?.lifecycle === "active")store.change(id, t => { t.status = "delete-failed"; t.lastError = e.message; }, { deleting: true }); broadcast(id); throw e; }
       })().finally(() => deleting.delete(id)); deleting.set(id, job);
     }
     await deleting.get(id); res.json({ ok: true });

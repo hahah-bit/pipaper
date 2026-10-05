@@ -1,3 +1,4 @@
+import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile } from "./storage/files.js";
 // 待读清单（to-read）：检索结果的元数据暂存，不下载 PDF。
 // 用户在清单里显式点“加入项目”时才走 /api/search/import 下载入库。
 import fs from "node:fs";
@@ -19,7 +20,7 @@ load();
 
 function persist() {
   try {
-    fs.writeFileSync(FILE, JSON.stringify(entries, null, 1));
+    managedWrite(FILE, JSON.stringify(entries, null, 1));
   } catch {}
 }
 

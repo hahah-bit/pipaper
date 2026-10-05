@@ -1,3 +1,4 @@
+import { persistence } from "./persistence.js";
 import { $, el } from "./app.js";
 
 // One-click theme switcher. Themes are pure CSS variable sets defined in
@@ -16,7 +17,7 @@ const THEMES = [
 const LS_KEY = "pipaper.theme";
 
 export function initTheme() {
-  const saved = localStorage.getItem(LS_KEY) || "";
+  const saved = persistence.getItem(LS_KEY) || "";
   applyTheme(saved);
   const btn = el("button", { id: "btn-theme", class: "icon-btn", title: "切换主题" }, "🎨");
   $("#btn-theme-slot").replaceChildren(btn);
@@ -26,10 +27,10 @@ export function initTheme() {
     menu.replaceChildren(
       ...THEMES.map((t) =>
         el("div", {
-          class: "theme-item" + ((localStorage.getItem(LS_KEY) || "") === t.id ? " active" : ""),
+          class: "theme-item" + ((persistence.getItem(LS_KEY) || "") === t.id ? " active" : ""),
           onclick: () => {
             applyTheme(t.id);
-            localStorage.setItem(LS_KEY, t.id);
+            persistence.setItem(LS_KEY, t.id);
             render();
           },
         }, t.name)

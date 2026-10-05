@@ -1,3 +1,6 @@
+import { isActive, resource as storageResource, resourceAt, invalidate, transaction, writeState, putResource, link, unlink, dependencies } from "./storage/catalog.js";
+import { registerPaper } from "./storage/migration.js";
+import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, trash, registerFile } from "./storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -15,16 +18,17 @@ let saveTimer = null;
 
 function load() {
   try {
-    papers = { ...papers, ...JSON.parse(fs.readFileSync(PAPERS_FILE, "utf8")) };
+    papers = { ...papers, ...readJsonState(PAPERS_FILE, papers) };
   } catch {}
   try {
-    sessionIndex = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf8"));
+    sessionIndex = readJsonState(SESSIONS_FILE, {});
   } catch {}
   try {
-    projects = JSON.parse(fs.readFileSync(PROJECTS_FILE, "utf8"));
+    projects = readJsonState(PROJECTS_FILE, []);
   } catch {}
 }
 load();
+for(const p of projects)registerProject(p);
 
 // Back up the original indexes once, before the first v2 write.
 const MIGRATION_FILE = path.join(DATA_DIR, "pi-resources-v2.json");
@@ -33,34 +37,42 @@ if (!fs.existsSync(MIGRATION_FILE)) {
     if (fs.existsSync(file) && !fs.existsSync(file + ".pre-pi-v2.bak")) fs.copyFileSync(file, file + ".pre-pi-v2.bak");
   }
   for (const p of projects) p.resources = normalizeResources(p.resources);
-  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2));
-  fs.writeFileSync(MIGRATION_FILE, JSON.stringify({ schemaVersion: 2, migratedAt: new Date().toISOString() }));
+  writeJsonState(PROJECTS_FILE, projects);
+  managedWrite(MIGRATION_FILE, JSON.stringify({ schemaVersion: 2, migratedAt: new Date().toISOString() }));
 }
 
 function persist() {
+  for(const p of projects)registerProject(p);
+  transaction(()=>{
+    writeState("legacy:"+PAPERS_FILE,papers);
+    writeState("legacy:"+SESSIONS_FILE,sessionIndex);
+    writeState("legacy:"+PROJECTS_FILE,projects);
+  });
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    fs.writeFileSync(PAPERS_FILE, JSON.stringify(papers, null, 2));
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessionIndex, null, 2));
-    fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2));
+    writeJsonState(PAPERS_FILE, papers);
+    for (const p of papers.papers) if (isActive("paper:" + p.id)) registerPaper(p);
+    writeJsonState(SESSIONS_FILE, sessionIndex);
+    writeJsonState(PROJECTS_FILE, projects);
   }, 150);
 }
 
 export function flushStore() {
   clearTimeout(saveTimer);
-  fs.writeFileSync(PAPERS_FILE, JSON.stringify(papers, null, 2));
-  fs.writeFileSync(SESSIONS_FILE, JSON.stringify(sessionIndex, null, 2));
-  fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2));
+  writeJsonState(PAPERS_FILE, papers);
+    for (const p of papers.papers) if (isActive("paper:" + p.id)) registerPaper(p);
+  writeJsonState(SESSIONS_FILE, sessionIndex);
+  writeJsonState(PROJECTS_FILE, projects);
 }
 
 // ---- projects (paper sets; sessions are grouped by project) ----
 
 export function listProjects() {
-  return projects;
+  return projects.filter(p=>isActive("project:"+p.id));
 }
 
 export function getProject(id) {
-  return projects.find((x) => x.id === id) || null;
+  return projects.find((x) => x.id === id&&isActive("project:"+id)) || null;
 }
 
 export function createProject(name, type = "temp") {
@@ -82,8 +94,18 @@ export function updateProject(id, { name, addPaper, removePaper, resources } = {
 }
 
 export function deleteProject(id) {
+  const p=getProject(id);if(p){registerProject(p);trash("project:"+id);for(const ref of dependencies("project:"+id).filter(r=>r.source==="project:"+id&&r.relation==="uses"))unlink(ref.source,ref.target);}
   projects = projects.filter((x) => x.id !== id);
   persist();
+}
+export function registerProject(p) {
+  const id="project:"+p.id,old=storageResource(id);if(old&&old.lifecycle!=="active")return old;
+  const next=JSON.stringify(old?.metadata)===JSON.stringify(p)?old:putResource({...old,id,kind:"project",title:p.name,metadata:p});
+  for(const ref of dependencies(id).filter(r=>r.source===id&&r.relation==="uses"&&!p.paperIds.includes(r.target.replace(/^paper:/,""))))unlink(id,ref.target);
+  for(const paperId of p.paperIds)link(id,"paper:"+paperId,"uses");return next;
+}
+export function restoreProject(metadata) {
+  const existing=projects.find(p=>p.id===metadata.id);if(!existing)projects.push(metadata);persist();return getProject(metadata.id);
 }
 
 export function getPapers() {
@@ -91,18 +113,18 @@ export function getPapers() {
 }
 
 export function listPapers({ includeTemporary = false } = {}) {
-  return includeTemporary ? papers.papers : papers.papers.filter(p => !p.studyOnly);
+  return papers.papers.filter(p => isActive("paper:" + p.id) && (includeTemporary || !p.studyOnly));
 }
 
 export function removeTemporaryPaper(id) {
-  const paper = getPaper(id);
+  const paper = papers.papers.find(p=>p.id===id) || storageResource("paper:"+id)?.metadata;
   if (!paper?.studyOnly) throw new Error("只能清理研读暂存论文");
   papers.papers = papers.papers.filter(p => p.id !== id);
   persist();
 }
 
 export function getPaper(id) {
-  return papers.papers.find((p) => p.id === id);
+  return papers.papers.find((p) => p.id === id && isActive("paper:" + p.id));
 }
 
 // ---- literature identity: content-hash state machine ----
@@ -135,14 +157,14 @@ export function flushHashCache() {
   if (!hashDirty) return;
   hashDirty = false;
   try {
-    fs.writeFileSync(HASH_CACHE_FILE, JSON.stringify(hashCache));
+    managedWrite(HASH_CACHE_FILE, JSON.stringify(hashCache));
   } catch {}
 }
 setInterval(flushHashCache, 3000).unref?.();
 
 export function findByHash(hash) {
   if (!hash) return null;
-  return papers.papers.find((p) => p.contentHash === hash) || null;
+  return papers.papers.find((p) => p.contentHash === hash && isActive("paper:" + p.id)) || null;
 }
 
 // Storage key for parse artifacts: hash when known, else paper id.
@@ -171,6 +193,8 @@ export function mergePaperIdentity(existing, incoming) {
 }
 
 export function upsertPaper(p) {
+  const old = papers.papers.find(x => x.id === p.id);
+  if (old?.contentHash && p.contentHash && old.contentHash !== p.contentHash) invalidate("paper:" + p.id);
   const i = papers.papers.findIndex((x) => x.id === p.id);
   if (i >= 0) papers.papers[i] = { ...papers.papers[i], ...p };
   else papers.papers.push(p);
@@ -227,7 +251,7 @@ export function importPdfFile(origName, buf) {
   if (existing) {
     if (existing.studyOnly) {
       const target = path.join(LIBRARY_DIR, hash.slice(0, 16) + "-" + safe);
-      fs.writeFileSync(target, buf);
+      managedWrite(target, buf);
       existing.pdfPath = target;
       existing.studyOnly = false;
       existing.source = "library";
@@ -240,10 +264,10 @@ export function importPdfFile(origName, buf) {
     return { paper: existing, reused: true };
   }
   let target = path.join(LIBRARY_DIR, safe);
-  if (fs.existsSync(target)) {
+  if (fs.existsSync(target) || resourceAt(target)?.lifecycle&&resourceAt(target).lifecycle!=="active") {
     target = path.join(LIBRARY_DIR, safe.replace(/\.pdf$/i, "") + "-" + Date.now() + ".pdf");
   }
-  fs.writeFileSync(target, buf);
+  managedWrite(target, buf);
   const id = makeLocalId(target);
   const title = path.basename(target).replace(/\.pdf$/i, "");
   const paper = {
@@ -280,7 +304,7 @@ export function writeParseState(paperId, state) {
   const dir = parsedDir(paperId);
   fs.mkdirSync(dir, { recursive: true });
   const next = { ...getParseState(paperId), ...state };
-  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify(next, null, 2));
+  managedWrite(path.join(dir, "state.json"), JSON.stringify(next, null, 2));
   return next;
 }
 

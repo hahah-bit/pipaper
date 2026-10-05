@@ -3,6 +3,7 @@ import { registerModule } from "./modules.js";
 import { renderMd } from "./chat.js";
 import { runTempPrompt, removeTempSession } from "./tempSession.js";
 import { diffLines } from "diff";
+import { persistence } from "./persistence.js";
 
 // LaTeX·MD 编辑模式（dock 抽屉）：手工 + 模型辅助编辑知识库里的 Markdown 文档。
 // - 左源码右 KaTeX 实时预览（与阅读器同一套渲染管道），可 编辑/分屏/预览 切换
@@ -79,6 +80,7 @@ export function registerMdEditorModule() {
       const main = el("div", { class: "mde-main mode-split" }, editor, preview);
 
       let currentPath = "";
+      let currentRevision = 0;
       let dirty = false;
       let mode = "split";
       let previewTimer = null;
@@ -91,6 +93,7 @@ export function registerMdEditorModule() {
       setMode("split");
 
       function markDirty() {
+        if(currentPath)persistence.setItem("pipaper.mdDraft."+currentPath,JSON.stringify({content:editor.value,revision:currentRevision}));
         if (!dirty) { dirty = true; statusEl.textContent = (currentPath || "") + " ●"; }
         schedulePreview();
       }
@@ -225,7 +228,7 @@ export function registerMdEditorModule() {
         }
         aiPending = null;
         aiPanel.hidden = true;
-        dirty = true;
+        markDirty();
         statusEl.textContent = (currentPath || "") + " ●（AI 修改已写入，记得保存）";
         schedulePreview();
         editor.focus();
@@ -253,9 +256,12 @@ export function registerMdEditorModule() {
 
       async function openPath(rel) {
         try {
-          const r = await api.file("knowledge/" + rel);
+          const r = await api.notesReadFile(rel);
           editor.value = r.content || "";
           currentPath = rel; dirty = false;
+          currentRevision=r.revision;
+          const draft=persistence.getItem("pipaper.mdDraft."+rel);
+          if(draft){try{const saved=JSON.parse(draft);editor.value=saved.content;currentRevision=saved.revision;dirty=true;}catch{}}
           statusEl.textContent = fileLabel(rel) + " · " + editor.value.split("\n").length + " 行";
           fileSel.value = rel;
           schedulePreview();
@@ -271,7 +277,8 @@ export function registerMdEditorModule() {
       async function save() {
         if (!currentPath) return toast("先选择文件", true);
         try {
-          await api.notesWriteFile(currentPath, editor.value);
+          const saved=await api.notesWriteFile(currentPath, editor.value,currentRevision);
+          currentRevision=saved.revision;persistence.removeItem("pipaper.mdDraft."+currentPath);
           dirty = false;
           statusEl.textContent = fileLabel(currentPath) + " · 已保存 ✓";
           toast("已保存到知识库");

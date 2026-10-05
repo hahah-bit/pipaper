@@ -1,3 +1,4 @@
+import { persistence, initPersistence } from "../persistence.js";
 import { node, request, markdown, button, dialog, notify, confirmDelete } from "./ui.js";
 import { openStudyCreate } from "./create.js";
 import { createStudyChat } from "./chat.js";
@@ -10,8 +11,8 @@ const id = location.pathname.split("/").filter(Boolean)[1];
 history.scrollRestoration = "manual";
 let task, guide, chat, reader, busy = false, savingUI, uiPatch = {}, currentVersion, reviewId;
 const root = document.getElementById("study-root");
-const theme = localStorage.getItem("pipaper.theme"); if (theme) document.documentElement.dataset.theme = theme;
-document.documentElement.dataset.fs = localStorage.getItem("pipaper.fontSize") || "cozy";
+const theme = persistence.getItem("pipaper.theme"); if (theme) document.documentElement.dataset.theme = theme;
+document.documentElement.dataset.fs = persistence.getItem("pipaper.fontSize") || "cozy";
 const guideBody = node("div", { class: "study-guide-body" }), progress = node("span", { class: "study-run-status", role: "status" });
 const guideDraft = node("textarea", { rows: 3, placeholder: "告诉引导你哪里没理解，或提出实验想法…", "aria-label": "研读引导输入", oninput: () => saveUI({ guideDraft: guideDraft.value }) });
 const stageNav = node("nav", { class: "study-stage-nav", "aria-label": "研读阶段" });
@@ -183,6 +184,7 @@ function gutter(index) {
   el.addEventListener("keydown", e => { if (["ArrowLeft", "ArrowRight"].includes(e.key)) { e.preventDefault(); adjust(e.key === "ArrowLeft" ? -2 : 2); } }); return el;
 }
 async function boot() {
+  await initPersistence();
   const result = await request(`/api/studies/${id}`); task = result.task; currentVersion = task.versionId;
   menu.append(node("summary", {}, node("small", {}, "论文研读"), title, node("span", {}, "⌄")), node("div", { class: "study-task-menu" }, search, menuItems, button("＋ 新建研读", () => openStudyCreate({ projectId: task.projectId }))));
   title.textContent = task.title;

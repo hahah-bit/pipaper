@@ -166,6 +166,10 @@ export function blocksToMd(blocks) {
       case "para":
         out.push(b.md, "");
         break;
+      case "footnote":
+      case "page_footnote":
+        out.push(`（注：${b.text || b.md || ""}）`, "");
+        break;
       case "table":
         if (b.caption) out.push(b.caption, "");
         out.push(b.html || b.md, "");

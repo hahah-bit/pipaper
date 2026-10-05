@@ -25,6 +25,11 @@ import { registerStudyRoutes } from "./studies.js";
 import { registerTranslationRoutes } from "./translation-routes.js";
 import { registerArchifyRoutes } from "./archify.js";
 import { registerTopicRoutes } from "./topics/routes.js";
+import { registerStorageRoutes } from "./storage/routes.js";
+import { migrateStorage, recoverStorage } from "./storage/migration.js";
+import { resumeIngestion } from "./rag/ingestion.js";
+import { writeFile as managedWrite, relocate, auditResources } from "./storage/files.js";
+import { startMaintenance } from "./storage/maintenance.js";
 
 const UA = "PiPaper/0.5 (academic reader; local app)";
 
@@ -47,6 +52,7 @@ app.use((req, res, next) => {
 });
 
 const api = express.Router();
+registerStorageRoutes(api);
 
 api.get("/health", (_req, res) => res.json({ ok: true, name: "PiPaper", time: new Date().toISOString() }));
 
@@ -191,6 +197,7 @@ api.get("/jobs/:id", (req, res) => {
 });
 
 api.get("/papers/:id/file/*", (req, res) => {
+  if (!getPaper(req.params.id)) return res.status(404).json({ error: "文献不可用" });
   const rel = req.params[0] || "";
   const base = parsedDir(req.params.id);
   const target = path.resolve(base, rel);
@@ -348,7 +355,7 @@ function migrateLibrary() {
       const newDir = path.join(DATA_DIR, "parsed", "h_" + p.contentHash.slice(0, 24));
       if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
         try {
-          fs.renameSync(oldDir, newDir);
+          relocate(oldDir, newDir);
           moved.push(p.id);
         } catch {}
       }
@@ -545,7 +552,7 @@ api.put("/search/sources", (req, res) => {
   const sources = req.body?.sources;
   if (!Array.isArray(sources)) return res.status(400).json({ error: "sources 必须是数组" });
   restoreMasked(sources, readSourcesFile());
-  fs.writeFileSync(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
+  managedWrite(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
   res.json({ ok: true, sources: maskSources(sources) });
 });
 
@@ -582,7 +589,7 @@ api.post("/search/sources/add", (req, res) => {
       if (apiKey) def.apiKey = apiKey.trim();
       sources.push(def);
     }
-    fs.writeFileSync(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
+    managedWrite(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
     return res.json({ ok: true, source: maskSources([def])[0], sources: maskSources(sources) });
   } else {
     // generic mirror entry; the adapter scraper handles scholar-style layouts
@@ -599,7 +606,7 @@ api.post("/search/sources/add", (req, res) => {
   const i = sources.findIndex((x) => x.id === def.id);
   if (i >= 0) sources[i] = def;
   else sources.push(def);
-  fs.writeFileSync(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
+  managedWrite(path.join(DATA_DIR, "search-sources.json"), JSON.stringify(sources, null, 2));
   res.json({ ok: true, source: maskSources([def])[0], sources: maskSources(sources) });
 });
 
@@ -674,6 +681,11 @@ app.get("/", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "index.html")));
 
 const port = Number(process.env.PORT || getConfig().port || 4318);
 migrateLibrary();
+migrateStorage(listPapers({includeTemporary:true}));
+recoverStorage();
+auditResources();
+resumeIngestion();
+startMaintenance();
 app.listen(port, "127.0.0.1", () => {
   console.log(`\n  PiPaper 论文精读工作台  →  http://127.0.0.1:${port}\n`);
 });

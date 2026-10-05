@@ -3,6 +3,7 @@ import path from "node:path";
 import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { TMP_DIR, fileHash } from "./store.js";
+import { writeFile, trashPath } from "./storage/files.js";
 
 // Zotero integration via a sqlite snapshot of <dataDir>/zotero.sqlite.
 // Works whether or not Zotero is running (WAL files are copied alongside).
@@ -32,12 +33,12 @@ export function detectDataDir(cfgDir) {
 function snapshotDb(dataDir) {
   const stamp = Date.now();
   const copy = path.join(TMP_DIR, `zotero-${stamp}.sqlite`);
-  fs.copyFileSync(path.join(dataDir, "zotero.sqlite"), copy);
+  writeFile(copy,fs.readFileSync(path.join(dataDir, "zotero.sqlite")),{kind:"temporary"});
   for (const ext of ["-wal", "-shm"]) {
     const src = path.join(dataDir, "zotero.sqlite" + ext);
     if (fs.existsSync(src)) {
       try {
-        fs.copyFileSync(src, copy + ext);
+        writeFile(copy + ext,fs.readFileSync(src),{kind:"temporary"});
       } catch {}
     }
   }
@@ -172,9 +173,7 @@ export function syncZotero(cfg) {
       db?.close();
     } catch {}
     try {
-      fs.rmSync(dbFile, { force: true });
-      fs.rmSync(dbFile + "-wal", { force: true });
-      fs.rmSync(dbFile + "-shm", { force: true });
+      for(const ext of ["","-wal","-shm"])if(fs.existsSync(dbFile+ext))trashPath(dbFile+ext,{kind:"temporary"});
     } catch {}
   }
 }

@@ -1,3 +1,6 @@
+import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile, relocate, registerTree, commitDirectory } from "./storage/files.js";
+import { registerKnowledge } from "./storage/migration.js";
+import { events as storageEvents, saveJob as saveStorageJob, digest as storageDigest } from "./storage/catalog.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -18,6 +21,7 @@ import { notesFor, saveStudyNotes, appendStudyNotes } from "./study-notes.js";
 import { createStudyActivity, studyTool } from "./study-activity.js";
 
 const runs = new Map(), creatingSessions = new Map();
+storageEvents.on("lifecycle",event=>{if(event.type === "trash")for(const id of event.affected||[event.id])if(id.startsWith("study:"))runs.get(id.slice(6))?.abort.abort();});
 const imagePackage = "npm:@abhishek944/pi-image-gen@0.4.2";
 function copyAssets(source, destination) {
   // Copy explicitly: Windows runtimes may mis-encode non-ASCII destinations in cpSync.
@@ -99,6 +103,7 @@ async function operation(id, owner, kind, fn) {
       c.emit({ t: "study_updated", task: publicTask(readTask(id)) });
       return result || { ok: true };
     } catch (e) {
+      saveStorageJob({id:run.id,resourceId:"study:"+id,type:"study",stage:kind,status:abort.signal.aborted?"paused":"failed",error:e.message});
       activity.finish(e, abort.signal.aborted);
       try { const latest = readTask(id); if (!["deleting", "delete-failed"].includes(latest.status)) {
         latest.lastError = abort.signal.aborted ? "操作已暂停，可以继续或重试" : e.message;
@@ -112,6 +117,8 @@ async function operation(id, owner, kind, fn) {
     } finally { runs.delete(id); c.studyReport = null; c.studyActivityId = null; if (c.externalAbort === abort) c.externalAbort = null; }
   });
   runs.set(id, { abort, completion: run.completion, kind });
+  saveStorageJob({id:run.id,resourceId:"study:"+id,type:"study",stage:kind,status:"running",fingerprint:storageDigest([id,task.revision,kind])});
+  void run.completion.then(()=>saveStorageJob({id:run.id,resourceId:"study:"+id,type:"study",stage:kind,status:"succeeded"}),()=>{});
   return { operationId: run.id };
 }
 async function recordMessage(task, c, role, text) {
@@ -266,12 +273,12 @@ export async function deleteStudy(id) {
   const paper = getPaper(task.paperId);
   if (paper?.studyOnly && !listTasks().some(other => other.id !== id && other.paperId === task.paperId) && !Object.values(allSessionMeta()).some(meta => meta.paperId === task.paperId && meta.studyId !== id)) {
     await attempt("清理暂存论文", async () => {
-      fs.rmSync(inside(path.join(DATA_DIR, "parsed"), path.relative(path.join(DATA_DIR, "parsed"), parsedDir(paper.id))), { recursive: true, force: true });
-      fs.rmSync(inside(STUDY_PAPERS_DIR, path.basename(paper.pdfPath)), { force: true });
+      trashPath(inside(path.join(DATA_DIR, "parsed"), path.relative(path.join(DATA_DIR, "parsed"), parsedDir(paper.id))), { kind: "parse-root" });
+      trashPath(inside(STUDY_PAPERS_DIR, path.basename(paper.pdfPath)), { id: "paper:" + paper.id, kind: "original" });
       removeTemporaryPaper(paper.id); flushStore();
     });
   }
-  if (!errors.length) await attempt("删除任务文件", async () => { fs.rmSync(inside(STUDIES_DIR, id), { recursive: true, force: true }); });
+  if (!errors.length) await attempt("删除任务文件", async () => { trashPath(inside(STUDIES_DIR, id), { id: "study:" + id, kind: "study" }); });
   if (errors.length) { task.status = "delete-failed"; task.errors = errors; saveTask(task); throw fault(errors.join("\n"), 500); }
   return { ok: true };
 }
@@ -282,7 +289,8 @@ async function exportStudy(task) {
   if (paper.studyOnly) {
     const originalPath = paper.pdfPath;
     importPdfFile(task.title.replace(/[\\/:*?"<>|]/g, "_") + ".pdf", fs.readFileSync(originalPath));
-    if (fs.existsSync(originalPath)) fs.rmSync(inside(STUDY_PAPERS_DIR, path.basename(originalPath)), { force: true });
+    flushStore();
+    if (fs.existsSync(originalPath)) trashPath(inside(STUDY_PAPERS_DIR, path.basename(originalPath)),{kind:"temporary",owner:null});
   }
   if (task.projectId && getProject(task.projectId)) updateProject(task.projectId, { addPaper: paper.id });
   flushStore();
@@ -315,7 +323,7 @@ async function exportStudy(task) {
       for (const [j, part] of (message.parts || []).entries()) if (part.type === "image" && ["image/png", "image/jpeg", "image/webp"].includes(part.mimeType)) {
         fs.mkdirSync(path.join(temp, "chat-assets"), { recursive: true });
         const file = `chat-${i}-${j}.${({ "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" })[part.mimeType]}`;
-        fs.writeFileSync(path.join(temp, "chat-assets", file), Buffer.from(part.data, "base64"));
+        managedWrite(path.join(temp, "chat-assets", file), Buffer.from(part.data, "base64"));
         images.push(`![对话附件](${base}/chat-assets/${file})`);
       }
       return `## ${message.role}\n\n${message.text || ""}\n\n${images.join("\n\n")}`;
@@ -323,15 +331,14 @@ async function exportStudy(task) {
     const rewrite = text => String(text).replace(/\(#block:([^)]*)\)/g, (_, blockId) => `(${base}/论文.pdf#page=${documentFor(task).blocks.find(b => b.id === blockId)?.page || 1})`)
       .replace(new RegExp(`/api/archify/artifacts/([a-f0-9-]{36})/(diagram.html|source.json|receipt.json)\\?studyId=${task.id}`, "g"), `${base}/assets/archify/$1/$2`);
     const note = `# ${task.title}\n\n目标：${task.goal}\n\n[下载论文](${base}/论文.pdf)\n\n` + ready.map(cp => `## ${cp.label}\n\n${cp.lesson.topics.map(t => `### ${t.key}\n\n${t.text}`).join("\n\n")}${cp.lesson.experiments ? "\n\n### 实验计划\n\n" + cp.lesson.experiments.map(e => Object.entries(e).map(([k, v]) => `- ${k}：${v}`).join("\n")).join("\n\n") : ""}`).join("\n\n") + "\n\n" + task.artifacts.map(a => `${a.kind === "archify" ? "" : "!"}[${a.label}](${base}/${a.file})\n\n${a.prompt}`).join("\n\n");
-    fs.writeFileSync(path.join(temp, "研读成果.md"), rewrite(note));
-    fs.writeFileSync(path.join(temp, "引导对话.md"), rewrite(guide));
-    fs.writeFileSync(path.join(temp, "自由对话.md"), rewrite(chatMarkdown));
-    fs.writeFileSync(path.join(temp, "阅读笔记.md"), rewrite(notesFor(task).markdown).replaceAll(`/api/studies/${task.id}/assets/`, `${base}/assets/`));
-    fs.writeFileSync(path.join(temp, "双语译文.md"), Object.entries(task.translations).map(([blockId, tr]) => `## ${blockId}\n\n${blockText(documentFor(task).blocks.find(b => b.id === blockId) || {})}\n\n${tr.translated || ""}`).join("\n\n"));
-    const backup = path.join(root, ".backup-" + randomUUID());
-    if (fs.existsSync(dir)) fs.renameSync(dir, backup);
-    try { fs.renameSync(temp, dir); } catch (e) { if (fs.existsSync(backup)) fs.renameSync(backup, dir); throw e; }
-    if (fs.existsSync(backup)) fs.rmSync(inside(root, path.basename(backup)), { recursive: true, force: true });
+    managedWrite(path.join(temp, "研读成果.md"), rewrite(note));
+    managedWrite(path.join(temp, "引导对话.md"), rewrite(guide));
+    managedWrite(path.join(temp, "自由对话.md"), rewrite(chatMarkdown));
+    managedWrite(path.join(temp, "阅读笔记.md"), rewrite(notesFor(task).markdown).replaceAll(`/api/studies/${task.id}/assets/`, `${base}/assets/`));
+    managedWrite(path.join(temp, "双语译文.md"), Object.entries(task.translations).map(([blockId, tr]) => `## ${blockId}\n\n${blockText(documentFor(task).blocks.find(b => b.id === blockId) || {})}\n\n${tr.translated || ""}`).join("\n\n"));
+    commitDirectory(temp,dir);
+    registerTree(dir,{kind:"knowledge-asset",owner:null,independent:true});
+    for(const name of fs.readdirSync(dir).filter(name=>name.endsWith(".md")))registerKnowledge(path.join(dir,name),{sourceType:"study",sourcePaperId:task.paperId,projectId:task.projectId,title:task.title+" · "+name,owner:null,independent:true});
     task.exports = [{ path: `论文研读/${task.id}`, at: new Date().toISOString(), revision: task.revision }]; commit(task);
     return { ok: true, path: task.exports[0].path };
   } finally { if (fs.existsSync(temp)) fs.rmSync(inside(root, path.basename(temp)), { recursive: true, force: true }); }

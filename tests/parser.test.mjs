@@ -17,10 +17,11 @@ test("structured source owns page, order, title and normalized coordinates", () 
   ] };
   const blocks = mineruBlocks(raw, native, () => "");
   const doc = buildDocument(blocks, native, { engine: "hybrid" });
-  assert.equal(blocks.length, 2);
-  assert.equal(blocks[1].page, 17);
-  assert.deepEqual(blocks[0].bbox, [48, 80, 552, 104]);
-  assert.equal(doc.blocks[0].level, 2);
+  assert.equal(blocks.length, 3);
+  assert.equal(blocks[0].type, "page_number");
+  assert.equal(blocks[2].page, 17);
+  assert.deepEqual(blocks[1].bbox, [48, 80, 552, 104]);
+  assert.equal(doc.blocks[1].level, 2);
   assert.equal(doc.quality.errors.length, 0);
   assert.equal(doc.sections[0].page, 3);
 });

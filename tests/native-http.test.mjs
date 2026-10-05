@@ -41,7 +41,7 @@ test("production HTTP harness: owner channel, model/tool dialogs, resource packa
   const fixture = await nativeHttpFixture();
   let controlId, id;
   const request = async (route, body, method = body ? "POST" : "GET", owner = controlId) => {
-    const res = await fetch(fixture.url + "/api" + route, { method, headers: { "Content-Type": "application/json", ...(owner ? { "X-Pi-Control": owner } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const res = await fetch(fixture.url + "/api" + route, { method, headers: { "Content-Type": "application/json", ...(owner ? { "X-Pi-Control": owner } : {}) }, body: body ? JSON.stringify(body) : undefined }).catch(error=>{error.message+="\nFixture server output: "+fixture.output();throw error;});
     return { status: res.status, body: await res.json() };
   };
   const project = (await request("/projects", { name: "Native integration" })).body;

@@ -1,3 +1,4 @@
+import { writeFile as managedWrite, trashPath, registerTree, commitDirectory, registerFile } from "./storage/files.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -116,7 +117,7 @@ export async function renderArchify({ type, spec, prompt = "" }, owner = {}, sig
   const id = randomUUID(), temp = inside(pending, id);
   fs.mkdirSync(temp);
   try {
-    fs.writeFileSync(path.join(temp, "source.json"), source);
+    managedWrite(path.join(temp, "source.json"), source);
     const result = await runCli(dir, ["deliver", type, path.join(temp, "source.json"), path.join(temp, "diagram.html"), "--quality", "showcase", "--json"], signal);
     if (!result.ok) return result;
     if (signal?.aborted) throw fail("图解生成已取消", 409);
@@ -128,13 +129,15 @@ export async function renderArchify({ type, spec, prompt = "" }, owner = {}, sig
     const item = { id, type, title: parsed.meta.title, createdAt: new Date().toISOString(),
       paperId: owner.paperId || null, sessionId: owner.sessionId || null, studyId: owner.studyId || null,
       prompt: String(prompt).slice(0, 16000), versionId: task?.versionId || null };
-    fs.writeFileSync(path.join(temp, "receipt.json"), JSON.stringify(result.receipt, null, 2));
-    fs.writeFileSync(path.join(temp, "meta.json"), JSON.stringify(item, null, 2));
+    managedWrite(path.join(temp, "receipt.json"), JSON.stringify(result.receipt, null, 2));
+    managedWrite(path.join(temp, "meta.json"), JSON.stringify(item, null, 2));
     fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.renameSync(temp, destination);
+    registerTree(temp,{kind:"diagram",owner:owner.studyId?"study:"+owner.studyId:owner.sessionId?"session:"+owner.sessionId:null,expiresAt:null});
+    commitDirectory(temp,destination);
+    registerFile(destination,{id:"diagram:"+id,kind:"diagram",title:item.title,owner:owner.studyId?"study:"+owner.studyId:owner.sessionId?"session:"+owner.sessionId:null,metadata:item,expiresAt:null});
     if (task) {
       task.artifacts.push({ id, kind: "archify", label: item.title, file: `assets/archify/${id}/diagram.html`, prompt: item.prompt, at: item.createdAt });
-      try { saveTask(task); } catch (error) { fs.rmSync(destination, { recursive: true, force: true }); throw error; }
+      try { saveTask(task); } catch (error) { trashPath(destination); throw error; }
     }
     return { ok: true, artifact: publicItem(item) };
   } finally { fs.rmSync(temp, { recursive: true, force: true }); }

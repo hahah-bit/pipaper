@@ -1,3 +1,5 @@
+import { invalidate, link } from "../storage/catalog.js";
+import { writeFile as managedWrite, registerTree, registerFile } from "../storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
@@ -11,7 +13,7 @@ export function versionDir(paperId, id) {
 }
 export function jsonWrite(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  managedWrite(file, JSON.stringify(data, null, 2));
 }
 export function readVersion(paperId, id) {
   return JSON.parse(fs.readFileSync(path.join(versionDir(paperId, id), "blocks.json"), "utf8"));
@@ -38,9 +40,8 @@ export function activateVersion(paperId, id) {
     if (hash(fs.readFileSync(path.join(dir, "full.md"))) !== run.contentHash || hash(blocksToMd(doc.blocks)) !== run.contentHash) throw new Error("版本内容校验失败，保留当前版本");
   }
   const root = parsedDir(paperId);
-  const temp = path.join(root, `current-${randomUUID()}.tmp`);
-  jsonWrite(temp, { versionId: id });
-  fs.renameSync(temp, path.join(root, "current.json"));
+  managedWrite(path.join(root, "current.json"), JSON.stringify({ versionId: id }), { kind: "parse-pointer" });
+  invalidate("paper:" + paperId, "采用新的解析版本");
   return run;
 }
 export function createRun(paperId, engine) {
@@ -50,6 +51,8 @@ export function createRun(paperId, engine) {
   jsonWrite(path.join(dir, "run.json"), run);
   fs.mkdirSync(path.join(dir, "raw"), { recursive: true });
   fs.mkdirSync(path.join(dir, "assets"), { recursive: true });
+  const root=parsedDir(paperId),entry=registerFile(root,{id:"parse:"+path.basename(root),kind:"parse-root"});
+  link("paper:"+paperId,entry.id,"uses");link("paper:"+paperId,entry.id,"owns");
   return { ...run, dir };
 }
 export function snapshotLegacy(paperId) {
@@ -67,8 +70,9 @@ export function snapshotLegacy(paperId) {
   };
   const doc = rewrite(source);
   jsonWrite(path.join(run.dir, "blocks.json"), doc);
-  fs.writeFileSync(path.join(run.dir, "full.md"), blocksToMd(Array.isArray(doc) ? doc : doc.blocks));
+  managedWrite(path.join(run.dir, "full.md"), blocksToMd(Array.isArray(doc) ? doc : doc.blocks));
   jsonWrite(path.join(run.dir, "run.json"), { id: run.id, engine: source.meta?.engine || "legacy", status: "legacy", createdAt: run.createdAt, blocks: (source.blocks || source).length, note: "升级前快照，未重新解析" });
+  registerTree(run.dir,{kind:"parsed",owner:"parse:"+path.basename(root)});
   activateVersion(paperId, run.id);
 }
 export function saveResult(run, doc) {
@@ -76,9 +80,10 @@ export function saveResult(run, doc) {
   doc.meta.contentHash = createHash("sha256").update(md).digest("hex");
   doc.meta.versionId = run.id;
   jsonWrite(path.join(run.dir, "blocks.json"), doc);
-  fs.writeFileSync(path.join(run.dir, "full.md"), md);
+  managedWrite(path.join(run.dir, "full.md"), md);
   jsonWrite(path.join(run.dir, "quality.json"), doc.quality);
   const info = { id: run.id, createdAt: run.createdAt, finishedAt: new Date().toISOString(), engine: run.engine, status: doc.quality.errors.length ? "review" : "ready", blocks: doc.blocks.length, quality: doc.quality, contentHash: doc.meta.contentHash, engines: doc.meta.engines };
   jsonWrite(path.join(run.dir, "run.json"), info);
+  registerTree(run.dir,{kind:"parsed",owner:"parse:"+path.basename(path.dirname(path.dirname(run.dir)))});
   return info;
 }

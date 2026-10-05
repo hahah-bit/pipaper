@@ -7,7 +7,8 @@ import os from "node:os";
 test("待读去重保留本地 ID、PDF 和完整标题区分，持久化后可删除", async t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pipaper-toread-"));
   process.env.PIPAPER_DATA_DIR = directory;
-  t.after(() => {
+  t.after(async () => {
+    (await import("../server/storage/catalog.js")).closeCatalog();
     const resolved = path.resolve(directory);
     assert.equal(path.dirname(resolved), path.resolve(os.tmpdir()));
     assert.ok(path.basename(resolved).startsWith("pipaper-toread-"));

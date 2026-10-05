@@ -1,9 +1,11 @@
 import { api, state, $, el, toast, updateZoteroFoot, askText, askConfirm } from "./app.js";
+import { storageApi } from "./storagePanel.js";
 
 let activeCollection = null; // collection id or null = all
 let searchQ = "";
 
 export function initSidebar() {
+  window.addEventListener("pipaper:storage-changed", () => { void reloadPapers(); });
   $("#paper-search").addEventListener("input", (e) => {
     searchQ = e.target.value.trim().toLowerCase();
     renderPapers();
@@ -200,6 +202,8 @@ export function renderPapers() {
           onclick: (e) => { e.stopPropagation(); togglePaperInProject(p.id); },
         }, inProject ? "✓" : "📁")
     );
+    if (p.ingestion?.generationId) item.append(el("div", { class: "res-note" }, p.ingestion.stale ? "知识库：过期版本" : p.ingestion.coverage?.partial ? "知识库：部分入库，存在待核对区域" : "知识库：已入库"));
+    item.append(el("button", { class: "tool-btn", onclick: async e => { e.stopPropagation(); try { await storageApi("ingestion/jobs", { resourceId: "paper:" + p.id }); toast("已启动解析并入库，可在存储管理查看进度"); } catch (err) { toast(err.message, true); } } }, "解析并入库"));
     wrap.append(item);
   }
 }

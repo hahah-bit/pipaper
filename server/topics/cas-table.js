@@ -1,3 +1,5 @@
+import { createFile, writeFile as managedWrite, trashPath } from "../storage/files.js";
+import { resourceAt } from "../storage/catalog.js";
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR } from "../config.js";
@@ -75,15 +77,14 @@ export function importCsv(csv, { edition, fileName } = {}) {
   if (parsed.length < 50) throw fault(`仅解析出 ${parsed.length} 条有效期刊记录（需 ≥50 条）。请确认文件为分区表整表导出，且包含刊名与分区列。`);
   const table = { edition: year, importedAt: new Date().toISOString(), fileName: String(fileName || "导入 CSV").slice(0, 120), count: parsed.length, rows: parsed };
   fs.mkdirSync(path.dirname(file()), { recursive: true });
-  const tmp = `${file()}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(table));
-  fs.renameSync(tmp, file());
+  const previous=resourceAt(file());
+  (previous&&previous.lifecycle!=="active"?createFile:managedWrite)(file(), JSON.stringify(table),{kind:"reference-data"});
   cache = null; checkedAt = 0;
   return status();
 }
 
 export function clear() {
-  try { fs.rmSync(file(), { force: true }); } catch {}
+  if(fs.existsSync(file()))trashPath(file(),{kind:"reference-data"});
   cache = null; checkedAt = 0;
   return status();
 }

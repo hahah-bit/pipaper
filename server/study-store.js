@@ -1,3 +1,4 @@
+import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile } from "./storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID, createHash } from "node:crypto";
@@ -9,10 +10,7 @@ export const STUDY_PAPERS_DIR = path.join(DATA_DIR, "study-papers");
 export const fault = (message, status = 400) => Object.assign(new Error(message), { status });
 export const hashOf = value => createHash("sha256").update(value).digest("hex");
 export function atomicJson(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = file + "." + randomUUID() + ".tmp";
-  try { fs.writeFileSync(temp, JSON.stringify(value, null, 2)); fs.renameSync(temp, file); }
-  finally { fs.rmSync(temp, { force: true }); }
+  writeJsonState(file, value);
 }
 export function taskDir(id) {
   if (!/^study_[a-f0-9-]{36}$/.test(id || "")) throw fault("无效的研读任务 ID");
@@ -31,13 +29,18 @@ export function inside(root, relative) {
   return file;
 }
 export function readTask(id) {
-  try { return JSON.parse(fs.readFileSync(path.join(taskDir(id), "task.json"), "utf8")); }
+  try {
+    const file = path.join(taskDir(id), "task.json");
+    if (!fs.existsSync(file)) throw Object.assign(new Error("研读任务不存在"), { code: "ENOENT" });
+    return readJsonState(file, null);
+  }
   catch (e) { if (e.code === "ENOENT") throw fault("研读任务不存在", 404); throw e; }
 }
 export function saveTask(task) {
   task.revision = (task.revision || 0) + 1;
   task.updatedAt = new Date().toISOString();
   atomicJson(path.join(taskDir(task.id), "task.json"), task);
+  registerFile(taskDir(task.id), { id: "study:" + task.id, kind: "study", title: task.title, metadata: task });
   return task;
 }
 export function listTasks() {
@@ -60,7 +63,7 @@ export function temporaryPdf(name, buffer) {
   if (old) return old;
   fs.mkdirSync(STUDY_PAPERS_DIR, { recursive: true });
   const pdfPath = path.join(STUDY_PAPERS_DIR, contentHash + ".pdf");
-  fs.writeFileSync(pdfPath, buffer);
+  managedWrite(pdfPath, buffer);
   const paper = { id: "study_pdf_" + contentHash.slice(0, 24), title: path.basename(name).replace(/\.pdf$/i, ""),
     contentHash, pdfPath, studyOnly: true, source: "study", creators: [], added: new Date().toISOString() };
   upsertPaper(paper); flushStore(); return paper;

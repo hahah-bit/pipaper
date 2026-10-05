@@ -1,3 +1,4 @@
+import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile } from "../storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import { getConfig } from "../config.js";
@@ -10,7 +11,7 @@ import { readNative, reconcileNative, buildDocument, validBox } from "./document
 import { jsonWrite, versionDir } from "./versions.js";
 
 const caption = (v) => Array.isArray(v) ? v.join("\n") : String(v || "");
-const chrome = new Set(["header", "footer", "page_number", "aside_text"]);
+const chrome = new Set(["header", "footer", "page_number"]);
 export function mineruBlocks(raw, native, asset) {
   let entries = raw.contentList;
   if (!Array.isArray(entries) || entries.some((e) => Array.isArray(e) || !Number.isInteger(e.page_idx) && typeof e.content === "object")) {
@@ -21,13 +22,14 @@ export function mineruBlocks(raw, native, asset) {
   }
   if (!entries?.length) return mdToBlocks(raw.md || "").map((b, i) => ({ ...b, provenance: { engine: "mineru", sourceIndex: i }, issues: ["missing-structured-source"] }));
   return entries.flatMap((e, sourceIndex) => {
-    if (chrome.has(e.type)) return [];
     const page = Number.isInteger(e.page_idx) ? e.page_idx + 1 : null;
     const p = native.pages[page - 1];
     const bbox = p && e.bbox?.length === 4 ? e.bbox.map((v, i) => v / 1000 * (i % 2 ? p.height : p.width)) : null;
     const base = { page, bbox, provenance: { engine: "mineru", sourceIndex, rawRef: `contentList/${sourceIndex}`, coordinateSystem: "pdf-points" } };
     const text = String(e.text || "");
-    if (e.type === "text" || e.type === "para" || e.type === "page_footnote") return [{ ...base, ...(e.text_level ? { type: "heading", text, level: e.text_level } : { type: "para", md: text }) }];
+    if (chrome.has(e.type)) return [{...base,type:e.type,text}];
+    if (e.type === "page_footnote" || e.type === "aside_text") return [{...base,type:"footnote",text}];
+    if (e.type === "text" || e.type === "para") return [{ ...base, ...(e.text_level ? { type: "heading", text, level: e.text_level } : { type: "para", md: text }) }];
     if (e.type === "list") return [{ ...base, type: "para", md: (e.list_items || []).join("\n\n") || text }];
     if (e.type === "equation" || e.type === "interline_equation") return [{ ...base, type: "formula", latex: text.replace(/^\s*\$\$?|\$\$?\s*$/g, "") }];
     if (e.type === "table") return [{ ...base, type: "table", html: e.table_body || "", md: text, caption: caption(e.table_caption), sourceImage: asset(e.img_path || e.img) }];
@@ -58,7 +60,7 @@ export async function executePipeline(paper, engine, run, log, replayFrom) {
   let imageId = 0;
   const saveImage = (buf, suffix = "png") => {
     const name = `asset-${++imageId}.${suffix}`;
-    fs.writeFileSync(path.join(run.dir, "assets", name), buf);
+    managedWrite(path.join(run.dir, "assets", name), buf);
     return `file/versions/${run.id}/assets/${name}`;
   };
   const replayDir = replayFrom ? versionDir(paper.id, replayFrom) : null;

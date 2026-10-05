@@ -10,6 +10,78 @@
 #   日志:  docker compose logs -f unstructured
 
 services:
+  milvus-volume-init:
+    profiles: [rag]
+    image: milvusdb/milvus:v3.0.2
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        uid="$$(id -u milvus)"
+        gid="$$(id -g milvus)"
+        marker="/var/lib/milvus/.owner-$${uid}-$${gid}"
+        if [ ! -e "$${marker}" ]; then
+          chown -R "$${uid}:$${gid}" /var/lib/milvus
+          touch "$${marker}"
+          chown "$${uid}:$${gid}" "$${marker}"
+        fi
+    volumes: [milvus-data:/var/lib/milvus]
+  milvus-etcd:
+    profiles: [rag]
+    image: quay.io/coreos/etcd:v3.5.25
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: etcd -advertise-client-urls=http://milvus-etcd:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    volumes: [milvus-etcd:/etcd]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+  milvus-minio:
+    profiles: [rag]
+    image: milvusdb/minio:RELEASE.2024-12-18T13-15-44Z
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    command: minio server /minio_data --console-address ":9001"
+    volumes: [milvus-minio:/minio_data]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+  milvus:
+    profiles: [rag]
+    image: milvusdb/milvus:v3.0.2
+    command: ["milvus", "run", "standalone"]
+    security_opt: [seccomp:unconfined]
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+      MINIO_REGION: us-east-1
+    ports: ["127.0.0.1:19530:19530", "127.0.0.1:9091:9091"]
+    volumes: [milvus-data:/var/lib/milvus]
+    restart: unless-stopped
+    depends_on:
+      milvus-volume-init: { condition: service_completed_successfully }
+      milvus-etcd: { condition: service_healthy }
+      milvus-minio: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
   unstructured:
     image: quay.io/unstructured-io/unstructured-api:latest
     container_name: pipaper-unstructured
@@ -34,3 +106,8 @@ services:
       LT_UPDATE_MODELS: "true"
     command: --load-only zh,en
     restart: unless-stopped
+
+volumes:
+  milvus-data:
+  milvus-etcd:
+  milvus-minio:

@@ -1,3 +1,4 @@
+import { persistence } from "./persistence.js";
 import { $ } from "./app.js";
 
 // Draggable panes plus a persisted presentation layer. The panels keep their
@@ -10,9 +11,9 @@ export function initPanes() {
   const paneState = { sidebar: false, chat: false, reader: false, floating: false };
 
   try {
-    const saved = JSON.parse(localStorage.getItem("pipaper.panes") || "{}");
+    const saved = JSON.parse(persistence.getItem("pipaper.panes") || "{}");
     if (Number.isFinite(saved.chatW)) cur.chatW = saved.chatW;
-    const savedState = JSON.parse(localStorage.getItem("pipaper.paneState") || "{}");
+    const savedState = JSON.parse(persistence.getItem("pipaper.paneState") || "{}");
     for (const key of Object.keys(paneState)) if (typeof savedState[key] === "boolean") paneState[key] = savedState[key];
     // 阅读器是主工作区：折叠状态不跨会话记忆，启动始终展开（侧栏/对话的折叠仍会记住）
     paneState.reader = false;
@@ -26,8 +27,8 @@ export function initPanes() {
 
   function persist() {
     try {
-      localStorage.setItem("pipaper.panes", JSON.stringify(cur));
-      localStorage.setItem("pipaper.paneState", JSON.stringify(paneState));
+      persistence.setItem("pipaper.panes", JSON.stringify(cur));
+      persistence.setItem("pipaper.paneState", JSON.stringify(paneState));
     } catch {}
     window.dispatchEvent(new Event("resize"));
   }
@@ -197,7 +198,7 @@ export function initPanes() {
   const FLOAT_MIN_W = 360, FLOAT_MIN_H = 220, FLOAT_EDGE = 8;
   const floatGeo = { x: null, y: null, w: null, h: null };
   try {
-    const savedGeo = JSON.parse(localStorage.getItem(FLOAT_KEY) || "{}");
+    const savedGeo = JSON.parse(persistence.getItem(FLOAT_KEY) || "{}");
     for (const k of ["x", "y", "w", "h"]) if (Number.isFinite(savedGeo[k])) floatGeo[k] = savedGeo[k];
   } catch {}
 
@@ -219,7 +220,7 @@ export function initPanes() {
     chat.style.setProperty("--float-h", h + "px");
   }
   function saveFloatGeom() {
-    try { localStorage.setItem(FLOAT_KEY, JSON.stringify(floatGeo)); } catch {}
+    try { persistence.setItem(FLOAT_KEY, JSON.stringify(floatGeo)); } catch {}
   }
   function startFloatDrag(e, mode) {
     if (!paneState.floating) return;
@@ -267,7 +268,7 @@ export function initPanes() {
   chatHead?.addEventListener("dblclick", (e) => {
     if (!paneState.floating || floatInterActive(e)) return;
     floatGeo.x = floatGeo.y = floatGeo.w = floatGeo.h = null;
-    try { localStorage.removeItem(FLOAT_KEY); } catch {}
+    try { persistence.removeItem(FLOAT_KEY); } catch {}
     applyFloatGeom();
   });
   if (chat) {

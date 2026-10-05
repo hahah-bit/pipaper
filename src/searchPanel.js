@@ -1,3 +1,4 @@
+import { persistence } from "./persistence.js";
 import { api, state, $, el, toast } from "./app.js";
 
 // 筛选条件持久化：检索前设置（年份/分区/OA/排序）记忆在 localStorage
@@ -7,18 +8,18 @@ const FILTER_FIELDS = { sort: "sort", quartile: "quartile", yearFrom: "year-from
 function saveFilters() {
   for (const [k, id] of Object.entries(FILTER_FIELDS)) {
     const node = $("#sch-" + id);
-    if (node) localStorage.setItem(LS + k, node.value || "");
+    if (node) persistence.setItem(LS + k, node.value || "");
   }
-  localStorage.setItem(LS + "oa", $("#sch-oa").checked ? "1" : "");
+  persistence.setItem(LS + "oa", $("#sch-oa").checked ? "1" : "");
 }
 
 function restoreFilters() {
   for (const [k, id] of Object.entries(FILTER_FIELDS)) {
     const node = $("#sch-" + id);
-    const v = localStorage.getItem(LS + k);
+    const v = persistence.getItem(LS + k);
     if (node && v != null) node.value = v;
   }
-  $("#sch-oa").checked = localStorage.getItem(LS + "oa") === "1";
+  $("#sch-oa").checked = persistence.getItem(LS + "oa") === "1";
 }
 
 export function onShow() {
@@ -161,13 +162,13 @@ export async function renderToRead() {
     const j = await fetch("/api/search/toread").then((r) => r.json());
     entries = j.entries || [];
   } catch {}
-  const open = localStorage.getItem(LS + "toreadOpen") === "1";
+  const open = persistence.getItem(LS + "toreadOpen") === "1";
   // replaceChildren 不能收 null（会渲染成 "null" 文本），先收集有效子节点
   const kids = [
     el("div", {
       class: "tr-head" + (entries.length ? "" : " empty"),
       onclick: () => {
-        localStorage.setItem(LS + "toreadOpen", open ? "0" : "1");
+        persistence.setItem(LS + "toreadOpen", open ? "0" : "1");
         renderToRead();
       },
     },

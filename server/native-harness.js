@@ -1,3 +1,4 @@
+import { trashPath, registerFile } from "./storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -10,6 +11,9 @@ import { SessionController } from "./session-controller.js";
 import { normalizeResources, selectSkills } from "./resource-config.js";
 import { manualExtensionPaths, resolveProjectPackages } from "./pi-packages.js";
 import { archifyTool } from "./archify.js";
+import { knowledgeTools } from "./rag/tools.js";
+import { managedPiTools } from "./storage/pi-tools.js";
+import { isActive, resource, dependencies } from "./storage/catalog.js";
 
 const chats = new Map();
 const opening = new Map();
@@ -47,10 +51,11 @@ async function buildRuntime(options, controller) {
   const modelRuntime = await ModelRuntime.create();
   const result = await createAgentSession({ ...options, cwd: APP_ROOT, modelRuntime, settingsManager, resourceLoader,
     customTools: [...buildPaperTools({ get id() { return controller.runtime?.session.sessionId || options.sessionManager.getSessionId(); } }),
-      archifyTool({ get id() { return controller.runtime?.session.sessionId || options.sessionManager.getSessionId(); } }), userInputTool(controller.ui)] });
+      archifyTool({ get id() { return controller.runtime?.session.sessionId || options.sessionManager.getSessionId(); } }), ...knowledgeTools(),
+      ...managedPiTools({ get id() { return controller.runtime?.session.sessionId || options.sessionManager.getSessionId(); }, paperId: meta.paperId }), userInputTool(controller.ui)] });
   if (resources.activeTools) result.session.setActiveToolsByName(resources.activeTools);
   if (meta.studyRole === "guide") result.session.setActiveToolsByName([]);
-  else if (meta.studyId) result.session.setActiveToolsByName(["read_paper", "list_library", "search_library", "get_paper_pages", "search_papers", "archify"]);
+  else if (meta.studyId) result.session.setActiveToolsByName(["read_paper", "list_library", "search_library", "get_paper_pages", "search_papers", "archify", "search_knowledge", "get_knowledge_element"]);
   return { ...result, services: { cwd: APP_ROOT, agentDir: getAgentDir(), modelRuntime, settingsManager, resourceLoader },
     diagnostics: [...diagnostics(resourceLoader), ...(result.modelFallbackMessage ? [{ type: "warning", message: result.modelFallbackMessage }] : [])],
     candidates, revision: resources.revision };
@@ -83,6 +88,7 @@ async function makeController(sm, meta) {
 }
 
 export async function controllerFor(id) {
+  if(!isActive("session:"+id))throw error("会话已移入回收站",404);
   if (chats.has(id)) return chats.get(id);
   if (!opening.has(id)) opening.set(id, (async () => {
     const info = (await SessionManager.list(APP_ROOT)).find(s => s.id === id);
@@ -102,7 +108,12 @@ export async function createChat({ paperId = null, projectId = null, title = nul
       api: c.session.model?.api || "openai-completions", provider: c.session.model?.provider || "pipaper", model: c.session.model?.id || "study",
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: Date.now() });
   }
+  if(c.session.sessionFile)registerFile(c.session.sessionFile,{id:"session:"+c.id,kind:"session",metadata:sessionMeta(c.id),owner:studyId?"study:"+studyId:null});
   return { id: c.id, model: c.state().model };
+}
+export async function prepareResourceDeletion(id) {
+  const ids=new Set([id]),queue=[id];while(queue.length)for(const ref of dependencies(queue.shift()).filter(r=>r.relation==="owns"&&r.source&& !ids.has(r.target))){ids.add(ref.target);queue.push(ref.target);}
+  for(const c of [...chats.values()])if(ids.has("session:"+c.id)||ids.has("study:"+c.meta.studyId)){await c.abort();await c.dispose();chats.delete(c.id);}
 }
 export async function sessionHistory(id) { return (await controllerFor(id)).history(); }
 export async function sessionState(id) { return (await controllerFor(id)).state(); }
@@ -114,12 +125,14 @@ export async function listSessions() {
     title: c.session.sessionName || c.meta.title || rows.get(c.id)?.title || "(空会话)", parentSession: c.session.sessionManager.getHeader()?.parentSession,
     busy: c.busy, connected: !!c.connection, updatedAt: sessionMeta(c.id)?.updatedAt || rows.get(c.id)?.updatedAt || new Date().toISOString() });
   const paths = new Map([...rows.values()].filter(r => r.path).map(r => [path.resolve(r.path), r.id]));
-  return [...rows.values()].map(r => ({ ...r, parentId: r.parentSession ? paths.get(path.resolve(r.parentSession)) : null })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  for(const r of rows.values()) if(r.path && isActive("session:"+r.id)) registerFile(r.path,{id:"session:"+r.id,kind:"session",metadata:sessionMeta(r.id),owner:r.studyId?"study:"+r.studyId:null});
+  return [...rows.values()].filter(r=>isActive("session:"+r.id)).map(r => ({ ...r, parentId: r.parentSession ? paths.get(path.resolve(r.parentSession)) : null })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 export async function deleteChat(id, controlId) {
   const c = await controllerFor(id); if (c.connection) c.assertOwner(controlId);
   const file = c.session.sessionFile; await c.dispose(); chats.delete(id);
-  if (file && fs.existsSync(file)) fs.rmSync(file);
+  if(file && fs.existsSync(file) && !fs.statSync(file).isFile()) throw error("会话文件损坏，不能回收",500);
+  if (file && fs.existsSync(file)) trashPath(file, { id: "session:" + id, kind: "session", metadata: sessionMeta(id) });
   deleteSessionMeta(id);
 }
 // Called only by the task lifecycle service, after cancelling task operations.
@@ -127,8 +140,9 @@ export async function deleteStudyChat(id, studyId) {
   if (sessionMeta(id)?.studyId !== studyId) throw error("会话不属于当前研读任务", 409);
   const c = chats.get(id) || (opening.has(id) ? await opening.get(id) : null);
   const file = c?.session.sessionFile || (await SessionManager.list(APP_ROOT)).find(s => s.id === id)?.path;
+  if(file && fs.existsSync(file) && !fs.statSync(file).isFile()) throw error("会话文件损坏，不能回收",500);
   if (c) { await c.abort(); await c.dispose(); chats.delete(id); }
-  if (file) fs.rmSync(file, { force: true });
+  if (file) trashPath(file, { id: "session:" + id, kind: "session", owner: "study:" + studyId, metadata: sessionMeta(id) });
   deleteSessionMeta(id);
 }
 export async function updateBinding(c, { paperId, projectId }) {

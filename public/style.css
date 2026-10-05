@@ -1463,3 +1463,13 @@ html[data-fs="xlarge"]  { --fs-doc: 19.5px; --fs-chat: 18.5px; --fs-ui: 16.5px; 
 .archify-empty > div { font-size: 38px; color: var(--accent); }
 .archify-empty h3 { color: var(--fg0); font-size: 17px; margin: 12px 0; }
 .archify-empty p { font-size: 13px; }
+/* Unified storage and version-aware knowledge retrieval */
+.storage-panel{overflow:auto;padding:18px;box-sizing:border-box;height:100%;color:var(--fg)}
+.storage-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.storage-actions input,.storage-actions select{padding:8px;background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:6px;min-width:120px}
+.storage-card{padding:14px;margin:12px 0;border:1px solid var(--border);border-radius:10px;background:var(--bg2);overflow-wrap:anywhere}
+.storage-card progress{width:100%;height:8px}.storage-card pre{overflow:auto;max-height:300px;white-space:pre-wrap}
+.knowledge-text{white-space:pre-wrap;line-height:1.75}.storage-card img,.storage-dialog img{max-width:100%;max-height:600px;object-fit:contain}
+.knowledge-table{overflow:auto;margin:12px 0}.knowledge-table table{border-collapse:collapse}.knowledge-table td,.knowledge-table th{border:1px solid var(--border);padding:6px}
+.storage-dialog{width:min(880px,90vw);max-height:90vh;overflow:auto;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:12px;padding:20px}
+.storage-dialog textarea{display:block;width:100%;box-sizing:border-box;margin:12px 0;font-family:monospace;background:var(--bg2);color:var(--fg)}

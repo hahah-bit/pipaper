@@ -1,3 +1,4 @@
+import { persistence } from "./persistence.js";
 import { api, state, $, el, toast, updateZoteroFoot } from "./app.js";
 import { reloadPapers } from "./sidebar.js";
 import { openSetup } from "./setupPanel.js";
@@ -23,7 +24,7 @@ export function applyFontSize(size, persist = false) {
   const value = valid.includes(size) ? size : "cozy";
   document.documentElement.dataset.fs = value;
   if (persist) {
-    try { localStorage.setItem("pipaper.fontSize", value); } catch {}
+    try { persistence.setItem("pipaper.fontSize", value); } catch {}
     toast("界面字号：" + { compact: "紧凑", cozy: "标准", large: "大", xlarge: "特大" }[value]);
   }
 }
@@ -31,7 +32,7 @@ export function applyFontSize(size, persist = false) {
 export async function openSettings() {
   const backdrop = $("#modal-backdrop");
   backdrop.hidden = false;
-  $("#cfg-font-size").value = (() => { try { return localStorage.getItem("pipaper.fontSize") || "cozy"; } catch { return "cozy"; } })();
+  $("#cfg-font-size").value = (() => { try { return persistence.getItem("pipaper.fontSize") || "cozy"; } catch { return "cozy"; } })();
   try {
     const [cfgRes, srcRes] = await Promise.all([api.getConfig(), api.searchSources()]);
     const { config, zotero } = cfgRes;

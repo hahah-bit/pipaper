@@ -1,3 +1,5 @@
+import { persistence } from "./persistence.js";
+import { initPersistence } from "./persistence.js";
 // PiPaper frontend entry: shared state + api helpers + boot
 import "./sidebar.js";
 import "./chat.js";
@@ -106,7 +108,8 @@ export const api = {
   notes: () => jfetch("/api/notes"),
   notesResolve: (paperId, title) => jfetch("/api/notes/resolve?" + new URLSearchParams({ paperId, title: title || "" })),
   notesEnsure: (body) => jfetch("/api/notes/ensure", { method: "POST", body }),
-  notesWriteFile: (path, content) => jfetch("/api/notes/file", { method: "PUT", body: { path, content } }),
+  notesWriteFile: (path, content, revision) => jfetch("/api/notes/file", { method: "PUT", body: { path, content, revision } }),
+  notesReadFile: path => jfetch("/api/notes/file?path="+encodeURIComponent(path)),
   notesDeleteFile: (path) => jfetch("/api/notes/file?path=" + encodeURIComponent(path), { method: "DELETE" }),
   notesDeletePaper: (category, slug) => jfetch("/api/notes/paper?" + new URLSearchParams({ category, slug }), { method: "DELETE" }),
   searchSources: () => jfetch("/api/search/sources"),
@@ -210,11 +213,12 @@ export function renderChips() {
 
 // ---------------- boot ----------------
 async function boot() {
+  await initPersistence();
   $("#btn-study")?.addEventListener("click", () => openStudyCreate({ paperId: state.currentPaper?.id, projectId: state.projectId }).catch(e => toast(e.message, true)));
   // 界面字号在最早时机应用，避免正文先小后大的闪烁
   try {
     const { applyFontSize } = await import("./settings.js");
-    applyFontSize(localStorage.getItem("pipaper.fontSize") || "cozy");
+    applyFontSize(persistence.getItem("pipaper.fontSize") || "cozy");
   } catch {}
   window.__bootStage = "start"; window.__initErrors = [];
   try { initPanes(); } catch (e) { window.__initErrors.push("initPanes: " + (e.message||e)); }

@@ -1,3 +1,4 @@
+import { writeFile as managedWrite, registerFile } from "./storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -48,6 +49,7 @@ export function listFiles() {
         walk(path.join(dir, e.name), r, depth + 1);
       } else if (TEXT_EXT.test(e.name)) {
         const st = fs.statSync(path.join(dir, e.name));
+        registerFile(path.join(dir,e.name),{kind:"external-workspace",owned:false});
         out.push({ path: r, size: st.size, mtime: st.mtimeMs });
       }
     }
@@ -69,7 +71,7 @@ export function writeFile(rel, content) {
   if (!target) throw error("路径越界");
   if (!TEXT_EXT.test(target)) throw error("仅支持文本文件（tex/bib/sty/cls/md/txt）");
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, String(content ?? ""), "utf8");
+  managedWrite(target, String(content ?? ""), {kind:"external-workspace",owned:false});
   return { ok: true, path: String(rel), bytes: Buffer.byteLength(String(content ?? ""), "utf8") };
 }
 

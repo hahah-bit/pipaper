@@ -1,3 +1,4 @@
+import { persistence } from "./persistence.js";
 import { el, state, toast } from "./app.js";
 import { streamPrompt } from "./chat.js";
 
@@ -20,8 +21,8 @@ export function archifyModule() {
       const status = el("span", { class: "res-note", role: "status", "aria-live": "polite" }, "连接中…");
       const type = el("select", { "aria-label": "图解类型" }, ...Object.entries(TYPES).map(([key, title]) => el("option", { value: key }, title)));
       const input = el("textarea", { rows: 3, maxlength: 16000, "aria-label": "图解需求", placeholder: "描述想看懂的结构或流程，也可以粘贴 Mermaid…" });
-      try { input.value = localStorage.getItem(draftKey) || ""; } catch {}
-      input.addEventListener("input", () => { try { localStorage.setItem(draftKey, input.value); } catch {} });
+      try { input.value = persistence.getItem(draftKey) || ""; } catch {}
+      input.addEventListener("input", () => { try { persistence.setItem(draftKey, input.value); } catch {} });
       const selection = el("select", { "aria-label": "已保存图解", onchange: () => show(selection.value) });
       const scope = el("select", { "aria-label": "图解范围", onchange: () => refresh() }, el("option", { value: "paper" }, "当前论文"), el("option", { value: "all" }, "全部图解"));
       if (!state.currentPaper) scope.value = "all";

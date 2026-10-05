@@ -1,8 +1,12 @@
+import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile } from "./storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import { blockText } from "./study-flow.js";
 import { fault, hashOf, inside, taskDir, saveTask } from "./study-store.js";
 import { parsedDir } from "./store.js";
+import { KNOWLEDGE_DIR } from "./notes.js";
+import { registerKnowledge } from "./storage/migration.js";
+import { link } from "./storage/catalog.js";
 
 export const notesFor = task => task.notes || { markdown: "", revision: 0, updatedAt: null };
 function checkRevision(task, revision) {
@@ -12,7 +16,15 @@ export function saveStudyNotes(task, { markdown, revision }) {
   checkRevision(task, revision);
   if (typeof markdown !== "string" || markdown.length > 1000000) throw fault("笔记内容无效或超过 100 万字符");
   task.notes = { markdown, revision: revision + 1, updatedAt: new Date().toISOString() };
-  saveTask(task); return task.notes;
+  saveTask(task);
+  const root=path.join(KNOWLEDGE_DIR,"论文研读",task.id),file=path.join(root,"阅读笔记.md");
+  const snapshot=markdown.replace(new RegExp(`/api/studies/${task.id}/assets/([^\\s)]+)`,"g"),(_all,name)=>{
+    const original=inside(path.join(taskDir(task.id),"assets"),name),target=inside(root,"assets/"+name);
+    if(fs.existsSync(original))managedWrite(target,fs.readFileSync(original),{kind:"knowledge-asset",independent:true,owner:null});return "assets/"+name;
+  });
+  managedWrite(file,snapshot,{kind:"knowledge",sourceType:"study",title:task.title+" · 阅读笔记",owner:null,independent:true});
+  const r=registerKnowledge(file,{sourceType:"study",sourcePaperId:task.paperId,projectId:task.projectId,owner:null,independent:true});link("study:"+task.id,r.id,"snapshot");
+  return task.notes;
 }
 export function appendStudyNotes(task, doc, input) {
   checkRevision(task, input.revision);
@@ -28,7 +40,7 @@ export function appendStudyNotes(task, doc, input) {
     if (![".png", ".jpg", ".jpeg", ".webp", ".svg"].includes(ext)) throw fault("不支持的原文图片格式");
     const content = fs.readFileSync(source), file = `note-${hashOf(content).slice(0, 24)}${ext}`;
     const folder = path.join(taskDir(task.id), "assets"); fs.mkdirSync(folder, { recursive: true });
-    fs.writeFileSync(inside(folder, file), content);
+    managedWrite(inside(folder, file), content);
     return `/api/studies/${task.id}/assets/${file}`;
   };
   const parts = blocks.map(block => {

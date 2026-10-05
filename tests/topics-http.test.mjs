@@ -10,7 +10,8 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pipaper-topic-test-"));
 process.env.PIPAPER_DATA_DIR = path.join(dir, "data"); process.env.PIPAPER_LIBRARY_DIR = path.join(dir, "library");
 const { registerTopicRoutes } = await import("../server/topics/routes.js");
 const store = await import("../server/topics/store.js");
-test.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+const { closeCatalog, resource } = await import("../server/storage/catalog.js");
+test.after(() => {closeCatalog();fs.rmSync(dir, { recursive: true, force: true });});
 async function fixture(t, overrides = {}) {
   const data = topicFixtureData(), app = express(); app.use(express.json()); registerTopicRoutes(app, { ...data, ...overrides });
   const server = app.listen(0, "127.0.0.1"); await new Promise(r => server.once("listening", r));
@@ -120,8 +121,8 @@ test("failed physical deletion retains a retryable lifecycle record and blocks n
   const evidence = store.artifact(task.id, "evidence", "locked evidence", { text: "test evidence" });
   const report = store.artifact(task.id, "report", "dependent report", { test: true }, [evidence]);
   store.change(task.id, x => { x.reportId = report; });
-  const original = fs.rmSync;
-  const mock = t.mock.method(fs, "rmSync", (file, options) => {
+  const original = fs.renameSync;
+  const mock = t.mock.method(fs, "renameSync", (file, options) => {
     if (String(file).endsWith(`${evidence}.json`)) throw Object.assign(new Error("simulated file lock"), { code: "EPERM" });
     return original(file, options);
   });
@@ -130,10 +131,10 @@ test("failed physical deletion retains a retryable lifecycle record and blocks n
   mock.mock.restore();
   assert.equal((await api(`/topics/${task.id}/files/${evidence}`, null, "DELETE")).status, 200); assert.equal(store.read(task.id).cleanupError, null);
   store.artifact(task.id, "search", "new file", { test: true });
-  const failure = t.mock.method(fs, "rmSync", (file, options) => {
-    if (String(file) === path.join(store.folder(task.id), "files")) throw Object.assign(new Error("simulated directory lock"), { code: "EPERM" });
+  const failure = t.mock.method(fs, "renameSync", (file, options) => {
+    if (String(file) === store.folder(task.id)) throw Object.assign(new Error("simulated directory lock"), { code: "EPERM" });
     return original(file, options);
   });
-  assert.equal((await api(`/topics/${task.id}`, null, "DELETE")).status, 400); assert.equal(store.read(task.id).status, "delete-failed");
+  assert.equal((await api(`/topics/${task.id}`, null, "DELETE")).status, 400); assert.equal(resource("topic:"+task.id).lifecycle, "trashed");
   failure.mock.restore(); assert.equal((await api(`/topics/${task.id}`, null, "DELETE")).status, 200); assert.equal(fs.existsSync(store.folder(task.id)), false);
 });

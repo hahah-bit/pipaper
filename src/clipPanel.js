@@ -1,3 +1,4 @@
+import { persistence } from "./persistence.js";
 import { $, el, toast, addChip, askConfirm } from "./app.js";
 
 // Clipboard manager: floating panel — collapsible + draggable + resizable.
@@ -21,9 +22,9 @@ export function initClipboard() {
 
 function buildPanel() {
   if ($("#clip-panel")) return;
-  const savedOpen = localStorage.getItem(LS_OPEN) === "1";
-  const size = JSON.parse(localStorage.getItem(LS_SIZE) || '{"w":300,"h":360}');
-  const pos = JSON.parse(localStorage.getItem(LS_POS) || "null") || { left: 12, bottom: 12 };
+  const savedOpen = persistence.getItem(LS_OPEN) === "1";
+  const size = JSON.parse(persistence.getItem(LS_SIZE) || '{"w":300,"h":360}');
+  const pos = JSON.parse(persistence.getItem(LS_POS) || "null") || { left: 12, bottom: 12 };
 
   const body = el("div", { class: "clip-body" });
   const list = el("div", { class: "clip-list" });
@@ -90,7 +91,7 @@ function buildPanel() {
     const up = () => {
       document.removeEventListener("mousemove", move);
       document.removeEventListener("mouseup", up);
-      localStorage.setItem(LS_SIZE, JSON.stringify({ w: parseInt(panel.style.width), h: parseInt(panel.style.height) }));
+      persistence.setItem(LS_SIZE, JSON.stringify({ w: parseInt(panel.style.width), h: parseInt(panel.style.height) }));
     };
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
@@ -99,7 +100,7 @@ function buildPanel() {
   function toggle(open) {
     if (open) {
       try {
-        const size = JSON.parse(localStorage.getItem(LS_SIZE) || '{"w":300,"h":360}');
+        const size = JSON.parse(persistence.getItem(LS_SIZE) || '{"w":300,"h":360}');
         panel.style.width = size.w + "px";
         panel.style.height = size.h + "px";
       } catch {}
@@ -114,13 +115,13 @@ function buildPanel() {
       panel.style.top = "auto";
       panel.style.right = "auto";
     }
-    localStorage.setItem(LS_OPEN, open ? "1" : "0");
+    persistence.setItem(LS_OPEN, open ? "1" : "0");
   }
 }
 
 function savePos(panel) {
   const r = panel.getBoundingClientRect();
-  localStorage.setItem(LS_POS, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) }));
+  persistence.setItem(LS_POS, JSON.stringify({ left: Math.round(r.left), top: Math.round(r.top) }));
 }
 
 async function refresh() {

@@ -1,3 +1,4 @@
+import { persistence } from "./persistence.js";
 import { $, el, toast } from "./app.js";
 import { getModule, registerModule, reparentModule } from "./modules.js";
 import { figureDrawerModule } from "./figurePanel.js";
@@ -6,6 +7,7 @@ import { openSettings } from "./settings.js";
 import { openNotesManage } from "./notesPanel.js";
 import { openResources } from "./resources.js";
 import { archifyModule } from "./archifyPanel.js";
+import { storageModule, knowledgeModule } from "./storagePanel.js";
 import { DockviewComponent, themeAbyss } from "dockview-core";
 
 // Dock：macOS dock 式功能导航。图标按大分类分组、悬浮放大并显示名称。
@@ -19,6 +21,7 @@ const DOCK_GROUPS = [
     { key: "reader", icon: "📖", name: "阅读器", special: "close", hint: "回到阅读器（默认视图）" },
   ] },
   { label: "图表 · 知识库", items: [
+    { key: "knowledge", icon: "📚", name: "知识库检索" },
     { key: "figana", icon: "📊", name: "图表分析", hint: "图解析 / 表解析 / 复现大纲" },
     { key: "note", icon: "📝", name: "粗读解析" },
     { key: "mindmap", icon: "🧠", name: "思维导图" },
@@ -35,6 +38,7 @@ const DOCK_GROUPS = [
     { key: "video", icon: "🎬", name: "视频解析" },
   ] },
   { label: "系统", items: [
+    { key: "storage", icon: "🗄", name: "存储管理", hint: "资源 · 回收站 · 待核对 · 流水线" },
     { key: "notesmgr", icon: "🗂", name: "笔记管理", dialog: openNotesManage },
     { key: "resources", icon: "🧩", name: "资源管理", dialog: openResources },
     { key: "setup", icon: "🩺", name: "环境检查", dialog: openSetup },
@@ -127,15 +131,22 @@ function ensureWorkspace() {
     // 标签放不下时收进下拉（禁用换行：窄面板下换行会退化成一列竖排）
     overflow: { mode: "dropdown" },
   });
+  dv.onDidActivePanelChange(({ panel }) => {
+    const item = findItem(panel?.params?.moduleId);
+    if (item) {
+      $("#dock-drawer-icon").textContent = item.icon;
+      $("#dock-drawer-title").textContent = item.name;
+    }
+  });
   try {
-    const saved = localStorage.getItem(LAYOUT_KEY);
+    const saved = persistence.getItem(LAYOUT_KEY);
     if (saved) {
       const layout = JSON.parse(saved);
       if (layout?.panels && Object.keys(layout.panels).length) dv.fromJSON(layout);
     }
   } catch (e) { console.warn("工作区布局恢复失败", e); }
   dv.onDidLayoutChange(() => {
-    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(dv.toJSON())); } catch {}
+    try { persistence.setItem(LAYOUT_KEY, JSON.stringify(dv.toJSON())); } catch {}
   });
   dv.onDidRemovePanel(() => {
     syncDockActive();
@@ -187,7 +198,7 @@ export function closeDrawer() {
   dv = null;
   if (inst) {
     // dispose 之后 onDidLayoutChange 不再发出：先如实保存最终布局（面板全关 = 空布局）
-    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(inst.toJSON())); } catch {}
+    try { persistence.setItem(LAYOUT_KEY, JSON.stringify(inst.toJSON())); } catch {}
     try { inst.dispose(); } catch (e) { console.error(e); } // dispose 逐面板触发 unmount
   }
   mounted.clear();
@@ -223,6 +234,8 @@ export function initDock() {
   registerModule(reparentModule({ id: "artifact", name: "产出物", icon: "📦", selector: "#artifacts-view", keepClasses: ["list-collapsed"] }));
   registerModule(figureDrawerModule());
   registerModule(archifyModule());
+  registerModule(storageModule());
+  registerModule(knowledgeModule());
 
   renderDock();
   $("#btn-drawer-close")?.addEventListener("click", closeDrawer);

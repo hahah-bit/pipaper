@@ -1,8 +1,12 @@
+import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile } from "../storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DATA_DIR } from "../config.js";
 import { atomicJson, inside } from "../study-store.js";
+import { KNOWLEDGE_DIR } from "../notes.js";
+import { registerKnowledge } from "../storage/migration.js";
+import { link, putResource } from "../storage/catalog.js";
 
 export const ROOT = path.join(DATA_DIR, "topic-analysis");
 export const fault = (message, status = 400) => Object.assign(new Error(message), { status });
@@ -13,7 +17,7 @@ export function folder(id) {
 }
 const profilesFile = () => path.join(ROOT, "profiles.json");
 export function profiles() {
-  try { return JSON.parse(fs.readFileSync(profilesFile(), "utf8")); }
+  try { return readJsonState(profilesFile(), []); }
   catch (e) { if (e.code === "ENOENT") return []; throw e; }
 }
 function text(value, max = 2000) { return String(value ?? "").trim().slice(0, max); }
@@ -42,17 +46,21 @@ export function deleteProfile(id) {
   atomicJson(profilesFile(), rows.filter(p => p.id !== id));
 }
 export function read(id) {
-  try { return JSON.parse(fs.readFileSync(path.join(folder(id), "task.json"), "utf8")); }
+  try {
+    const file = path.join(folder(id), "task.json");
+    if (!fs.existsSync(file)) throw Object.assign(new Error("选题任务不存在"), { code: "ENOENT" });
+    return readJsonState(file, null);
+  }
   catch (e) { if (e.code === "ENOENT") throw fault("选题任务不存在", 404); throw e; }
 }
 export function change(id, fn, { deleting = false } = {}) {
   const t = read(id);
   if (!deleting && ["deleting", "delete-failed"].includes(t.status)) throw fault("任务正在删除，不能再写入", 409);
-  fn(t); t.revision++; t.updatedAt = stamp(); atomicJson(path.join(folder(id), "task.json"), t); return t;
+  fn(t); t.revision++; t.updatedAt = stamp(); atomicJson(path.join(folder(id), "task.json"), t); registerFile(folder(id), { id: "topic:" + id, kind: "topic", title: t.title, metadata: t }); return t;
 }
 export function list() {
   const dir = path.join(ROOT, "tasks"); if (!fs.existsSync(dir)) return [];
-  return fs.readdirSync(dir).filter(id => /^topic_[a-f0-9-]{36}$/.test(id)).map(read).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return fs.readdirSync(dir).filter(id => /^topic_[a-f0-9-]{36}$/.test(id)).flatMap(id=>{try{return [read(id)];}catch(e){if(e.status===404)return [];throw e;}}).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 export function create(input) {
   if (!input || !["topic", "direction"].includes(input.mode) || Array.isArray(input.profileId) || input.profileIds) throw fault("请选择一种分析模式和至多一张画像");
@@ -64,7 +72,7 @@ export function create(input) {
     profile: profile ? structuredClone(profile) : null, researchArea: area, exploreSubfields: input.exploreSubfields !== false,
     createdAt: stamp(), updatedAt: stamp(), revision: 1, status: "draft", model: input.model || null,
     artifacts: [], reportId: null, runs: [], chat: [], chatEpoch: 0, memory: "", ui: {}, events: [], chatBusy: false };
-  atomicJson(path.join(folder(t.id), "task.json"), t); return t;
+  atomicJson(path.join(folder(t.id), "task.json"), t); registerFile(folder(t.id), { id: "topic:" + t.id, kind: "topic", title: t.title, metadata: t }); return t;
 }
 export function artifact(id, kind, title, data, dependencies = []) {
   const t = read(id); if (["deleting", "delete-failed"].includes(t.status)) throw fault("任务正在删除", 409);
@@ -72,6 +80,11 @@ export function artifact(id, kind, title, data, dependencies = []) {
   atomicJson(file, data);
   try { change(id, task => task.artifacts.push({ id: fileId, kind, title, dependencies, createdAt: stamp(), bytes: fs.statSync(file).size })); }
   catch (e) { fs.rmSync(file, { force: true }); throw e; }
+  if (kind === "report") {
+    const snapshot=path.join(KNOWLEDGE_DIR,"选题报告",id,fileId+".md");
+    managedWrite(snapshot,reportMarkdown(data,title),{kind:"knowledge",sourceType:"topic",title,independent:true,owner:null});
+    const registered=registerKnowledge(snapshot,{sourceType:"topic",title,independent:true,owner:null});link("topic:"+id,registered.id,"snapshot");
+  }
   return fileId;
 }
 export function readArtifact(id, fileId) {
@@ -85,7 +98,7 @@ export function removeArtifact(id, fileId) {
   const removed = new Set([fileId]); let size;
   do { size = removed.size; for (const a of t.artifacts) if (a.dependencies.some(d => removed.has(d))) removed.add(a.id); } while (size !== removed.size);
   // Data first: failures leave metadata available for a retry, never claim success.
-  try { for (const key of removed) fs.rmSync(inside(folder(id), `files/${key}.json`), { force: true }); }
+  try { for (const key of removed) trashPath(inside(folder(id), `files/${key}.json`), {kind:"topic-artifact",owner:"topic:"+id}); }
   catch (e) { change(id, task => { task.cleanupError = { fileId, removedIds: [...removed], error: e.message }; task.lastError = "资料清理未完成，请重试删除；分析和对话暂时停止写入。"; }); throw e; }
   change(id, task => {
     task.artifacts = task.artifacts.filter(a => !removed.has(a.id));
@@ -104,10 +117,14 @@ export function recover() {
   }, { deleting: true });
 }
 export function removeTaskFiles(id) {
-  const dir = folder(id), task = read(id);
-  // Keep the lifecycle record until all owned files have actually been removed.
-  for (const name of fs.readdirSync(dir)) if (name !== "task.json") fs.rmSync(inside(dir, name), { recursive: true, force: true });
-  fs.rmSync(path.join(dir, "task.json"));
-  try { fs.rmdirSync(dir); }
-  catch (e) { if (fs.existsSync(dir)) atomicJson(path.join(dir, "task.json"), task); throw e; }
+  trashPath(folder(id), { id: "topic:" + id, kind: "topic" });
+}
+function reportMarkdown(data,title) {
+  const rows=["# "+title];
+  const walk=(value,key,depth)=>{
+    if(value==null)return;
+    if(typeof value!=="object"){rows.push((key?key+"：":"")+String(value));return;}
+    if(key)rows.push("#".repeat(Math.min(6,depth))+" "+key);
+    if(Array.isArray(value))value.forEach((v,n)=>walk(v,"条目 "+(n+1),depth+1));else for(const[k,v]of Object.entries(value))walk(v,k,depth+1);
+  };walk(data,"报告内容",2);return rows.join("\n\n");
 }
