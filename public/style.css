@@ -207,6 +207,9 @@ input, select, textarea { font-family: inherit; }
   transition: transform .18s cubic-bezier(.34,1.56,.64,1), background .15s, border-color .15s;
 }
 .dock-btn .dock-glyph { font-size: 19px; line-height: 1; filter: saturate(.85); pointer-events: none; }
+.dock-btn .dock-glyph { color: var(--fg1); }
+.dock-glyph svg { display: block; }
+.dock-btn.active .dock-glyph { color: var(--accent); }
 .dock-btn:hover { border-color: var(--border); background: var(--bg2); }
 #dock:has(.dock-btn:hover) .dock-btn:not(:hover) { transform: scale(.9); }
 #dock .dock-btn:hover { transform: scale(1.32); z-index: 2; }
@@ -1479,5 +1482,7 @@ html[data-fs="xlarge"]  { --fs-doc: 19.5px; --fs-chat: 18.5px; --fs-ui: 16.5px; 
 .storage-card progress{width:100%;height:8px}.storage-card pre{overflow:auto;max-height:300px;white-space:pre-wrap}
 .knowledge-text{white-space:pre-wrap;line-height:1.75}.storage-card img,.storage-dialog img{max-width:100%;max-height:600px;object-fit:contain}
 .knowledge-table{overflow:auto;margin:12px 0}.knowledge-table table{border-collapse:collapse}.knowledge-table td,.knowledge-table th{border:1px solid var(--border);padding:6px}
+.knowledge-reference { display: block; margin: 8px 0; }
+.knowledge-element:focus { outline: 2px solid var(--accent); outline-offset: 4px; }
 .storage-dialog{width:min(880px,90vw);max-height:90vh;overflow:auto;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:12px;padding:20px}
 .storage-dialog textarea{display:block;width:100%;box-sizing:border-box;margin:12px 0;font-family:monospace;background:var(--bg2);color:var(--fg)}

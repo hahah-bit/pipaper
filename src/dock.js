@@ -9,6 +9,7 @@ import { openResources } from "./resources.js";
 import { archifyModule } from "./archifyPanel.js";
 import { storageModule, knowledgeModule } from "./storagePanel.js";
 import { DockviewComponent, themeAbyss } from "dockview-core";
+import { dockIcon } from "./dockIcons.js";
 
 // Dock：macOS dock 式功能导航。图标按大分类分组、悬浮放大并显示名称。
 // 点击 → 右侧抽屉（占满阅读器同区域）。抽屉是 dockview 工作区：
@@ -219,9 +220,10 @@ function renderDock() {
         class: "dock-btn",
         "data-key": item.key,
         "data-name": item.name,
+        "aria-label": item.name,
         title: item.hint || item.name,
         onclick: () => openItem(item),
-      }, el("span", { class: "dock-glyph" }, item.icon)));
+      }, el("span", { class: "dock-glyph" }, dockIcon(item.key, item.icon))));
     }
   }
   syncDockActive();

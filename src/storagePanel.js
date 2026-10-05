@@ -483,8 +483,64 @@ export function storageModule() {
     },
   };
 }
-function renderParts(parts, container, generationId) {
+const attachmentKey = (part, generationId) =>
+  part.elementId || part.id
+    ? JSON.stringify([generationId, part.versionId, part.elementId || part.id])
+    : null;
+function renderParts(
+  parts,
+  container,
+  generationId,
+  attachments,
+  inContext = false,
+) {
   for (const part of parts) {
+    const key = ["image", "table", "formula", "code"].includes(part.type)
+      ? attachmentKey(part, generationId)
+      : null;
+    if (key && attachments) {
+      if (
+        attachments.displayed.has(key) ||
+        (inContext && attachments.primary.has(key))
+      ) {
+        const name = {
+          image: "原图",
+          table: "原表",
+          formula: "公式",
+          code: "代码",
+        }[part.type];
+        const link = button(
+          `查看${name}${part.page ? ` · 第 ${part.page} 页` : ""}`,
+          () => {
+            const target = attachments.displayed.get(key);
+            if (!target) return;
+            for (
+              let parent = target.parentElement;
+              parent;
+              parent = parent.parentElement
+            )
+              if (parent.tagName === "DETAILS") parent.open = true;
+            target.scrollIntoView({ behavior: "smooth", block: "center" });
+            target.focus({ preventScroll: true });
+          },
+        );
+        link.classList.add("knowledge-reference");
+        link.title =
+          "已在其他结果展示：" +
+          (part.description || part.shortDescription || name);
+        container.append(link);
+        continue;
+      }
+      const slot = el("div", {
+        class: "knowledge-element",
+        tabindex: "-1",
+        "data-element-id": part.elementId || part.id,
+      });
+      attachments.displayed.set(key, slot);
+      container.append(slot);
+      renderParts([part], slot, generationId);
+      continue;
+    }
     if (part.type === "text")
       container.append(el("span", { class: "knowledge-text" }, part.text));
     else if (part.type === "image" && part.data)
@@ -588,6 +644,14 @@ export function knowledgeModule() {
             projectId: project.checked ? state.projectId : undefined,
           });
           list.replaceChildren();
+          const attachments = { displayed: new Map(), primary: new Set() };
+          for (const row of data.results)
+            for (const part of row.parts || [
+              { ...row.element, type: row.element?.kind },
+            ]) {
+              const key = attachmentKey(part, row.generationId);
+              if (key) attachments.primary.add(key);
+            }
           if (!data.results.length)
             list.append(
               el("p", {}, "没有已发布证据命中。可从存储管理启动解析并入库。"),
@@ -603,12 +667,14 @@ export function knowledgeModule() {
                 `${row.sectionPath?.join(" > ") || "文档根节点"} · 页 ${row.pages?.join(", ") || "—"} · ${row.sourceType} · 版本 ${row.versionId?.slice(0, 12)}${row.stale ? " · 已过期版本" : ""}${row.coverage?.partial ? " · 部分区域待核对" : ""}`,
               ),
             );
-            if (row.parts) renderParts(row.parts, card, row.generationId);
+            if (row.parts)
+              renderParts(row.parts, card, row.generationId, attachments);
             else {
               renderParts(
                 [{ ...row.element, type: row.element.kind }],
                 card,
                 row.generationId,
+                attachments,
               );
               for (const c of row.contexts) {
                 const context = el(
@@ -616,7 +682,13 @@ export function knowledgeModule() {
                   {},
                   el("summary", {}, "引用正文 · " + c.sectionPath.join(" > ")),
                 );
-                renderParts(c.parts, context, row.generationId);
+                renderParts(
+                  c.parts,
+                  context,
+                  row.generationId,
+                  attachments,
+                  true,
+                );
                 card.append(context);
               }
             }
