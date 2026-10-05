@@ -7,7 +7,7 @@
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 <link rel="stylesheet" href="/vendor/dockview.css" />
 <link rel="stylesheet" href="/study.css" />
-<link rel="stylesheet" href="/style.css?v=2ad4eb7405" />
+<link rel="stylesheet" href="/style.css?v=2bab7dc579" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -246,18 +246,17 @@
 
 <div id="sel-popup" hidden><button id="btn-sel-add">✂ 加入对话</button></div>
 
-<!-- ============ 笔记管理 modal（用 <dialog>：showModal 的 top layer 在浏览器全屏时依然可见可点） ============ -->
-<dialog id="notes-backdrop" class="native-dialog notes-dialog">
-  <div class="modal-head"><span>笔记管理 · 知识库（粗读 / 精读）</span><button id="btn-notes-close" class="icon-btn">✕</button></div>
-  <div class="modal-body" id="notes-manage-body" style="min-height: 200px; max-height: 52vh; overflow: auto;"></div>
-  <div class="modal-body" id="notes-manage-view" hidden style="border-top: 1px solid var(--border); max-height: 38vh; overflow: auto;"></div>
-</dialog>
-
 <!-- ============ Settings modal ============ -->
 <div id="modal-backdrop" hidden>
-  <div id="settings-modal" class="modal">
-    <div class="modal-head"><span>设置</span><button id="btn-settings-close" class="icon-btn">✕</button></div>
-    <div class="modal-body">
+  <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="modal-head"><span id="settings-title">设置</span><button id="btn-settings-close" class="icon-btn" aria-label="关闭设置">✕</button></div>
+    <div id="settings-tabs" class="workspace-tabs" role="tablist" aria-label="设置分类">
+      <button class="workspace-tab active" role="tab" data-section="general">常规</button>
+      <button class="workspace-tab" role="tab" data-section="knowledge">知识库</button>
+      <button class="workspace-tab" role="tab" data-section="resources">技能与扩展</button>
+      <button class="workspace-tab" role="tab" data-section="diagnostics">环境诊断</button>
+    </div>
+    <div class="modal-body" id="settings-general">
       <h4>界面</h4>
       <label>界面字号（阅读正文 / 对话 / 侧栏同步缩放）
         <select id="cfg-font-size">
@@ -301,12 +300,15 @@
       <label>学术镜像 Cookie（Google 学术镜像）<input id="cfg-scholar-cookie" type="password" placeholder="浏览器过一次验证后复制 Cookie；留空保持不变" /></label>
       <p class="res-note" style="margin:4px 0 0">密钥只存本机 data/（已 gitignore，不会进仓库）；接口返回一律打码。清除请到检索面板的源配置 ⚙。</p>
     </div>
-    <div class="modal-foot">
+    <div class="modal-foot" id="settings-general-foot">
       <span id="settings-msg"></span>
       <button id="btn-open-setup" class="tool-btn" title="环境检查：pi 登录 / Docker 服务 / Zotero / 密钥">环境检查</button>
       <div class="spacer"></div>
       <button id="btn-settings-save" class="tool-btn primary">保存</button>
     </div>
+    <section id="settings-knowledge" class="modal-body" hidden></section>
+    <section id="settings-resources" hidden></section>
+    <section id="settings-diagnostics" hidden></section>
   </div>
 </div>
 
@@ -344,6 +346,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=2ad4eb7405"></script>
+<script src="/app.js?v=2bab7dc579"></script>
 </body>
 </html>

@@ -1,10 +1,10 @@
-import { api, state, $, el, toast, askConfirm } from "./app.js";
+import { api, state, el, toast } from "./app.js";
 import { renderMd } from "./chat.js";
 import { renderMarkmap } from "./markmapUtil.js";
 import { registerModule } from "./modules.js";
 import { generateArtifact } from "./notesGen.js";
 
-// 知识模块（粗读解析 / 思维导图 / 流程图）+ 笔记管理弹窗。
+// 知识模块（粗读解析 / 思维导图 / 流程图）。资料管理使用统一存储工作区。
 // 数据全部来自 knowledge/粗读/<slug>/ 下的 markdown 文件；生成走 notesGen 的临时会话。
 
 const FILE_NOTE = "粗读解析.md";
@@ -287,10 +287,12 @@ function makeNoteModule({ id, name, icon, artifacts }) {
       refresh();
       onNotesChanged = () => { if (alive) refresh(); };
       window.addEventListener("pipaper:notes-changed", onNotesChanged);
+      window.addEventListener("pipaper:paper-changed", onNotesChanged);
     },
     unmount() {
       alive = false;
       if (onNotesChanged) window.removeEventListener("pipaper:notes-changed", onNotesChanged);
+      if (onNotesChanged) window.removeEventListener("pipaper:paper-changed", onNotesChanged);
       onNotesChanged = null;
       try { mountDispose?.(); } catch {}
       mountDispose = null;
@@ -320,90 +322,4 @@ export function registerNoteModules() {
         hint: "可选：若论文方法存在 v1→v2 的迭代改进，生成算法迭代图。" },
     ],
   }));
-}
-
-// ---------------- 笔记管理（删除页） ----------------
-const fmtSize = (n) => (n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1) + " KB" : (n / 1048576).toFixed(1) + " MB");
-
-function notesChanged() { window.dispatchEvent(new CustomEvent("pipaper:notes-changed")); }
-
-export function openNotesManage() {
-  // <dialog>.showModal 进入 top layer：浏览器全屏下依然可见可交互
-  const dlg = $("#notes-backdrop");
-  if (!dlg.open) dlg.showModal();
-  refreshManage();
-}
-
-async function refreshManage() {
-  const body = $("#notes-manage-body");
-  $("#notes-manage-view").hidden = true;
-  body.replaceChildren(el("div", { class: "res-note" }, "加载中…"));
-  let data;
-  try { data = await api.notes(); }
-  catch (e) {
-    const msg = String(e.message || e);
-    const hint = /HTTP 404/.test(msg) ? "后端没有笔记接口——当前运行的是旧版本 PiPaper，请完全关闭旧进程后重新 npm start。" : (e.message || e);
-    body.replaceChildren(el("div", { class: "res-note" }, "加载失败: " + hint));
-    return;
-  }
-  body.replaceChildren();
-  for (const cat of data.categories) {
-    body.append(el("h4", { class: "nm-cat" }, `📁 ${cat.category}库 · ${cat.papers.length} 篇`));
-    if (!cat.papers.length) body.append(el("div", { class: "res-note", style: { margin: "0 0 10px 4px" } }, "暂无笔记"));
-    for (const paper of cat.papers) {
-      body.append(el("div", { class: "nm-paper" },
-        el("span", { class: "nm-title", title: paper.slug }, paper.title),
-        el("span", { class: "nm-slug" }, paper.slug),
-        el("div", { class: "spacer" }),
-        el("button", {
-          class: "tool-btn danger", onclick: async () => {
-            if (!(await askConfirm({ title: `删除整篇${cat.category}笔记`, message: `《${paper.title}》在此类别下的全部文件（${paper.files.length} 个）将被递归删除，且不可恢复。确定删除？`, okText: "彻底删除", danger: true }))) return;
-            try {
-              await api.notesDeletePaper(cat.category, paper.slug);
-              toast("已彻底删除（含磁盘文件）");
-            } catch (e) { toast("删除失败: " + (e.message || e), true); }
-            await refreshManage();
-            notesChanged();
-          }
-        }, "🗑 删除整篇")
-      ));
-      for (const f of paper.files) {
-        body.append(el("div", { class: "nm-file" },
-          el("span", { class: "nm-fname" }, f.name),
-          el("span", { class: "nm-meta" }, `${fmtSize(f.size)} · ${new Date(f.mtime).toLocaleString()}`),
-          el("div", { class: "spacer" }),
-          el("button", { class: "tool-btn", onclick: () => previewNote(cat.category, paper, f) }, "查看"),
-          el("button", {
-            class: "tool-btn danger", onclick: async () => {
-              if (!(await askConfirm({ title: "删除笔记文件", message: `删除 ${cat.category}/${paper.slug}/${f.name}？该文件将从磁盘彻底移除。`, okText: "删除", danger: true }))) return;
-              try {
-                await api.notesDeleteFile(f.path);
-                toast("已删除");
-              } catch (e) { toast("删除失败: " + (e.message || e), true); }
-              await refreshManage();
-              notesChanged();
-            }
-          }, "删除")
-        ));
-      }
-    }
-  }
-}
-
-async function previewNote(category, paper, f) {
-  const view = $("#notes-manage-view");
-  view.hidden = false;
-  view.replaceChildren(el("div", { class: "res-note" }, "加载中…"));
-  try {
-    const r = await api.file("knowledge/" + f.path);
-    const doc = el("div", { class: "paper-doc" });
-    renderMd(r.content || "（空文件）", doc);
-    view.replaceChildren(el("div", { class: "nm-view-head" }, `《${paper.title}》· ${f.name}`), doc);
-  } catch (e) {
-    view.replaceChildren(el("div", { class: "res-note" }, "读取失败: " + (e.message || e)));
-  }
-}
-
-export function initNotesManage() {
-  $("#btn-notes-close")?.addEventListener("click", () => { try { $("#notes-backdrop").close(); } catch {} });
 }

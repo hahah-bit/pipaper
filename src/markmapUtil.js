@@ -5,6 +5,11 @@ export async function renderMarkmap(svgEl, md, opts = {}) {
   const { Transformer } = await import("markmap-lib");
   const { Markmap } = await import("markmap-view");
   svgEl.replaceChildren();
+  // SVG percentage lengths cannot be resolved while a cached workspace is hidden.
+  // Numeric intrinsic lengths keep D3's zoom extent valid during a view switch.
+  const bounds = svgEl.getBoundingClientRect();
+  svgEl.setAttribute("width", bounds.width || 600);
+  svgEl.setAttribute("height", bounds.height || 400);
   const tr = new Transformer();
   const root = tr.transform(md || "# 空").root;
   const mm = Markmap.create(svgEl, {
@@ -15,6 +20,13 @@ export async function renderMarkmap(svgEl, md, opts = {}) {
     autoFit: false, // 尺寸自适应由调用方在布局完成后 fit，避免竞态
     ...opts,
   });
+  const fit = mm.fit.bind(mm);
+  mm.fit = (...args) => {
+    const visible = svgEl.getBoundingClientRect();
+    if (!visible.width || !visible.height) return Promise.resolve();
+    svgEl.setAttribute("width", visible.width); svgEl.setAttribute("height", visible.height);
+    return fit(...args);
+  };
   await mm.setData(root);
   await mm.fit();
   return mm;

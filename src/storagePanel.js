@@ -1,6 +1,14 @@
 import { el, toast, state, askConfirm } from "./app.js";
 import DOMPurify from "dompurify";
 import katex from "katex";
+import { renderMd } from "./chat.js";
+import { persistence } from "./persistence.js";
+import { openSettings } from "./settings.js";
+import {
+  subscribeStorageEvents,
+  storageSummary,
+  latestStorageJobs,
+} from "./storageEvents.js";
 const labels = {
   active: "正常",
   trashed: "回收站",
@@ -56,39 +64,128 @@ const button = (name, action) =>
     },
     name,
   );
+function resourceTitle(resource) {
+  const paper = state.papers.find((p) => p.id === resource.sourcePaperId);
+  const filename =
+    resource.location?.split(/[\\/]/).at(-1) || resource.title || resource.id;
+  if (paper) return `${paper.title} · ${filename}`;
+  if (resource.sourceType === "topic" && /^[\da-f-]{36}\.md$/i.test(filename))
+    return "选题报告 · " + new Date(resource.updatedAt).toLocaleString();
+  return resource.title || filename;
+}
 export function storageModule() {
-  let body, events;
+  let body,
+    unsubscribe,
+    onContextChanged,
+    sequence = 0;
+  let currentView = "resources";
+  const sections = [
+    ["resources", "资源"],
+    ["notes", "笔记与成果"],
+    ["jobs", "处理任务"],
+    ["reviews", "待核对"],
+    ["trash", "回收站"],
+  ];
+  const inScope = (r) => {
+    const scope = body.querySelector("[name=scope]").value;
+    if (scope === "all") return true;
+    const paperId =
+      r.paperId ||
+      r.sourcePaperId ||
+      r.metadata?.paperId ||
+      (r.kind === "original" ? r.metadata?.id : null);
+    if (scope === "paper")
+      return !!state.currentPaper && paperId === state.currentPaper.id;
+    const project = state.projects.find((p) => p.id === state.projectId);
+    return (
+      !!project &&
+      (r.projectId === project.id ||
+        r.metadata?.projectId === project.id ||
+        project.paperIds.includes(paperId))
+    );
+  };
+  function selectView(view) {
+    currentView = sections.some(([id]) => id === view) ? view : "resources";
+    persistence.setItem("pipaper.workspace.libraryView", currentView);
+    for (const tab of body.querySelectorAll(".library-tab")) {
+      const active = tab.dataset.view === currentView;
+      tab.classList.toggle("active", active);
+      tab.setAttribute("aria-selected", String(active));
+    }
+    body.querySelector("[name=lifecycle]").value =
+      currentView === "trash" ? "trashed" : "active";
+    body.querySelector("[name=lifecycle]").hidden = currentView !== "trash";
+    body.querySelector("[name=kind]").hidden = !["resources", "trash"].includes(
+      currentView,
+    );
+    body.querySelector(".storage-list").hidden = ![
+      "resources",
+      "notes",
+      "trash",
+    ].includes(currentView);
+    body.querySelector(".storage-jobs").hidden = currentView !== "jobs";
+    body.querySelector(".storage-history").hidden = currentView !== "jobs";
+    body.querySelector(".storage-operations").hidden = currentView !== "jobs";
+    body.querySelector(".storage-reviews").hidden = currentView !== "reviews";
+    void show().catch((e) => toast(e.message, true));
+  }
   const show = async () => {
+    if (!body) return;
+    const host = body,
+      ticket = ++sequence;
     const lifecycle = body.querySelector("[name=lifecycle]").value,
       q = body.querySelector("[name=q]").value;
-    const data = await storageApi(
-      "storage/resources?lifecycle=" +
-        lifecycle +
-        "&q=" +
-        encodeURIComponent(q) +
-        "&kind=" +
-        encodeURIComponent(body.querySelector("[name=kind]").value) +
-        "&limit=500",
-    );
-    const jobs = await storageApi("ingestion/jobs");
-    const ops = await storageApi("storage/operations");
-    const reviews = await storageApi("rag/reviews");
+    const [data, jobs, ops, reviews] = await Promise.all([
+      storageApi(
+        "storage/resources?lifecycle=" +
+          lifecycle +
+          "&q=" +
+          encodeURIComponent(q) +
+          "&kind=" +
+          encodeURIComponent(
+            currentView === "notes"
+              ? "knowledge"
+              : ["resources", "trash"].includes(currentView)
+                ? body.querySelector("[name=kind]").value
+                : "",
+          ) +
+          "&limit=10000",
+      ),
+      storageApi("ingestion/jobs"),
+      storageApi("storage/operations"),
+      storageApi("rag/reviews"),
+    ]);
+    if (host !== body || ticket !== sequence) return;
+    const allReviews = reviews.reviews;
+    data.resources = data.resources
+      .filter(inScope)
+      .filter(
+        (r) =>
+          currentView !== "notes" ||
+          (!r.directory && /\.md$/i.test(r.location || "")),
+      );
+    const summary = storageSummary(jobs.jobs, allReviews);
+    const badges = {
+      jobs: summary.running + summary.failed,
+      reviews: summary.reviews,
+    };
+    for (const [id, title] of sections)
+      body.querySelector(`[data-view=${id}]`).textContent =
+        title + (badges[id] ? ` (${badges[id]})` : "");
     const list = body.querySelector(".storage-list");
     list.replaceChildren();
-    for (const r of data.resources) {
+    for (const r of ["resources", "notes", "trash"].includes(currentView)
+      ? data.resources
+      : []) {
       const pending = jobs.jobs.find((j) => j.resourceId === r.id),
         row = el(
           "article",
           { class: "storage-card" },
-          el(
-            "strong",
-            {},
-            r.title || r.location?.split(/[\\/]/).at(-1) || r.id,
-          ),
+          el("strong", {}, resourceTitle(r)),
           el(
             "div",
             { class: "res-note" },
-            `${labels[r.kind] || r.kind} · ${labels[r.lifecycle]} · ${labels[r.availability] || r.availability} · 修订 ${r.revision}${r.indexStale ? " · 索引已过期" : ""}`,
+            `${labels[r.kind] || r.kind} · ${labels[r.lifecycle]} · ${labels[r.availability] || r.availability} · 修订 ${r.revision}${r.publishedGeneration ? r.indexStale ? " · 索引待更新" : " · 已入库" : r.indexStale ? " · 索引已过期" : ""}${r.coverage?.partial ? " · 部分区域待核对" : ""}`,
           ),
         );
       if (pending) {
@@ -104,6 +201,49 @@ export function storageModule() {
           row.append(el("div", { class: "res-note" }, pending.error));
       }
       const controls = el("div", { class: "storage-actions" });
+      if (
+        r.lifecycle === "active" &&
+        !r.directory &&
+        /\.md$/i.test(r.location || "")
+      ) {
+        controls.append(
+          button("预览", async () => {
+            const response = await fetch(
+              "/api/storage/resources/" +
+                encodeURIComponent(r.id) +
+                "/content?revision=" +
+                r.revision,
+            );
+            if (!response.ok) throw new Error("该版本内容不可用，请刷新后重试");
+            const doc = el("div", { class: "paper-doc" });
+            renderMd(await response.text(), doc);
+            const dialog = el(
+              "dialog",
+              { class: "storage-dialog" },
+              el("h3", {}, r.title),
+              doc,
+              button("关闭", () => dialog.close()),
+            );
+            document.body.append(dialog);
+            dialog.addEventListener("close", () => dialog.remove());
+            dialog.showModal();
+          }),
+        );
+        const relative = r.location
+          .replace(/\\/g, "/")
+          .split("/knowledge/")
+          .at(1);
+        if (relative)
+          controls.append(
+            button("编辑", () =>
+              window.dispatchEvent(
+                new CustomEvent("pipaper:workspace-open", {
+                  detail: { moduleId: "mdedit", path: relative },
+                }),
+              ),
+            ),
+          );
+      }
       if (r.lifecycle === "active") {
         if (
           r.availability === "missing" &&
@@ -268,6 +408,66 @@ export function storageModule() {
       row.append(controls);
       list.append(row);
     }
+    if (!data.resources.length)
+      list.append(
+        el(
+          "p",
+          { class: "res-note" },
+          "当前范围没有匹配资料，可切换范围或资源类型。",
+        ),
+      );
+    const taskList = body.querySelector(".storage-jobs");
+    taskList.replaceChildren();
+    const displayedJobs = body.querySelector('[name="history"]').checked
+      ? jobs.jobs
+      : latestStorageJobs(jobs.jobs);
+    const visibleJobs = displayedJobs.filter((job) => {
+      const r = data.resources.find((r) => r.id === job.resourceId);
+      return (
+        r &&
+        (!q ||
+          (r.title || job.resourceId).toLowerCase().includes(q.toLowerCase()))
+      );
+    });
+    for (const job of currentView === "jobs" ? visibleJobs : []) {
+      const r = data.resources.find((r) => r.id === job.resourceId);
+      const row = el(
+        "article",
+        { class: "storage-card" },
+        el("strong", {}, r ? resourceTitle(r) : job.resourceId),
+        el(
+          "div",
+          { class: "res-note" },
+          `${labels[job.status]} · ${labels[job.stage] || job.stage || "等待开始"} · ${job.progress || 0}%`,
+        ),
+        el("progress", { max: 100, value: job.progress || 0 }),
+        el("p", {}, job.error || job.detail || ""),
+      );
+      const actions = ["running", "queued"].includes(job.status)
+        ? ["pause", "cancel"]
+        : ["paused", "blocked", "interrupted", "failed"].includes(job.status)
+          ? ["resume", "cancel"]
+          : [];
+      for (const action of actions)
+        row.append(
+          button(
+            { pause: "暂停", cancel: "取消", resume: "继续 / 重试" }[action],
+            async () => {
+              await storageApi(`ingestion/jobs/${job.id}/${action}`, {});
+              await show();
+            },
+          ),
+        );
+      taskList.append(row);
+    }
+    if (!visibleJobs.length)
+      taskList.append(
+        el(
+          "p",
+          { class: "res-note" },
+          "当前范围没有处理任务。选择资源的“解析并入库”即可开始。",
+        ),
+      );
     const opList = body.querySelector(".storage-operations");
     opList.replaceChildren(el("h3", {}, "未完成的存储操作"));
     for (const op of ops.operations
@@ -292,7 +492,13 @@ export function storageModule() {
     reviewList.replaceChildren(
       el("h3", {}, `待核对（${reviews.reviews.length}）`),
     );
-    for (const review of reviews.reviews.slice(0, 100))
+    for (const review of currentView === "reviews"
+      ? reviews.reviews
+          .filter((review) =>
+            data.resources.some((r) => r.id === review.resourceId),
+          )
+          .slice(0, 100)
+      : [])
       reviewList.append(
         el(
           "div",
@@ -300,7 +506,7 @@ export function storageModule() {
           el(
             "span",
             {},
-            `第 ${review.page || "?"} 页 · ${review.issues?.join("、")}`,
+            `${resourceTitle(data.resources.find((r) => r.id === review.resourceId))} · 第 ${review.page || "?"} 页 · ${review.issues?.join("、")}`,
           ),
           button("核对证据", async () => {
             const evidence = await storageApi(
@@ -372,9 +578,9 @@ export function storageModule() {
   };
   return {
     id: "storage",
-    name: "存储管理",
+    name: "资料",
     icon: "🗄",
-    mount(container) {
+    mount(container, ctx) {
       body = container;
       body.classList.add("storage-panel");
       const filter = el(
@@ -391,6 +597,45 @@ export function storageModule() {
         name: "q",
         placeholder: "搜索资源名称或路径",
       });
+      const scope = el(
+        "select",
+        {
+          name: "scope",
+          "aria-label": "资料范围",
+          onchange: () => show().catch((e) => toast(e.message, true)),
+        },
+        el("option", { value: "all" }, "全部资料"),
+        el(
+          "option",
+          { value: "paper", disabled: !state.currentPaper },
+          "当前论文",
+        ),
+        el(
+          "option",
+          { value: "project", disabled: !state.projectId },
+          "当前项目",
+        ),
+      );
+      const tabs = el(
+        "div",
+        {
+          class: "library-tabs workspace-tabs",
+          role: "tablist",
+          "aria-label": "资料分类",
+        },
+        ...sections.map(([id, title]) =>
+          el(
+            "button",
+            {
+              class: "library-tab workspace-tab",
+              role: "tab",
+              "data-view": id,
+              onclick: () => selectView(id),
+            },
+            title,
+          ),
+        ),
+      );
       input.addEventListener("keydown", (event) => {
         if (event.key === "Enter")
           void show().catch((e) => toast(e.message, true));
@@ -420,65 +665,61 @@ export function storageModule() {
         ].map(([value, name]) => el("option", { value }, name)),
       );
       body.append(
-        el("h2", {}, "存储管理"),
+        el("h2", {}, "资料"),
+        tabs,
         el(
           "div",
           { class: "storage-actions" },
           filter,
+          scope,
           types,
           input,
+          el(
+            "label",
+            { class: "storage-history knowledge-scope" },
+            el("input", {
+              type: "checkbox",
+              name: "history",
+              onchange: () => show().catch((e) => toast(e.message, true)),
+            }),
+            "包含历史任务",
+          ),
           button("刷新", show),
-          button("连接配置", async () => {
-            const data = await storageApi("rag/config"),
-              editor = el("textarea", {
-                rows: 16,
-                value: JSON.stringify(data.config, null, 2),
-              }),
-              dlg = el(
-                "dialog",
-                { class: "storage-dialog" },
-                el("h3", {}, "知识库连接配置"),
-                el(
-                  "p",
-                  {},
-                  data.embeddingConfigured
-                    ? "已读取服务端 Embedding 凭据"
-                    : "未配置 Embedding 凭据，请在服务端设置 DASHSCOPE_API_KEY 或本地 credentials/embedding.json",
-                ),
-                editor,
-                button("保存", async () => {
-                  await storageApi(
-                    "rag/config",
-                    JSON.parse(editor.value),
-                    "PUT",
-                  );
-                  dlg.close();
-                }),
-                button("关闭", () => dlg.close()),
-              );
-            document.body.append(dlg);
-            dlg.addEventListener("close", () => dlg.remove());
-            editor.value = JSON.stringify(data.config, null, 2);
-            editor.removeAttribute("value");
-            dlg.showModal();
-          }),
+          button("知识库设置", () => openSettings("knowledge")),
         ),
         el("div", { class: "storage-list" }),
+        el("section", { class: "storage-jobs" }),
         el("section", { class: "storage-operations" }),
         el("section", { class: "storage-reviews" }),
       );
-      void show().catch((e) => toast(e.message, true));
-      events = new EventSource("/api/storage/events");
-      let refresh;
-      events.onmessage = () => {
-        clearTimeout(refresh);
-        refresh = setTimeout(() => {
-          if (body) void show().catch(() => {});
-        }, 500);
+      selectView(
+        ctx?.initial?.libraryView ||
+          persistence.getItem("pipaper.workspace.libraryView"),
+      );
+      onContextChanged = () => {
+        scope.querySelector('[value="paper"]').disabled = !state.currentPaper;
+        scope.querySelector('[value="project"]').disabled = !state.projectId;
+        if (
+          (scope.value === "paper" && !state.currentPaper) ||
+          (scope.value === "project" && !state.projectId)
+        )
+          scope.value = "all";
+        void show().catch(() => {});
       };
+      window.addEventListener("pipaper:paper-changed", onContextChanged);
+      window.addEventListener("pipaper:project-changed", onContextChanged);
+      unsubscribe = subscribeStorageEvents(() => {
+        if (body) void show().catch(() => {});
+      });
+    },
+    activate(payload) {
+      if (payload?.libraryView) selectView(payload.libraryView);
     },
     unmount() {
-      events?.close();
+      unsubscribe?.();
+      sequence++;
+      window.removeEventListener("pipaper:paper-changed", onContextChanged);
+      window.removeEventListener("pipaper:project-changed", onContextChanged);
       body = null;
     },
   };
@@ -600,11 +841,14 @@ function renderParts(
   }
 }
 export function knowledgeModule() {
+  let alive = false,
+    onProjectChanged;
   return {
     id: "knowledge",
     name: "知识库检索",
     icon: "📚",
     mount(body) {
+      alive = true;
       body.classList.add("storage-panel");
       const query = el("input", {
           placeholder: "检索文献、笔记、研读成果…",
@@ -634,7 +878,40 @@ export function knowledgeModule() {
         ),
         list = el("div", {}),
         project = el("input", { type: "checkbox", checked: false });
+      let searchSequence = 0;
+      try {
+        const saved = JSON.parse(
+          persistence.getItem("pipaper.workspace.knowledgeFilters") || "{}",
+        );
+        query.value = saved.query || "";
+        source.value = saved.source || "";
+        kind.value = saved.kind || "";
+        project.checked = !!saved.project;
+      } catch {}
+      const remember = () =>
+        persistence.setItem(
+          "pipaper.workspace.knowledgeFilters",
+          JSON.stringify({
+            query: query.value,
+            source: source.value,
+            kind: kind.value,
+            project: project.checked,
+          }),
+        );
+      onProjectChanged = () => {
+        project.disabled = !state.projectId;
+        if (!state.projectId) project.checked = false;
+      };
+      onProjectChanged();
+      window.addEventListener("pipaper:project-changed", onProjectChanged);
+      for (const field of [query, source, kind, project])
+        field.addEventListener("change", remember);
+      query.setAttribute("aria-label", "知识库查询");
+      source.setAttribute("aria-label", "知识来源");
+      kind.setAttribute("aria-label", "检索元素类型");
       const search = async () => {
+        remember();
+        const ticket = ++searchSequence;
         list.replaceChildren(el("p", {}, "检索中…"));
         try {
           const data = await storageApi("rag/search", {
@@ -643,6 +920,7 @@ export function knowledgeModule() {
             elementType: kind.value || undefined,
             projectId: project.checked ? state.projectId : undefined,
           });
+          if (!alive || ticket !== searchSequence) return;
           list.replaceChildren();
           const attachments = { displayed: new Map(), primary: new Set() };
           for (const row of data.results)
@@ -654,7 +932,11 @@ export function knowledgeModule() {
             }
           if (!data.results.length)
             list.append(
-              el("p", {}, "没有已发布证据命中。可从存储管理启动解析并入库。"),
+              el(
+                "p",
+                {},
+                "没有已发布证据命中。可从资料 → 资源启动解析并入库。",
+              ),
             );
           for (const row of data.results) {
             const card = el(
@@ -695,19 +977,24 @@ export function knowledgeModule() {
             list.append(card);
           }
         } catch (e) {
-          list.replaceChildren(el("p", {}, e.message));
+          if (alive && ticket === searchSequence)
+            list.replaceChildren(el("p", {}, e.message));
         }
       };
       body.append(
         el("h2", {}, "知识库检索"),
         el(
           "div",
-          { class: "storage-actions" },
+          { class: "knowledge-query storage-actions" },
           query,
+          button("搜索", search),
+        ),
+        el(
+          "div",
+          { class: "knowledge-filters storage-actions" },
           source,
           kind,
-          el("label", {}, project, " 当前项目"),
-          button("搜索", search),
+          el("label", { class: "knowledge-scope" }, project, "当前项目"),
         ),
         list,
       );
@@ -715,6 +1002,9 @@ export function knowledgeModule() {
         if (e.key === "Enter") void search();
       });
     },
-    unmount() {},
+    unmount() {
+      alive = false;
+      window.removeEventListener("pipaper:project-changed", onProjectChanged);
+    },
   };
 }

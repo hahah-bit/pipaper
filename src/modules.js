@@ -2,7 +2,7 @@ import { $ } from "./app.js";
 
 // 工作区的模块注册表。每个模块 = { id, name, icon, mount(body, ctx), unmount() }。
 // mount 把模块内容装进某个栏位；unmount 负责还原（reader/chat 是 DOM 搬迁，搬回原位即恢复主界面）。
-// 之后新增功能只需 registerModule(...)，组合选择器与栏位切换菜单自动收录。
+// 模块管理能力与挂载生命周期；导航归属在 workspaceNavigation.js 中按实际工作流程声明。
 
 const registry = [];
 

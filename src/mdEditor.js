@@ -51,9 +51,10 @@ function diffRows(oldText, newText) {
 }
 
 export function registerMdEditorModule() {
+  let requestedPath = "", requestOpen;
   registerModule({
     id: "mdedit",
-    name: "LaTeX·MD 编辑",
+    name: "Markdown 编辑",
     icon: "✍️",
     mount(body, ctx) {
       alive = true;
@@ -82,6 +83,8 @@ export function registerMdEditorModule() {
       let currentPath = "";
       let currentRevision = 0;
       let dirty = false;
+      let openingSequence = 0, loadingDefault = true;
+      requestOpen = path => { requestedPath = path; if (!loadingDefault) void openPath(path); };
       let mode = "split";
       let previewTimer = null;
 
@@ -255,10 +258,13 @@ export function registerMdEditorModule() {
       }
 
       async function openPath(rel) {
+        const ticket = ++openingSequence;
         try {
           const r = await api.notesReadFile(rel);
+          if (!alive || ticket !== openingSequence) return;
           editor.value = r.content || "";
           currentPath = rel; dirty = false;
+          persistence.setItem("pipaper.notes-editor-last", rel);
           currentRevision=r.revision;
           const draft=persistence.getItem("pipaper.mdDraft."+rel);
           if(draft){try{const saved=JSON.parse(draft);editor.value=saved.content;currentRevision=saved.revision;dirty=true;}catch{}}
@@ -304,8 +310,8 @@ export function registerMdEditorModule() {
       // 默认打开当前论文的精读笔记（若有）
       (async () => {
         const paper = state.currentPaper;
-        let prefer = "";
-        if (paper?.id) {
+        let prefer = requestedPath || persistence.getItem("pipaper.notes-editor-last") || "";
+        if (paper?.id && !prefer) {
           try {
             const { slug } = await api.notesResolve(paper.id, paper.title || "");
             const data = await api.notes();
@@ -314,15 +320,19 @@ export function registerMdEditorModule() {
           } catch {}
         }
         await refreshFiles(prefer);
-        if (prefer) openPath(prefer);
+        loadingDefault = false;
+        prefer = requestedPath || prefer;
+        if (prefer && [...fileSel.options].some(option => option.value === prefer)) void openPath(prefer);
       })();
 
       const root = el("div", { class: "mde" }, toolbar, aiBar, main, aiPanel);
       body.append(root);
       window.dispatchEvent(new Event("resize"));
     },
+    activate(payload) { if (payload?.path) requestOpen?.(payload.path); },
     unmount() {
       alive = false;
+      requestOpen = null; requestedPath = "";
     },
   });
 }

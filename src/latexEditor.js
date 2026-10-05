@@ -1,5 +1,6 @@
 import { api, state, $, el, toast } from "./app.js";
 import { registerModule } from "./modules.js";
+import { persistence } from "./persistence.js";
 
 // LaTeX 编辑器模块：文件树 + 源码编辑器 + PDF 预览 + 编译日志。
 // 后端 /api/latex/* 严格限定在配置的 LaTeX 工作区（默认 latex-writing）内。
@@ -36,6 +37,7 @@ export function registerLatexModule() {
       const editor = el("textarea", { class: "lm-editor", spellcheck: "false", placeholder: "左侧选择 .tex / .bib 文件开始编辑…" });
       const pdfFrame = el("iframe", { class: "lm-pdf", title: "PDF 预览" });
       const logBox = el("pre", { class: "lm-log" }, "编译日志会显示在这里。");
+      let openSequence = 0;
 
       const setStatus = (t) => { status.textContent = t || ""; };
 
@@ -44,6 +46,7 @@ export function registerLatexModule() {
         try {
           await latexApi("file", { method: "PUT", body: { path: current, content: editor.value } });
           dirty = false;
+          persistence.removeItem("pipaper.latexDraft." + current);
           fileLabel.textContent = current;
           setStatus("已保存 ✓");
           refreshTree();
@@ -73,12 +76,17 @@ export function registerLatexModule() {
       }
 
       async function openFile(rel) {
+        const ticket = ++openSequence;
         try {
           const r = await latexApi("file?path=" + encodeURIComponent(rel));
+          if (!alive || ticket !== openSequence) return;
           editor.value = r.content;
           current = rel; dirty = false;
-          fileLabel.textContent = rel;
-          setStatus(`${rel.split(".").pop().toUpperCase()} · ${r.content.split("\n").length} 行`);
+          persistence.setItem("pipaper.workspace.latexFile", rel);
+          const draft = persistence.getItem("pipaper.latexDraft." + rel);
+          if (draft != null) { editor.value = draft; dirty = true; }
+          fileLabel.textContent = rel + (dirty ? " ●" : "");
+          setStatus(dirty ? "已恢复未保存草稿" : `${rel.split(".").pop().toUpperCase()} · ${r.content.split("\n").length} 行`);
           editor.focus();
         } catch (e) { toast("打开失败: " + e.message, true); }
       }
@@ -113,6 +121,7 @@ export function registerLatexModule() {
       }
 
       editor.addEventListener("input", () => {
+        if (current) persistence.setItem("pipaper.latexDraft." + current, editor.value);
         if (!dirty) { dirty = true; fileLabel.textContent = (current || "") + " ●"; }
       });
       editor.addEventListener("keydown", (e) => {
@@ -129,6 +138,8 @@ export function registerLatexModule() {
       rootEl = el("div", { class: "latex-mod" }, toolbar, main, logBox);
       body.append(rootEl);
       refreshTree();
+      const previous = persistence.getItem("pipaper.workspace.latexFile");
+      if (previous) void openFile(previous);
       window.dispatchEvent(new Event("resize"));
     },
     unmount() {

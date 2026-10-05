@@ -18,7 +18,7 @@ import { initClipboard } from "./clipPanel.js";
 import { initSetupPanel } from "./setupPanel.js";
 import { initArtifacts } from "./artifacts.js";
 import { registerBuiltinModules } from "./modules.js";
-import { registerNoteModules, initNotesManage } from "./notesPanel.js";
+import { registerNoteModules } from "./notesPanel.js";
 import { registerLatexModule } from "./latexEditor.js";
 import { registerMdEditorModule } from "./mdEditor.js";
 import { initDock } from "./dock.js";
@@ -230,7 +230,7 @@ async function boot() {
   window.__bootStage = "modules";
   try { registerLatexModule(); } catch (e) { window.__initErrors.push("registerLatexModule: " + (e.message||e)); }
   try { registerMdEditorModule(); } catch (e) { window.__initErrors.push("registerMdEditorModule: " + (e.message||e)); }
-  try { registerBuiltinModules(); registerNoteModules(); initNotesManage(); } catch (e) { window.__initErrors.push("initModules: " + (e.message||e)); }
+  try { registerBuiltinModules(); registerNoteModules(); } catch (e) { window.__initErrors.push("initModules: " + (e.message||e)); }
   window.__bootStage = "dock"; try { initDock(); } catch (e) { window.__initErrors.push("initDock: " + (e.message||e)); }
   try { initSettings(); } catch (e) { window.__initErrors.push("initSettings: " + (e.message||e)); }
   try { initSetupPanel(); } catch (e) { window.__initErrors.push("initSetupPanel: " + (e.message||e)); }

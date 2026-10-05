@@ -106,6 +106,7 @@ function updateProjectBar() {
   const proj = state.projects.find((x) => x.id === state.projectId);
   const btn = $("#btn-open-zotero");
   if (btn) btn.hidden = proj?.type !== "zotero";
+  window.dispatchEvent(new Event("pipaper:project-changed"));
 }
 
 export async function switchProject(id) {

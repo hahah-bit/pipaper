@@ -1,20 +1,83 @@
 import { persistence } from "./persistence.js";
 import { api, state, $, el, toast, updateZoteroFoot } from "./app.js";
 import { reloadPapers } from "./sidebar.js";
-import { openSetup } from "./setupPanel.js";
+import { refreshSetup } from "./setupPanel.js";
+import { loadResources } from "./resources.js";
+
+const loadedSections = new Set();
+let settingsReturnFocus;
+function settingsVisibility() {
+  window.dispatchEvent(new Event("pipaper:settings-visibility"));
+}
+export function closeSettings() {
+  $("#modal-backdrop").hidden = true;
+  $("#app").inert = false;
+  settingsReturnFocus?.focus?.();
+  settingsVisibility();
+}
+async function selectSection(section) {
+  const selected = [
+    "general",
+    "knowledge",
+    "resources",
+    "diagnostics",
+  ].includes(section)
+    ? section
+    : "general";
+  for (const button of $("#settings-tabs").querySelectorAll("button")) {
+    const active = button.dataset.section === selected;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+    button.setAttribute("aria-controls", "settings-" + button.dataset.section);
+  }
+  for (const key of ["general", "knowledge", "resources", "diagnostics"])
+    $("#settings-" + key).hidden = key !== selected;
+  $("#settings-general-foot").hidden = selected !== "general";
+  if (selected === "diagnostics") await refreshSetup();
+  if (!loadedSections.has(selected)) {
+    if (selected === "resources") await loadResources();
+    if (selected === "knowledge") await loadKnowledgeSettings();
+    loadedSections.add(selected);
+  }
+}
 
 export function initSettings() {
   const backdrop = $("#modal-backdrop");
-  $("#btn-settings-close").addEventListener("click", () => (backdrop.hidden = true));
+  $("#btn-settings-close").addEventListener("click", closeSettings);
   backdrop.addEventListener("click", (e) => {
-    if (e.target === backdrop) backdrop.hidden = true;
+    if (e.target === backdrop) closeSettings();
   });
   $("#btn-settings-save").addEventListener("click", saveSettings);
   $("#btn-zotero-sync").addEventListener("click", syncZotero);
-  $("#cfg-font-size").addEventListener("change", () => applyFontSize($("#cfg-font-size").value, true));
-  $("#btn-open-setup").addEventListener("click", () => {
-    backdrop.hidden = true;
-    openSetup();
+  $("#cfg-font-size").addEventListener("change", () =>
+    applyFontSize($("#cfg-font-size").value, true),
+  );
+  $("#btn-open-setup").addEventListener("click", () =>
+    selectSection("diagnostics"),
+  );
+  for (const button of $("#settings-tabs").querySelectorAll("button"))
+    button.onclick = () =>
+      selectSection(button.dataset.section).catch((e) =>
+        toast(e.message, true),
+      );
+  // Move the actual controls once; all existing handlers, inputs and scope state survive.
+  $("#settings-resources").append(
+    el("div", { class: "settings-scope" }, "技能与扩展 ", $("#res-proj-name")),
+    $("#resources-backdrop .res-tabs"),
+    $("#res-body"),
+  );
+  $("#settings-diagnostics").append(
+    $("#setup-modal .modal-body"),
+    $("#setup-modal .modal-foot"),
+  );
+  document.addEventListener("keydown", (event) => {
+    if (
+      event.key === "Escape" &&
+      !backdrop.hidden &&
+      !document.querySelector("dialog[open]")
+    )
+      closeSettings();
   });
 }
 
@@ -24,17 +87,38 @@ export function applyFontSize(size, persist = false) {
   const value = valid.includes(size) ? size : "cozy";
   document.documentElement.dataset.fs = value;
   if (persist) {
-    try { persistence.setItem("pipaper.fontSize", value); } catch {}
-    toast("界面字号：" + { compact: "紧凑", cozy: "标准", large: "大", xlarge: "特大" }[value]);
+    try {
+      persistence.setItem("pipaper.fontSize", value);
+    } catch {}
+    toast(
+      "界面字号：" +
+        { compact: "紧凑", cozy: "标准", large: "大", xlarge: "特大" }[value],
+    );
   }
 }
 
-export async function openSettings() {
+export async function openSettings(section = "general") {
   const backdrop = $("#modal-backdrop");
+  const opening = backdrop.hidden;
+  if (opening) settingsReturnFocus = document.activeElement;
   backdrop.hidden = false;
-  $("#cfg-font-size").value = (() => { try { return persistence.getItem("pipaper.fontSize") || "cozy"; } catch { return "cozy"; } })();
+  $("#app").inert = true;
+  settingsVisibility();
+  const selecting = selectSection(section).catch((e) => toast(e.message, true));
+  if (!opening) return selecting;
+  $("#settings-tabs .active").focus();
+  $("#cfg-font-size").value = (() => {
+    try {
+      return persistence.getItem("pipaper.fontSize") || "cozy";
+    } catch {
+      return "cozy";
+    }
+  })();
   try {
-    const [cfgRes, srcRes] = await Promise.all([api.getConfig(), api.searchSources()]);
+    const [cfgRes, srcRes] = await Promise.all([
+      api.getConfig(),
+      api.searchSources(),
+    ]);
     const { config, zotero } = cfgRes;
     $("#cfg-zotero-dir").value = config.zotero?.dataDir || "";
     $("#cfg-mineru-mode").value = config.parse?.mineru?.mode || "off";
@@ -45,7 +129,9 @@ export async function openSettings() {
     $("#cfg-uns-url").value = config.parse?.unstructured?.url || "";
     // 检索源密钥：接口返回的是打码值；用户不改动则原样回传（服务端还原）
     const s2 = (srcRes.sources || []).find((s) => s.id === "semanticscholar");
-    const scholar = (srcRes.sources || []).find((s) => s.type === "scholar-mirror");
+    const scholar = (srcRes.sources || []).find(
+      (s) => s.type === "scholar-mirror",
+    );
     $("#cfg-s2-key").value = s2?.apiKey || "";
     $("#cfg-scholar-cookie").value = scholar?.cookie || "";
     $("#zotero-sync-status").textContent = zotero?.syncedAt
@@ -54,6 +140,107 @@ export async function openSettings() {
   } catch (e) {
     toast("读取配置失败: " + e.message, true);
   }
+  await selecting;
+}
+
+async function loadKnowledgeSettings() {
+  const container = $("#settings-knowledge");
+  const response = await fetch("/api/rag/config"),
+    data = await response.json();
+  if (!response.ok) throw new Error(data.error);
+  const config = data.config,
+    fields = {};
+  const field = (label, key, value, type = "text") => {
+    const input = el("input", { type, "aria-label": label });
+    input.value = value;
+    fields[key] = input;
+    return el("label", {}, label, input);
+  };
+  const expansion = el("input", {
+    type: "checkbox",
+    checked: config.expansion,
+  });
+  const advanced = el("textarea", {
+    rows: 9,
+    "aria-label": "知识库高级配置",
+    spellcheck: "false",
+  });
+  advanced.value = JSON.stringify(
+    {
+      vision: config.vision,
+      expansionModel: config.expansionModel,
+      chunk: config.chunk,
+    },
+    null,
+    2,
+  );
+  const status = el("p", { class: "res-note", role: "status" });
+  const save = el(
+    "button",
+    {
+      class: "tool-btn primary",
+      onclick: async () => {
+        save.disabled = true;
+        try {
+          const next = {
+            ...config,
+            ...JSON.parse(advanced.value),
+            expansion: expansion.checked,
+            embedding: {
+              ...config.embedding,
+              url: fields.url.value.trim(),
+              model: fields.model.value.trim(),
+              dimension: Number(fields.dimension.value),
+            },
+            milvus: {
+              ...config.milvus,
+              address: fields.address.value.trim(),
+              collectionPrefix: fields.prefix.value.trim(),
+            },
+          };
+          const result = await fetch("/api/rag/config", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(next),
+          });
+          const saved = await result.json();
+          if (!result.ok) throw new Error(saved.error);
+          status.textContent =
+            "已保存。下次处理将采用新配置；已有证据保留原版本。";
+        } catch (error) {
+          status.textContent = "保存失败：" + error.message;
+        } finally {
+          save.disabled = false;
+        }
+      },
+    },
+    "保存知识库设置",
+  );
+  container.replaceChildren(
+    el("h4", {}, "Embedding"),
+    el(
+      "p",
+      { class: "res-note" },
+      data.embeddingConfigured
+        ? "服务端凭据已配置"
+        : "服务端尚未配置 Embedding 凭据",
+    ),
+    field("模型", "model", config.embedding.model),
+    field("向量维度", "dimension", config.embedding.dimension, "number"),
+    field("接口地址", "url", config.embedding.url),
+    el("h4", {}, "向量库"),
+    field("Milvus 地址", "address", config.milvus.address),
+    field("集合前缀", "prefix", config.milvus.collectionPrefix),
+    el("label", { class: "settings-check" }, expansion, "启用背景与问题扩写"),
+    el(
+      "details",
+      {},
+      el("summary", {}, "高级配置：视觉模型、扩写模型与分块"),
+      advanced,
+    ),
+    status,
+    save,
+  );
 }
 
 async function saveSettings() {
@@ -109,7 +296,9 @@ async function syncZotero() {
   msg.textContent = "同步中…（复制 zotero.sqlite 快照并读取）";
   try {
     // save dataDir first so sync uses it
-    await api.saveConfig({ zotero: { dataDir: $("#cfg-zotero-dir").value.trim() } });
+    await api.saveConfig({
+      zotero: { dataDir: $("#cfg-zotero-dir").value.trim() },
+    });
     await reloadPapers(true);
     msg.textContent = `同步完成 ✓ ${state.zotero?.papers || 0} 篇`;
     toast("Zotero 库已同步");
