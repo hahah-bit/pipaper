@@ -1,10 +1,11 @@
 import { persistence } from "./persistence.js";
-import { $, el, toast } from "./app.js";
+import { $, el, toast } from "./platform/dom.js";
 import { getModule, registerModule, reparentModule } from "./modules.js";
 import { figureDrawerModule } from "./figurePanel.js";
 import { openSettings } from "./settings.js";
 import { archifyModule } from "./archifyPanel.js";
-import { storageModule, knowledgeModule } from "./storagePanel.js";
+import { storageModule } from "./storagePanel.js";
+import { knowledgeModule } from "./features/retrieval/panel.js";
 import { DockviewComponent, themeAbyss } from "dockview-core";
 import { dockIcon } from "./dockIcons.js";
 import {

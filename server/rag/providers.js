@@ -6,7 +6,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { getConfig, DATA_DIR } from "../config.js";
 import { digest, readState, writeState, fault } from "../storage/catalog.js";
-import { parseModelJson } from "../study-flow.js";
+import { parseModelJson } from "../platform/ai/json.js";
+import { completeText } from "../platform/ai/gateway.js";
 
 export const waiting = (message) =>
   Object.assign(fault(message, 503), { waitingConfiguration: true });
@@ -135,59 +136,18 @@ export async function modelJson({
       errors.push(`${selected.provider}/${selected.id} 未配置或无图片输入能力`);
       continue;
     }
-    const content = [
-      { type: "text", text },
-      ...images.map((i) => ({
-        type: "image",
-        data: i.data,
-        mimeType: i.mimeType,
-      })),
-    ];
-    const messages = [{ role: "user", content, timestamp: Date.now() }];
     try {
-      let output = "",
-        final;
-      const stream = runtime.streamSimple(
-        model,
-        {
-          systemPrompt:
-            system +
-            "\n只返回一个完整 JSON 对象，LaTeX 反斜杠必须按 JSON 转义。不确定的文字或数值禁止猜测，标记 uncertain=true。",
-          messages,
-        },
-        {
-          signal: AbortSignal.any([
-            signal || new AbortController().signal,
-            AbortSignal.timeout(timeoutMs),
-          ]),
-          maxTokens: Math.min(maxTokens, model.maxTokens || 10000),
-          onPayload: (payload) =>
-            model.provider === "deepseek"
-              ? { ...payload, response_format: { type: "json_object" } }
-              : payload,
-        },
-      );
-      for await (const event of stream) {
-        if (event.type === "text_delta") output += event.delta;
-        if (event.type === "done") final = event.message;
-        if (event.type === "error")
-          throw new Error(event.error?.errorMessage || "模型调用失败");
-      }
-      signal?.throwIfAborted();
-      output ||=
-        final?.content
-          ?.filter((p) => p.type === "text")
-          .map((p) => p.text)
-          .join("") || "";
-      if (final?.stopReason === "length") throw new Error("模型 JSON 被截断");
-      const value = parseModelJson(output);
+      const result = await completeText({ runtime, model, text, images, signal, timeoutMs, maxTokens, structured: true, contentFormat: "parts",
+        system: system + "\n只返回一个完整 JSON 对象，LaTeX 反斜杠必须按 JSON 转义。不确定的文字或数值禁止猜测，标记 uncertain=true。",
+        lengthMessage: "模型 JSON 被截断" });
+      const value = parseModelJson(result.text);
       if (images.length)
         writeState(
           "vision-verified:" +
             digest([model.provider, model.id, model.baseUrl]),
           { model: selected, verifiedAt: new Date().toISOString() },
         );
-      return { value, model: selected, usage: final?.usage };
+      return { value, model: selected, usage: result.usage };
     } catch (e) {
       signal?.throwIfAborted();
       if (e.modelDiagnostics) diagnostics = e.modelDiagnostics;

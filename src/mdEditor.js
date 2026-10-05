@@ -1,6 +1,8 @@
-import { api, state, el, toast, askText } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { el, toast, askText } from "./platform/dom.js";
 import { registerModule } from "./modules.js";
-import { renderMd } from "./chat.js";
+import { renderMd } from "./platform/markdown.js";
 import { runTempPrompt, removeTempSession } from "./tempSession.js";
 import { diffLines } from "diff";
 import { persistence } from "./persistence.js";

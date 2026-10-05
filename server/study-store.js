@@ -1,3 +1,6 @@
+import { createTaskRepository } from "./platform/storage/task-repository.js";
+import { inside } from "./platform/files/managed-paths.js";
+export { inside } from "./platform/files/managed-paths.js";
 import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile } from "./storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -16,33 +19,9 @@ export function taskDir(id) {
   if (!/^study_[a-f0-9-]{36}$/.test(id || "")) throw fault("无效的研读任务 ID");
   return path.join(STUDIES_DIR, id);
 }
-export function inside(root, relative) {
-  const file = path.resolve(root, String(relative));
-  const rel = path.relative(path.resolve(root), file);
-  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) throw fault("路径越界");
-  // Refuse linked ancestors as well as lexical traversal.
-  let cursor = file;
-  while (cursor !== path.resolve(root)) {
-    if (fs.existsSync(cursor) && fs.lstatSync(cursor).isSymbolicLink()) throw fault("不支持符号链接");
-    cursor = path.dirname(cursor);
-  }
-  return file;
-}
-export function readTask(id) {
-  try {
-    const file = path.join(taskDir(id), "task.json");
-    if (!fs.existsSync(file)) throw Object.assign(new Error("研读任务不存在"), { code: "ENOENT" });
-    return readJsonState(file, null);
-  }
-  catch (e) { if (e.code === "ENOENT") throw fault("研读任务不存在", 404); throw e; }
-}
-export function saveTask(task) {
-  task.revision = (task.revision || 0) + 1;
-  task.updatedAt = new Date().toISOString();
-  atomicJson(path.join(taskDir(task.id), "task.json"), task);
-  registerFile(taskDir(task.id), { id: "study:" + task.id, kind: "study", title: task.title, metadata: task });
-  return task;
-}
+const repository = createTaskRepository({ directoryFor: taskDir, kind: "study", missingMessage: "研读任务不存在" });
+export const readTask = id => repository.read(id);
+export const saveTask = task => repository.save(task);
 export function listTasks() {
   if (!fs.existsSync(STUDIES_DIR)) return [];
   return fs.readdirSync(STUDIES_DIR).filter(id => /^study_[a-f0-9-]{36}$/.test(id)).flatMap(id => {

@@ -1,4 +1,4 @@
-import { node, button, markdown, dialog } from "../study/ui.js";
+import { node, button, markdown, dialog } from "../platform/ui.js";
 import { trendChart, radarChart } from "./charts.js";
 
 export function link(label, url, className = "source-link") {

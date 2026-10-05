@@ -1,3 +1,4 @@
+import { beforeSessionPrompt, sessionReplaced } from "./platform/ai/session-scopes.js";
 import { trashPath, registerFile } from "./storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -18,6 +19,15 @@ import { isActive, resource, dependencies } from "./storage/catalog.js";
 const chats = new Map();
 const opening = new Map();
 const error = (text, status = 400) => Object.assign(new Error(text), { status });
+
+export async function closeSessions() {
+  await Promise.allSettled(opening.values());
+  await Promise.allSettled([...chats.values()].map(async controller => {
+    await controller.abort();
+    await controller.dispose();
+    chats.delete(controller.id);
+  }));
+}
 
 function diagnostics(loader) {
   return [
@@ -69,7 +79,7 @@ async function makeController(sm, meta) {
       const saved = sessionMeta(newId);
       controller.meta = saved ? { ...saved } : { ...controller.meta };
       setSessionMeta(newId, controller.meta);
-      if (controller.meta.studyId) await (await import("./studies.js")).replaceStudySession(controller.meta.studyId, oldId, newId);
+      await sessionReplaced(controller, oldId, newId);
     },
     beforeSwitch: async (file, controller) => {
       const info = (await SessionManager.list(APP_ROOT)).find(x => path.resolve(x.path) === path.resolve(file));
@@ -161,10 +171,7 @@ export async function promptChat(id, body, controlId) {
   if (c.meta.studyRole === "guide") throw error("引导会话请使用研读接口", 409);
   if (c.meta.studyId && /^[!/]/.test(String(body.text || "").trim())) throw error("研读问答只接受论文问题，不执行会话切换或系统命令", 409);
   await updateBinding(c, body);
-  if (c.meta.studyId) {
-    const context = await (await import("./studies.js")).studyContextForSession(c.meta);
-    await c.session.sendCustomMessage({ customType: "study_context", content: context, display: false });
-  }
+  await beforeSessionPrompt(c, body);
   if (!c.session.sessionName && body.text) c.session.setSessionName(body.text.slice(0, 60));
   setSessionMeta(c.id, { updatedAt: new Date().toISOString() });
   return { ok: true, operationId: c.submit(body.text || "", body.images).id };

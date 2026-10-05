@@ -60,17 +60,7 @@ export function makeCheckpoints(doc) {
 export function sourcesText(blocks) {
   return blocks.map(b => `[${b.id} | p.${b.page} | ${b.type}]\n${blockText(b)}${b.caption && b.caption !== blockText(b) ? "\n图注：" + b.caption : ""}`).join("\n\n");
 }
-export function parseModelJson(text) {
-  const input = String(text).trim();
-  const fence = input.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
-  const cleaned = fence ? fence[1].trim() : input;
-  let reason = "期望 JSON 对象";
-  try { const result = JSON.parse(cleaned); if (result && typeof result === "object" && !Array.isArray(result)) return result; }
-  catch (error) { reason = error.message; }
-  throw Object.assign(fault("模型未返回有效结构化结果，请重试；进度未推进", 422), {
-    modelDiagnostics: { reason, output: String(text) },
-  });
-}
+export { parseModelJson } from "./platform/ai/json.js";
 export function validateLesson(raw, checkpoint, doc, goalType) {
   const valid = new Set(doc.blocks.map(b => b.id));
   const permitted = new Set(checkpoint.blockIds);

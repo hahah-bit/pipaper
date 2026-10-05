@@ -159,34 +159,44 @@ Pi 对话可通过 `search_knowledge` 和 `get_knowledge_element` 使用相同�
 
 ```text
 server/
+  application.js        创建 HTTP 应用、装配路由，供启动与隔离测试复用
+  bootstrap/            启动、迁移、恢复、退出
+  modules/              文献、学术检索、写作文件、媒体、摘录与设置路由
+  platform/
+    ai/                 公共模型网关、JSON 解码与业务会话适配器
+    academic/           代理、传输、来源元数据与 arXiv 节流
+    jobs/               运行器执行权、去重、取消与安全释放
+    storage/ files/     任务仓储投影与受管路径工具
   storage/              SQLite 清单、版本、文件操作、迁移、维护与状态 API
-  rag/                  清洗、元素关联、分块、扩写、向量、检索、重排与翻译
-  parser/               PDF 解析、结构化文档、证据与解析版本
-  search/               外部学术检索与 ReadScore
-  native-harness.js     Pi 会话与业务资源绑定
-  session-controller.js 运行时、控制权与连接生命周期
-  session-routes.js     会话、SSE、队列、工具与导出
+  rag/ parser/ search/  入库检索、解析版本与论文排序规则
+  native-harness.js     Pi 会话控制与已注册业务上下文
+  studies.js topics/    研读检查点与选题业务流程（保留兼容入口）
 src/
-  dock.js taskWorkspace.js workspaceNavigation.js  导航、视图与布局迁移
-  storagePanel.js       资源、任务、核对与回收站
-  knowledge*.js         知识检索、证据展示与选区操作
-  chat.js chatTurns.js   对话与执行记录
-  themeTokens.js        共用主题与跨页同步
+  app.js                启动装配及跨功能回调
+  platform/             HTTP、DOM、Markdown、公共 UI、存储客户端
+  features/
+    chat/ library/      对话与文献状态、附件及欢迎页
+    retrieval/          独立知识检索面板
+  shell/                旧面板使用的状态兼容投影
+  dock.js taskWorkspace.js workspaceNavigation.js  导航与布局迁移
   study/ topics/        独立研读与选题页面
-shared/                 服务端与前端共用的知识内容处理
+shared/
+  contracts/            状态常量与资源、任务、引用、工作区类型声明
+  document/             前后端共用的纯文档处理
 public/                 页面、共用样式与构建产物
-scripts/                构建、迁移与隔离验收脚本
-tests/                  自动测试与检索评测夹具
-docs/                   设计、操作与验证说明
+scripts/ tests/ docs/   工程检查、测试与设计说明
 data/ library/ knowledge/  默认运行数据、文献与知识成果
 ```
 
 ## 开发与验证
 
 ```bash
+npm run check
 npm test
 npm run build
 ```
+
+`npm run check` 检查 JavaScript 语法、前端循环依赖、启动入口反向导入和平台层业务依赖。GitHub CI 在 Windows 与 Linux 的 Node 24 环境执行检查、测试与构建。共享类型声明是逐步类型化的入口，目前未对全仓启用 TypeScript 类型检查。
 
 自动测试覆盖存储与版本、生命周期、任务恢复、解析、元素关联、分块、检索时间策略、引用核对、选区翻译、Pi 会话和前端状态。真实 Milvus 测试需先启动本地服务，再显式启用：
 
@@ -208,6 +218,7 @@ node --use-system-ca scripts/retrieval-evaluate.mjs
 
 ## 文档
 
+- [当前架构与开发约定](docs/architecture.md)：模块职责、兼容入口、本轮重构与后续边界
 - [统一存储与多模态知识库](docs/storage-rag.md)：部署、凭据、迁移、版本、生命周期与 API
 - [Self-RAG 检索](docs/self-rag-retrieval.md)：召回、重排、反思、日期、证据、翻译与扩展接口
 - [工作区导航与前端状态](docs/workspace-navigation.md)：入口分工、主题、草稿与旧布局迁移

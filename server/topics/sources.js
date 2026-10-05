@@ -1,86 +1,16 @@
-import https from "node:https";
-import dns from "node:dns/promises";
-import net from "node:net";
-import { setTimeout as delay } from "node:timers/promises";
-import { DOMParser } from "@xmldom/xmldom";
+import { scheduleArxiv } from "../platform/academic/arxiv-rate.js";
+import { normalizeWork, parseArxivFeed } from "../platform/academic/metadata.js";
 import { getConfig } from "../config.js";
 import { fault } from "./store.js";
-import { withDeadline } from "./deadline.js";
-import { proxyFor, proxyDNSHosts, tunnelAgent, createResilientRequest, decodeResponse } from "./network.js";
+import { createResilientRequest } from "../platform/academic/network.js";
+import { remote, safeURL, privateAddress } from "../platform/academic/transport.js";
+export { remote, safeURL, privateAddress } from "../platform/academic/transport.js";
 
-export function safeURL(value) {
-  try { const u = new URL(String(value)); if (u.protocol !== "https:" || u.username || u.password || (u.port && u.port !== "443")) return null; return u.href; } catch { return null; }
-}
-export function privateAddress(address) {
-  const a = address.toLowerCase();
-  if (net.isIP(a) === 4) return /^(0|10|127|169\.254|172\.(1[6-9]|2\d|3[01])|192\.168|192\.0\.0|198\.(1[89])|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7]))\./.test(a) || Number(a.split(".")[0]) >= 224;
-  // Use public IPv4 DNS answers for document retrieval; IPv6 literals are rejected.
-  return true;
-}
-export async function remote(url, options = {}) {
-  return withDeadline(signal => remoteRequest(url, { ...options, signal }), {
-    signal: options.signal, ms: options.timeoutMs || 35000, message: `${new URL(url).hostname} 请求超时（含 DNS、连接和下载）`,
-  });
-}
-async function remoteRequest(url, { signal, maxBytes = 18000000, redirects = 0, method = "GET" } = {}) {
-  const clean = safeURL(url); if (!clean || redirects > 4) throw fault("仅支持公开 HTTPS 来源，或重定向过多");
-  signal?.throwIfAborted(); const u = new URL(clean);
-  const addresses = net.isIP(u.hostname) ? [{ address: u.hostname, family: 4 }] : await dns.lookup(u.hostname, { all: true, family: 4 });
-  signal?.throwIfAborted();
-  if (!addresses.length || addresses.some(a => privateAddress(a.address))) throw fault("资料来源不能指向本机或内部网络");
-  const proxy = proxyFor(clean), agent = proxy ? tunnelAgent(proxy, proxyDNSHosts.has(u.hostname) ? u.hostname : addresses[0].address, signal) : null;
-  // Direct connections can try every validated IPv4 address instead of pinning
-  // the first failing address forever. Redirects receive the same validation.
-  let result;
-  try { result = await new Promise((resolve, reject) => {
-    const req = https.request(u, { method, signal, ...(agent ? { agent } : { autoSelectFamily: true, autoSelectFamilyAttemptTimeout: 1500 }),
-      lookup: (_host, options, callback) => options.all ? callback(null, addresses) : callback(null, addresses[0].address, 4),
-      headers: { "User-Agent": "PiPaper-TopicAnalysis/1.0", Accept: "*/*", "Accept-Encoding": "gzip, deflate, br" } }, res => {
-      if ([301, 302, 303, 307, 308].includes(res.statusCode)) { res.resume(); resolve({ redirect: new URL(res.headers.location, u).href }); return; }
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        const error = fault(`${u.hostname} 返回 HTTP ${res.statusCode}`, 502);
-        error.remoteStatus = res.statusCode;
-        error.retryAfter = Number(res.headers["retry-after"] || res.headers["x-ratelimit-reset"] || 0);
-        const chunks = []; let size = 0;
-        res.on("data", c => { if ((size += c.length) < 8000) chunks.push(c); });
-        res.on("end", async () => {
-          try { const data = JSON.parse((await decodeResponse(Buffer.concat(chunks), res.headers["content-encoding"], 8000)).toString()); if (data.dailyRemainingUsd != null) { error.quota = true; error.retryAfter ||= Number(data.retryAfter || 0); error.message += "（当日匿名/账号配额已用尽，已暂停该来源；不代表零篇论文）"; } } catch {}
-          reject(error);
-        }); res.on("error", reject); return;
-      }
-      const chunks = []; let bytes = 0;
-      res.on("data", c => { bytes += c.length; if (bytes > maxBytes) res.destroy(fault("资料超过大小上限")); else chunks.push(c); });
-      res.on("end", async () => {
-        try {
-          const buffer = method === "HEAD" ? Buffer.alloc(0) : await decodeResponse(Buffer.concat(chunks), res.headers["content-encoding"], maxBytes);
-          signal?.throwIfAborted(); resolve({ url: clean, buffer, contentType: String(res.headers["content-type"] || "") });
-        } catch (e) { reject(e); }
-      }); res.on("error", reject);
-    }); req.on("error", reject); req.end();
-  }); } finally { agent?.destroy(); }
-  return result.redirect ? remoteRequest(result.redirect, { signal, maxBytes, redirects: redirects + 1, method }) : result;
-}
 export function years(now = new Date()) {
   const y = now.getUTCFullYear(); const cutoff = new Date(now); cutoff.setUTCFullYear(y - 3);
   return { complete: [y - 3, y - 2, y - 1], partial: y, from: `${y - 3}-01-01`, to: now.toISOString().slice(0, 10), baselineFrom: cutoff.toISOString().slice(0, 10) };
 }
-export function normalizeWork(w) {
-  const pos = [];
-  for (const [word, indexes] of Object.entries(w.abstract_inverted_index || {})) for (const i of indexes) if (i < 18000) pos[i] = word;
-  const locations = w.locations || [w.primary_location].filter(Boolean);
-  const published = locations.find(l => l.source && ["journal", "conference"].includes(l.source.type) && (l.version === "publishedVersion" || l.is_published)) || w.primary_location;
-  const source = published?.source;
-  return { id: w.id, title: w.title || w.display_name, date: w.publication_date, year: w.publication_year,
-    citations: w.cited_by_count ?? 0, doi: w.doi || null, url: w.doi || w.id,
-    pdf: safeURL(w.best_oa_location?.pdf_url) || null, landing: safeURL(w.best_oa_location?.landing_page_url),
-    abstract: pos.filter(Boolean).join(" "), keywords: (w.keywords || []).map(k => k.display_name),
-    topics: (w.topics || []).map(t => ({ id: t.id, name: t.display_name })), references: w.referenced_works || [],
-    venue: source ? { id: source.id, name: source.display_name, type: source.type, issns: source.issn || [] } : null,
-    publicationUrls: [...new Set(locations.flatMap(l => [safeURL(l.landing_page_url), safeURL(l.pdf_url)]).filter(Boolean))],
-    bibliographic: { volume: w.biblio?.volume, issue: w.biblio?.issue, firstPage: w.biblio?.first_page, lastPage: w.biblio?.last_page },
-    source: "OpenAlex", type: w.type, paperOpenAccess: w.open_access?.is_oa === true };
-}
-let arxivQueue = Promise.resolve(), nextArxiv = 0;
+export { normalizeWork } from "../platform/academic/metadata.js";
 export function arxivExpression(query) {
   const tokens = String(query).match(/"[^"]+"|\(|\)|\bANDNOT\b|\bAND\b|\bOR\b|[^\s()]+/g) || [];
   const out = []; let operand = false;
@@ -120,27 +50,17 @@ export function createSources({ request = remote, now = () => new Date() } = {})
   const groups = (query, group, filter, signal) => openalex("works", { search: query, group_by: group, per_page: 200, filter: [`from_publication_date:${years(now()).from}`, `to_publication_date:${years(now()).to}`, filter].filter(Boolean).join(",") }, signal);
   async function arxiv(query, signal) {
     // The public API asks clients to leave at least three seconds between requests.
-    const job = arxivQueue.catch(() => {}).then(async () => {
-      await delay(Math.max(0, nextArxiv - Date.now()), null, { signal }); nextArxiv = Date.now() + 3100;
+    const job = scheduleArxiv(async () => {
       const u = new URL("https://export.arxiv.org/api/query");
       u.searchParams.set("search_query", `(${arxivExpression(query)}) AND submittedDate:[${years(now()).baselineFrom.replaceAll("-", "")}0000 TO ${years(now()).to.replaceAll("-", "")}2359]`);
       u.searchParams.set("sortBy", "submittedDate"); u.searchParams.set("sortOrder", "descending"); u.searchParams.set("max_results", "25");
       // arXiv's gateway rejects some form-encoded phrase/date expressions (406).
       // Use URI-encoded spaces, preserving literal '+' as URLSearchParams' %2B.
       const sourceUrl = u.href.replaceAll("+", "%20");
-      const r = await request(sourceUrl, { signal }), doc = new DOMParser().parseFromString(r.buffer.toString("utf8"), "text/xml");
-      if (doc.documentElement?.localName !== "feed" || doc.documentElement?.namespaceURI !== "http://www.w3.org/2005/Atom") throw fault("arXiv 未返回有效 Atom 检索结果，不能视为零篇", 502);
-      const value = (e, tag) => e.getElementsByTagName(tag)[0]?.textContent?.trim() || "";
-      const errorEntry = Array.from(doc.getElementsByTagName("entry")).find(e => /arxiv\.org\/api\/errors/.test(value(e, "id")));
-      if (errorEntry) throw fault(`arXiv 查询失败：${value(errorEntry, "summary").slice(0, 300)}`, 502);
-      const papers = Array.from(doc.getElementsByTagName("entry")).map(e => {
-        const id = value(e, "id").replace(/^http:/, "https:");
-        return { id, source: "arXiv", title: value(e, "title").replace(/\s+/g, " "), abstract: value(e, "summary"), date: value(e, "published").slice(0, 10), year: Number(value(e, "published").slice(0, 4)),
-          url: id, pdf: id.replace("/abs/", "/pdf/"), citations: null, doi: value(e, "arxiv:doi") ? `https://doi.org/${value(e, "arxiv:doi")}` : null,
-          keywords: Array.from(e.getElementsByTagName("category")).map(c => c.getAttribute("term")), references: [], venue: null, paperOpenAccess: true };
-      }).filter(p => /arxiv\.org\/abs\//.test(p.id));
+      const r = await request(sourceUrl, { signal });
+      const papers = parseArxivFeed(r.buffer.toString("utf8"));
       return { papers, sourceUrl, retrievedAt: now().toISOString() };
-    }); arxivQueue = job; return job;
+    }, signal); return job;
   }
   const crossref = async (query, { signal, limit = 40, doi } = {}) => {
     const u = new URL(doi ? `https://api.crossref.org/works/${encodeURIComponent(doi.replace(/^https?:\/\/(?:dx\.)?doi.org\//, ""))}` : "https://api.crossref.org/works");

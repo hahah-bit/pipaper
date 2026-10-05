@@ -1,5 +1,5 @@
-import { el } from "./app.js";
-import { renderMd } from "./chat.js";
+import { el } from "./platform/dom.js";
+import { renderMd } from "./platform/markdown.js";
 import { formulaIsInline, knowledgeSegments } from "../shared/knowledge-content.js";
 
 export function renderKnowledgeSnippet(parts, container, metadata, selection, findElement) {

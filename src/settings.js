@@ -1,8 +1,9 @@
 import { persistence } from "./persistence.js";
-import { api, state, $, el, toast, updateZoteroFoot } from "./app.js";
-import { reloadPapers } from "./sidebar.js";
-import { refreshSetup } from "./setupPanel.js";
-import { loadResources } from "./resources.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast } from "./platform/dom.js";
+import { updateZoteroFoot } from "./features/library/status.js";
+let settingsBindings;
 
 const loadedSections = new Set();
 let settingsReturnFocus;
@@ -34,15 +35,16 @@ async function selectSection(section) {
   for (const key of ["general", "knowledge", "resources", "diagnostics"])
     $("#settings-" + key).hidden = key !== selected;
   $("#settings-general-foot").hidden = selected !== "general";
-  if (selected === "diagnostics") await refreshSetup();
+  if (selected === "diagnostics") await settingsBindings.refreshDiagnostics();
   if (!loadedSections.has(selected)) {
-    if (selected === "resources") await loadResources();
+    if (selected === "resources") await settingsBindings.refreshResources();
     if (selected === "knowledge") await loadKnowledgeSettings();
     loadedSections.add(selected);
   }
 }
 
-export function initSettings() {
+export function initSettings(bindings) {
+  settingsBindings = bindings;
   const backdrop = $("#modal-backdrop");
   $("#btn-settings-close").addEventListener("click", closeSettings);
   backdrop.addEventListener("click", (e) => {
@@ -349,7 +351,7 @@ async function syncZotero() {
     await api.saveConfig({
       zotero: { dataDir: $("#cfg-zotero-dir").value.trim() },
     });
-    await reloadPapers(true);
+    await settingsBindings.reloadLibrary(true);
     msg.textContent = `同步完成 ✓ ${state.zotero?.papers || 0} 篇`;
     toast("Zotero 库已同步");
   } catch (e) {

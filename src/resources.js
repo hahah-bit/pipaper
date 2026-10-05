@@ -1,4 +1,6 @@
-import { api, state, $, el, toast, askConfirm } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast, askConfirm } from "./platform/dom.js";
 import { openSettings } from "./settings.js";
 
 // Resource manager: visual entry for pi skills / extensions / packages / MCP,

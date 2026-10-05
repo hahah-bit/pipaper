@@ -1,5 +1,5 @@
 import { persistence } from "./persistence.js";
-import { $, el } from "./app.js";
+import { $, el } from "./platform/dom.js";
 import { THEMES, THEME_KEY as LS_KEY, applyTheme, initSharedTheme } from "./themeTokens.js";
 
 // One-click theme switcher. Themes are pure CSS variable sets defined in

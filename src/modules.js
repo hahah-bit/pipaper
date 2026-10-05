@@ -1,4 +1,4 @@
-import { $ } from "./app.js";
+import { $ } from "./platform/dom.js";
 
 // 工作区的模块注册表。每个模块 = { id, name, icon, mount(body, ctx), unmount() }。
 // mount 把模块内容装进某个栏位；unmount 负责还原（reader/chat 是 DOM 搬迁，搬回原位即恢复主界面）。

@@ -3,7 +3,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DATA_DIR } from "../config.js";
-import { atomicJson, inside } from "../study-store.js";
+import { inside } from "../platform/files/managed-paths.js";
+import { createTaskRepository } from "../platform/storage/task-repository.js";
+const atomicJson = (file, value) => writeJsonState(file, value);
 import { KNOWLEDGE_DIR } from "../notes.js";
 import { registerKnowledge } from "../storage/migration.js";
 import { link, putResource } from "../storage/catalog.js";
@@ -45,18 +47,12 @@ export function deleteProfile(id) {
   const rows = profiles(); if (!rows.some(p => p.id === id)) throw fault("画像不存在", 404);
   atomicJson(profilesFile(), rows.filter(p => p.id !== id));
 }
-export function read(id) {
-  try {
-    const file = path.join(folder(id), "task.json");
-    if (!fs.existsSync(file)) throw Object.assign(new Error("选题任务不存在"), { code: "ENOENT" });
-    return readJsonState(file, null);
-  }
-  catch (e) { if (e.code === "ENOENT") throw fault("选题任务不存在", 404); throw e; }
-}
+const repository = createTaskRepository({ directoryFor: folder, kind: "topic", missingMessage: "选题任务不存在" });
+export const read = id => repository.read(id);
 export function change(id, fn, { deleting = false } = {}) {
   const t = read(id);
   if (!deleting && ["deleting", "delete-failed"].includes(t.status)) throw fault("任务正在删除，不能再写入", 409);
-  fn(t); t.revision++; t.updatedAt = stamp(); atomicJson(path.join(folder(id), "task.json"), t); registerFile(folder(id), { id: "topic:" + id, kind: "topic", title: t.title, metadata: t }); return t;
+  fn(t); return repository.save(t);
 }
 export function list() {
   const dir = path.join(ROOT, "tasks"); if (!fs.existsSync(dir)) return [];
@@ -70,9 +66,9 @@ export function create(input) {
   if (!area) throw fault("请填写要探索的研究大方向");
   const t = { schemaVersion: 1, id: "topic_" + randomUUID(), title: text(input.title, 100) || area.slice(0, 60), mode: input.mode,
     profile: profile ? structuredClone(profile) : null, researchArea: area, exploreSubfields: input.exploreSubfields !== false,
-    createdAt: stamp(), updatedAt: stamp(), revision: 1, status: "draft", model: input.model || null,
+    createdAt: stamp(), updatedAt: stamp(), revision: 0, status: "draft", model: input.model || null,
     artifacts: [], reportId: null, runs: [], chat: [], chatEpoch: 0, memory: "", ui: {}, events: [], chatBusy: false };
-  atomicJson(path.join(folder(t.id), "task.json"), t); registerFile(folder(t.id), { id: "topic:" + t.id, kind: "topic", title: t.title, metadata: t }); return t;
+  return repository.save(t);
 }
 export function artifact(id, kind, title, data, dependencies = []) {
   const t = read(id); if (["deleting", "delete-failed"].includes(t.status)) throw fault("任务正在删除", 409);

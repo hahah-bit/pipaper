@@ -1,3 +1,5 @@
+import { ExecutionRegistry } from "./platform/jobs/executions.js";
+import { registerSessionScope } from "./platform/ai/session-scopes.js";
 import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile, relocate, registerTree, commitDirectory } from "./storage/files.js";
 import { registerKnowledge } from "./storage/migration.js";
 import { events as storageEvents, saveJob as saveStorageJob, digest as storageDigest } from "./storage/catalog.js";
@@ -20,7 +22,7 @@ import { changePackage } from "./pi-packages.js";
 import { notesFor, saveStudyNotes, appendStudyNotes } from "./study-notes.js";
 import { createStudyActivity, studyTool } from "./study-activity.js";
 
-const runs = new Map(), creatingSessions = new Map();
+const runs = new ExecutionRegistry("study"), creatingSessions = new Map();
 storageEvents.on("lifecycle",event=>{if(event.type === "trash")for(const id of event.affected||[event.id])if(id.startsWith("study:"))runs.get(id.slice(6))?.abort.abort();});
 const imagePackage = "npm:@abhishek944/pi-image-gen@0.4.2";
 function copyAssets(source, destination) {
@@ -87,14 +89,25 @@ export async function studyContextForSession(meta) {
   const confirmed = task.checkpoints.filter(cp => cp.status === "passed").map(cp => ({ stage: cp.label, topics: cp.lesson.topics }));
   return JSON.stringify({ instruction: "当前是自由提问栏。可解释论文和已确认成果，但不推进研读阶段，不替代中间栏考查答案。", paper: task.title, goal: task.goal, version: task.versionId, confirmed });
 }
+registerSessionScope("study", {
+  matches: meta => !!meta.studyId,
+  onReplace: (controller, oldId, newId) => replaceStudySession(controller.meta.studyId, oldId, newId),
+  beforePrompt: async controller => {
+    const content = await studyContextForSession(controller.meta);
+    await controller.session.sendCustomMessage({ customType: "study_context", content, display: false });
+  },
+});
+
 async function operation(id, owner, kind, fn) {
   const task = active(readTask(id));
   if (runs.has(id)) throw fault("当前研读操作尚未结束", 409);
   const c = await controllerFor(task.guideSessionId);
   c.assertOwner(owner);
   if (runs.has(id) || c.busy) throw fault("当前研读操作尚未结束", 409);
-  const abort = new AbortController(); c.externalAbort = abort;
-  const run = c.start("study", async () => {
+  const execution = runs.claim(id, { kind }), abort = execution.controller;
+  execution.abort = abort; c.externalAbort = abort;
+  let run;
+  try { run = c.start("study", async () => {
     const activity = createStudyActivity(active(readTask(id)), kind, c);
     c.studyReport = activity.report; c.studyActivityId = activity.activity.id;
     try {
@@ -114,11 +127,18 @@ async function operation(id, owner, kind, fn) {
         saveTask(latest);
       } } catch {}
       throw e;
-    } finally { runs.delete(id); c.studyReport = null; c.studyActivityId = null; if (c.externalAbort === abort) c.externalAbort = null; }
-  });
-  runs.set(id, { abort, completion: run.completion, kind });
+    } finally { runs.release(id, execution); c.studyReport = null; c.studyActivityId = null; if (c.externalAbort === abort) c.externalAbort = null; }
+  }); } catch (error) {
+    runs.release(id, execution);
+    if (c.externalAbort === abort) c.externalAbort = null;
+    throw error;
+  }
+  execution.completion = run.completion;
   saveStorageJob({id:run.id,resourceId:"study:"+id,type:"study",stage:kind,status:"running",fingerprint:storageDigest([id,task.revision,kind])});
-  void run.completion.then(()=>saveStorageJob({id:run.id,resourceId:"study:"+id,type:"study",stage:kind,status:"succeeded"}),()=>{});
+  void run.completion.then(()=>saveStorageJob({id:run.id,resourceId:"study:"+id,type:"study",stage:kind,status:"succeeded"}),()=>{}).finally(() => {
+    runs.release(id, execution);
+    if (c.externalAbort === abort) c.externalAbort = null;
+  }).catch(() => {});
   return { operationId: run.id };
 }
 async function recordMessage(task, c, role, text) {

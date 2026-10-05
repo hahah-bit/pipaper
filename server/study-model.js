@@ -1,56 +1,15 @@
 import { controllerFor } from "./native-harness.js";
-import { fault } from "./study-store.js";
-import { parseModelJson } from "./study-flow.js";
-import { randomUUID } from "node:crypto";
+import { parseModelJson } from "./platform/ai/json.js";
+import { completeText, JSON_INSTRUCTION } from "./platform/ai/gateway.js";
+export { structuredPayload as studyModelPayload } from "./platform/ai/gateway.js";
 
-const JSON_INSTRUCTION = '本次回答由程序解析。只输出一个完整的 JSON 对象，严格遵循请求中的 format 或 JSON 示例，填写全部必需字段。不要在对象前后输出解释、Markdown 标题或代码围栏。Markdown 只能出现在 JSON 字符串字段内；字符串中的换行、双引号和 LaTeX 反斜杠必须按 JSON 规则转义。';
-
-export function studyModelPayload(payload, model, structured) {
-  // Pi forwards onPayload to its provider adapter. Do not assume every compatible
-  // endpoint supports response_format; enable it for the verified DeepSeek API.
-  if (structured && model.provider === "deepseek" && model.api === "openai-completions") {
-    return { ...payload, response_format: { type: "json_object" } };
-  }
-  return payload;
-}
-
-export async function completeStudyModel({ sessionId, system, text, images = [], signal, onDelta, onActivity, maxTokens = 6500, model: selected, structured = false }) {
-  const c = await controllerFor(sessionId);
-  const runtime = c.session.modelRuntime;
+export async function completeStudyModel({ sessionId, system, model: selected, structured = false, onActivity, ...options }) {
+  const c = await controllerFor(sessionId), runtime = c.session.modelRuntime;
   const model = selected ? runtime.getModel(selected.provider, selected.id) : c.session.model;
-  if (!model) throw fault("请先在 Pi 中配置并登录可用模型", 503);
-  if (structured) system += "\n" + JSON_INSTRUCTION;
-  const reasoning = model.reasoning ? c.session.thinkingLevel : undefined;
-  maxTokens += ({ low: 2048, medium: 8192, high: 16384, max: 32768, xhigh: 32768 })[reasoning] || 0;
-  maxTokens = Math.min(maxTokens, model.maxTokens || maxTokens);
-  const visual = model.input?.includes("image");
-  if (images.length && !visual) text += "\n当前模型不支持看图：只能依据图注和正文讨论图表，不能声称已识别图中未转录的数值或结构。";
-  // Reject oversized inputs instead of silently losing the tail of a paper.
-  const budget = Math.max(1000, (model.contextWindow || 32000) - maxTokens - 1200);
-  if (system.length + text.length > budget * 1.5) throw fault("当前模型上下文不足，请换用更长上下文的模型", 422);
-  const content = visual && images.length ? [{ type: "text", text }, ...images.flatMap(i => [{ type: "text", text: `原文图片 ${i.blockId}，第 ${i.page} 页` }, { type: "image", data: i.data, mimeType: i.mimeType }])] : text;
-  const report = onActivity || c.studyReport, id = randomUUID();
-  report?.({ type: "model_start", id, model: { provider: model.provider, id: model.id } });
-  try {
-  const stream = runtime.streamSimple(model, { systemPrompt: system, messages: [{ role: "user", content, timestamp: Date.now() }] },
-    { signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(240000)]), maxTokens,
-      reasoning,
-      onPayload: payload => studyModelPayload(payload, model, structured) });
-  let output = "", final;
-  for await (const event of stream) {
-    if (event.type === "text_delta") { output += event.delta; onDelta?.(event.delta); }
-    if (event.type === "thinking_delta") report?.({ type: "thinking", id, text: event.delta });
-    if (event.type === "done") final = event.message;
-    if (event.type === "error") throw fault(event.error?.errorMessage || "模型调用失败", 502);
-  }
-  signal?.throwIfAborted();
-  // Some adapters only publish the assembled text in the terminal message.
-  if (!output.trim()) output = final?.content?.filter(part => part.type === "text").map(part => part.text).join("") || "";
-  if (final?.stopReason === "length") throw fault("模型输出被截断，请缩小当前内容或切换模型后重试", 422);
-  if (!output.trim()) throw Object.assign(fault("模型没有返回内容", 502), { code: "STUDY_MODEL_EMPTY" });
-  report?.({ type: "model_end", id, usage: final?.usage });
-  return { text: output, model: { provider: model.provider, id: model.id }, usage: final?.usage };
-  } catch (error) { report?.({ type: "model_end", id, error: error.message }); throw error; }
+  return completeText({ ...options, runtime, model, system: system + (structured ? "\n" + JSON_INSTRUCTION : ""),
+    structured, reasoning: model?.reasoning ? c.session.thinkingLevel : undefined, reasoningBudget: true,
+    maxTokens: options.maxTokens ?? 6500, imagePolicy: "context-only", imageLabels: true,
+    onActivity: onActivity || c.studyReport, emptyCode: "STUDY_MODEL_EMPTY" });
 }
 
 export async function completeStudyJson({ validate = value => value, onRetry, ...options }) {

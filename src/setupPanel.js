@@ -1,6 +1,7 @@
 // 环境检查 / 首次使用引导：拉取 /api/setup/status 渲染能力清单，
 // 未就绪项给出安装链接与命令；首启自动弹出（config.setup.onboardedAt 为空且有未就绪项时）。
-import { api, $, el, toast } from "./app.js";
+import { api } from "./platform/api.js";
+import { $, el, toast } from "./platform/dom.js";
 import { openSettings, closeSettings } from "./settings.js";
 
 const GROUPS = [

@@ -1,5 +1,6 @@
 import { persistence } from "./persistence.js";
-import { el, state, toast } from "./app.js";
+import { el, toast } from "./platform/dom.js";
+import { state } from "./shell/state.js";
 import { streamPrompt } from "./chat.js";
 
 const TYPES = { architecture: "架构图", workflow: "流程图", sequence: "时序图", dataflow: "数据流图", lifecycle: "状态图" };

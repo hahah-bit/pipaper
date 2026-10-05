@@ -1,3 +1,4 @@
+import { ExecutionRegistry } from "../platform/jobs/executions.js";
 import { randomUUID } from "node:crypto";
 import * as store from "./store.js";
 import * as casTable from "./cas-table.js";
@@ -7,23 +8,21 @@ import { catalog, complete } from "./model.js";
 import { resource, events, saveJob, digest } from "../storage/catalog.js";
 
 export function registerTopicRoutes(api, { sources, model = complete, models = catalog, analysisTimeoutMs } = {}) {
-  const running = new Map(), listeners = new Map(), deleting = new Map();
-  events.on("lifecycle", event => { if(event.type === "trash") for(const id of event.affected||[event.id]) if(id.startsWith("topic:")) for(const j of running.get(id.slice(6))?.values()||[]) j.controller.abort(); });
+  const running = new ExecutionRegistry("topic"), listeners = new Map(), deleting = new Map();
+  events.on("lifecycle", event => { if(event.type === "trash") for(const id of event.affected||[event.id]) if(id.startsWith("topic:")) for(const j of jobs(id.slice(6))) j.controller.abort(); });
   store.recover();
   const broadcast = (id, event = { type: "refresh" }) => { for (const send of listeners.get(id) || []) send(event); };
   const route = handler => async (req, res) => { try { await handler(req, res); } catch (e) { if (!res.headersSent) res.status(e.status || 400).json({ error: String(e.message || e) }); } };
-  const jobs = id => [...(running.get(id)?.values() || [])];
+  const jobs = id => [...running.values()].filter(j => j.taskId === id);
   function idle(id) { const t = store.read(id); if (jobs(id).length || ["deleting", "delete-failed"].includes(t.status)) throw store.fault("请先停止正在运行的操作，再修改或删除资料", 409); return t; }
   function start(id, kind, work) {
     const task = store.read(id);
     if (task.cleanupError) throw store.fault("请先重试失败的资料删除，完成后再分析或对话", 409);
     if (["deleting", "delete-failed"].includes(task.status)) throw store.fault("任务正在删除", 409);
-    if (!running.has(id)) running.set(id, new Map());
-    const set = running.get(id);
-    if (set.has(kind)) throw store.fault("同类操作正在进行，请先停止或等待完成", 409);
-    const controller = new AbortController(), job = { id: randomUUID(), kind, controller, promise: null };
+    const key = JSON.stringify([id, kind]);
+    if (running.has(key)) throw store.fault("同类操作正在进行，请先停止或等待完成", 409);
+    const job = running.claim(key, { id: randomUUID(), kind, taskId: id, promise: null }), controller = job.controller;
     saveJob({id:job.id,resourceId:"topic:"+id,type:"topic",stage:kind,status:"running",fingerprint:digest([id,kind,task.revision])});
-    set.set(kind, job);
     job.promise = Promise.resolve().then(() => work(controller.signal)).catch(e => {
       job.error=e.message;
       try { store.change(id, t => { t.lastError = controller.signal.aborted ? "操作已停止；已保存的证据可继续查看，重跑会建立新报告。" : e.message;
@@ -32,7 +31,7 @@ export function registerTopicRoutes(api, { sources, model = complete, models = c
       }); } catch {} broadcast(id, { type: "error", message: e.message });
     }).finally(() => {
       saveJob({id:job.id,resourceId:"topic:"+id,type:"topic",stage:kind,status:controller.signal.aborted?"cancelled":job.error?"failed":"succeeded",error:job.error});
-      set.delete(kind); if (!set.size) running.delete(id);
+      running.release(key, job);
       if (kind === "chat") try { store.change(id, t => { t.chatBusy = false; }); } catch {}
       broadcast(id);
     });

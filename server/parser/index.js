@@ -1,3 +1,4 @@
+import { ExecutionRegistry } from "../platform/jobs/executions.js";
 import path from "node:path";
 import { getConfig } from "../config.js";
 import { getPaper, writeParseState, readBlocks, getParseState, parsedDir } from "../store.js";
@@ -5,7 +6,8 @@ import { executePipeline } from "./pipeline.js";
 import { snapshotLegacy, createRun, saveResult, activateVersion, jsonWrite, listVersions } from "./versions.js";
 import { resource, saveJob, job as storedJob, isActive, digest } from "../storage/catalog.js";
 
-const jobs = new Map();
+const jobs = new Map(); // response history; active ownership is separate
+const executions = new ExecutionRegistry("parse");
 export const getJob = (id) => jobs.get(id) || storedJob(id);
 export function availableEngines() {
   const cfg = getConfig().parse;
@@ -21,7 +23,7 @@ export function resolveEngine(requested = "hybrid") {
   return requested;
 }
 export function isParsing(paperId) {
-  return [...jobs.values()].some((j) => parsedDir(j.paperId) === parsedDir(paperId) && j.status === "running");
+  return [...executions.values()].some((j) => parsedDir(j.paperId) === parsedDir(paperId));
 }
 export function startParse(paperId, requestedEngine = "hybrid", replayFrom) {
   const paper = getPaper(paperId);
@@ -38,9 +40,11 @@ export function startParse(paperId, requestedEngine = "hybrid", replayFrom) {
   jobs.set(job.id, job);
   persistJob(job);
   writeParseState(paperId, { status: "running", engine, error: null, jobId: job.id, startedAt: job.startedAt });
+  const execution = executions.claim(parsedDir(paperId), { paperId });
   job.completion = (async () => {
     try {
       const doc = await executePipeline(paper, engine, run, log, replayFrom);
+      execution.controller.signal.throwIfAborted();
       if (!isActive("paper:" + paperId) || sourceRevision !== resource("paper:" + paperId)?.revision) throw new Error("文献已删除或更新，拒绝发布旧解析结果");
       const result = saveResult(run, doc);
       job.quality = doc.quality;
@@ -58,7 +62,7 @@ export function startParse(paperId, requestedEngine = "hybrid", replayFrom) {
         jsonWrite(path.join(run.dir, "run.json"), { id: run.id, engine, createdAt: run.createdAt, status: "error", error: job.error });
         writeParseState(paperId, { status: "error", engine, error: job.error, jobId: job.id });
       }
-    } finally { job.endedAt = new Date().toISOString(); if(storedJob(job.id)?.status!=="cancelled") persistJob(job); }
+    } finally { executions.release(parsedDir(paperId), execution); job.endedAt = new Date().toISOString(); if(storedJob(job.id)?.status!=="cancelled") persistJob(job); }
   })();
   return job;
 }

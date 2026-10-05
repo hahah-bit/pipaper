@@ -1,4 +1,4 @@
-import { node } from "./ui.js";
+import { node } from "../platform/ui.js";
 
 const labels = { lesson: "讲解生成", answers: "理解考查", message: "引导对话", prepare: "论文解析", translation: "精确翻译", research: "相关论文检索", image: "图示生成", plan: "实验计划", prompt: "对话过程" };
 const tools = { read_paper: "读论文", list_library: "文献库列表", search_library: "检索文献库", search_papers: "学术检索", get_paper_pages: "论文截图", parse_paper: "解析论文", image_generate: "生成图示" };

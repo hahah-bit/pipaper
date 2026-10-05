@@ -1,3 +1,6 @@
+import { scheduleArxiv } from "../platform/academic/arxiv-rate.js";
+import { remote } from "../platform/academic/transport.js";
+import { normalizeDoi as normDoi, openalexAbstract, parseArxivFeed } from "../platform/academic/metadata.js";
 // Academic search aggregator. Open sources only (reusing their public APIs);
 // WoS / Google Scholar are listed but require subscriptions / have no open API.
 // Every adapter returns the same normalized result shape:
@@ -14,18 +17,6 @@ import { rankResults } from "./readscore.js";
 
 // 随仓库分发的数据资产目录；DATA_DIR 为旧机回退路径
 const ASSETS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "assets");
-
-function normDoi(doi) {
-  return String(doi || "").toLowerCase().replace(/^https?:\/\/(dx\.)?doi\.org\//, "").trim();
-}
-
-// OpenAlex: abstract is an inverted index — rebuild it
-function openalexAbstract(inv) {
-  if (!inv) return "";
-  const pos = [];
-  for (const [word, idxs] of Object.entries(inv)) for (const i of idxs) pos[i] = word;
-  return pos.filter(Boolean).join(" ").slice(0, 1500);
-}
 
 // journal metrics (SJR 2026, imported from sci-helper's catalog):
 // issn(digits-only) -> {sjr, q, cat}
@@ -65,19 +56,20 @@ function enrich(r) {
 }
 
 async function jget(url, headers = {}) {
-  let r = await fetch(url, { headers: { "User-Agent": UA, ...headers }, signal: AbortSignal.timeout(20000) });
-  if (r.status === 429) {
-    await new Promise((res) => setTimeout(res, 1800));
-    r = await fetch(url, { headers: { "User-Agent": UA, ...headers }, signal: AbortSignal.timeout(20000) });
+  let response;
+  try { response = await remote(String(url), { headers, timeoutMs: 20000 }); }
+  catch (error) {
+    if (error.remoteStatus !== 429) throw error;
+    await new Promise(resolve => setTimeout(resolve, 1800));
+    response = await remote(String(url), { headers, timeoutMs: 20000 });
   }
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  return r.json();
+  return JSON.parse(response.buffer.toString("utf8"));
 }
 
 async function searchOpenAlex(q, o) {
   const filters = [];
-  if (o.yearFrom) filters.push(`from_public_date:${o.yearFrom}-01-01`);
-  if (o.yearTo) filters.push(`to_public_date:${o.yearTo}-12-31`);
+  if (o.yearFrom) filters.push(`from_publication_date:${o.yearFrom}-01-01`);
+  if (o.yearTo) filters.push(`to_publication_date:${o.yearTo}-12-31`);
   if (o.oa) filters.push("is_oa:true");
   const url = new URL("https://api.openalex.org/works");
   url.searchParams.set("search", q);
@@ -102,7 +94,7 @@ async function searchOpenAlex(q, o) {
     oa: !!w.open_access?.is_oa,
     pdfUrl: w.best_oa_location?.pdf_url || w.best_oa_location?.landing_page_url || "",
     url: w.doi || w.id,
-    abstract: openalexAbstract(w.abstract_inverted_index),
+    abstract: openalexAbstract(w.abstract_inverted_index, 1500),
     keywords: (w.concepts || []).slice(0, 5).map((c) => c.display_name),
   }));
 }
@@ -144,30 +136,10 @@ async function searchSemanticScholar(q, o) {
   }));
 }
 
-// minimal Atom XML → items (arXiv)
 function parseAtom(xml) {
-  const items = [];
-  const entries = xml.split(/<entry>/).slice(1);
-  for (const raw of entries) {
-    const pick = (tag) => {
-      const m = raw.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
-      return m ? m[1].replace(/<[^>]+>/g, "").trim() : "";
-    };
-    items.push({
-      id: "arxiv:" + pick("id"),
-      title: pick("title").replace(/\s+/g, " "),
-      authors: [...raw.matchAll(/<name>([\s\S]*?)<\/name>/g)].map((m) => m[1]).slice(0, 8),
-      year: Number((pick("published").match(/(\d{4})/) || [])[1]) || null,
-      date: pick("published").slice(0, 10),
-      doi: normDoi((raw.match(/<arxiv:doi[^>]*>([\s\S]*?)<\/arxiv:doi>/) || [])[1]),
-      venue: "arXiv",
-      citations: null,
-      abstract: pick("summary").replace(/\s+/g, " ").slice(0, 1500),
-      pdfUrl: (raw.match(/<link[^>]*title="pdf"[^>]*href="([^"]+)"/) || [])[1] || pick("id").replace("http://", "https://").replace("/abs/", "/pdf/"),
-      url: pick("id"),
-    });
-  }
-  return items;
+  return parseArxivFeed(xml).map(paper => ({ ...paper, id: "arxiv:" + paper.id,
+    doi: normDoi(paper.doi), venue: "arXiv", authors: paper.authors.slice(0, 8),
+    abstract: paper.abstract.replace(/\s+/g, " ").slice(0, 1500), pdfUrl: paper.pdf }));
 }
 
 async function searchArxiv(q, o) {
@@ -177,9 +149,8 @@ async function searchArxiv(q, o) {
   url.searchParams.set("search_query", `abs:${quoted} OR ti:${quoted}`);
   url.searchParams.set("max_results", String(o.limit || 20));
   url.searchParams.set("sortBy", o.sort === "year" ? "submittedDate" : "relevance");
-  const r = await fetch(url, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(20000) });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  let items = parseAtom(await r.text());
+  const r = await scheduleArxiv(() => remote(url.href, { timeoutMs: 20000 }));
+  let items = parseAtom(r.buffer.toString("utf8"));
   if (o.yearFrom) items = items.filter((i) => i.year >= o.yearFrom);
   if (o.yearTo) items = items.filter((i) => i.year <= o.yearTo);
   if (o.sort === "citations") items = items.slice().reverse();

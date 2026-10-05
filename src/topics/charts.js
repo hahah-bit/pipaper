@@ -1,4 +1,4 @@
-import { node } from "../study/ui.js";
+import { node } from "../platform/ui.js";
 const NS = "http://www.w3.org/2000/svg";
 function svg(tag, attrs = {}, text) { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); if (text != null) el.textContent = text; return el; }
 export function trendChart(related, all = []) {

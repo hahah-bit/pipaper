@@ -1,4 +1,5 @@
-import { el, state } from "./app.js";
+import { el } from "./platform/dom.js";
+import { state } from "./shell/state.js";
 import { getModule } from "./modules.js";
 import { persistence } from "./persistence.js";
 

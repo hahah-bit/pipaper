@@ -1,4 +1,6 @@
-import { api, state, $, el, toast } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast } from "./platform/dom.js";
 import { registerModule } from "./modules.js";
 import { persistence } from "./persistence.js";
 

@@ -1,5 +1,6 @@
 import { persistence } from "./persistence.js";
-import { $, el, toast, addChip, askConfirm } from "./app.js";
+import { $, el, toast, askConfirm } from "./platform/dom.js";
+import { addChip } from "./features/chat/attachments.js";
 
 // Clipboard manager: floating panel — collapsible + draggable + resizable.
 // Captures copies/selections inside the app; entries expire server-side (2 days).

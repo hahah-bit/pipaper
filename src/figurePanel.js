@@ -1,5 +1,7 @@
-import { api, state, el } from "./app.js";
-import { renderMd } from "./chat.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { el } from "./platform/dom.js";
+import { renderMd } from "./platform/markdown.js";
 import { generateFigureDoc } from "./figureGen.js";
 import { renderMermaidFile } from "./notesPanel.js";
 import { lightbox } from "./reader.js";

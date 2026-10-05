@@ -1,5 +1,7 @@
-import { api, state, el, toast } from "./app.js";
-import { renderMd } from "./chat.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { el, toast } from "./platform/dom.js";
+import { renderMd } from "./platform/markdown.js";
 import { renderMarkmap } from "./markmapUtil.js";
 import { registerModule } from "./modules.js";
 import { generateArtifact } from "./notesGen.js";

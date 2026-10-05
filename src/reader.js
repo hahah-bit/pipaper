@@ -1,8 +1,13 @@
+let refreshLibrary;
+import { renderChips } from "./features/chat/attachments.js";
 import * as pdfjsLib from "pdfjs-dist";
-import { blocksToContext } from "../server/parser/mdblocks.js";
-import { renderMd } from "./chat.js";
+import { blocksToContext } from "../shared/document/markdown.js";
+import { renderMd } from "./platform/markdown.js";
 import { streamPrompt } from "./chat.js";
-import { api, state, $, el, toast, addChip } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast } from "./platform/dom.js";
+import { addChip } from "./features/chat/attachments.js";
 import { getTemplates, saveTemplates, applyTemplate } from "./templates.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.min.mjs";
@@ -408,7 +413,7 @@ async function translateBlock(blkEl, block, paper, meta, { show = false, index =
   }
 }
 
-function renderChipsIf() { import("./app.js").then((m) => m.renderChips()); }
+function renderChipsIf() { renderChips(); }
 
 export function lightbox(src, caption) {
   const back = el("div", {
@@ -730,10 +735,8 @@ function setBusyStatus(txt) {
 
 async function reloadPaperQuiet(paperId) {
   if (state.currentPaper?.id !== paperId) return;
-  const { loadPapers, renderPapers } = await import("./sidebar.js");
-  await loadPapers();
+  await refreshLibrary();
   state.currentPaper = state.papers.find((p) => p.id === paperId) || state.currentPaper;
-  renderPapers();
   const p = state.currentPaper;
   const res = await fetch(`/api/papers/${p.id}/blocks`).then((r) => r.json());
   updateParseStatus(res.status, res.engine, res.error);
@@ -742,7 +745,8 @@ async function reloadPaperQuiet(paperId) {
 }
 
 // ---------------- init ----------------
-export function initReader() {
+export function initReader({ reloadLibrary } = {}) {
+  refreshLibrary = reloadLibrary;
   $("#tab-parsed").addEventListener("click", () => switchTab("parsed"));
   $("#tab-pdf").addEventListener("click", () => switchTab("pdf"));
   initSelection();

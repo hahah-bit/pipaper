@@ -1,4 +1,4 @@
-import { state } from "./app.js";
+import { state } from "./shell/state.js";
 import { createSessionEventChannel } from "./sessionEventChannel.js";
 
 let transport;

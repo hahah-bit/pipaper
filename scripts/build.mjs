@@ -43,25 +43,26 @@ await esbuild.build({
   logLevel: "info",
 });
 
-// cache-bust: stamp bundle/css versions into index.html
-await esbuild.build({ entryPoints: [path.join(ROOT, "src", "study", "app.js")], bundle: true,
-  outfile: path.join(PUB, "study.js"), format: "iife", target: "es2022", sourcemap: true, logLevel: "info" });
-const js = fs.readFileSync(path.join(PUB, "app.js"));
-await esbuild.build({ entryPoints: [path.join(ROOT, "src", "topics", "app.js")], bundle: true,
-  outfile: path.join(PUB, "topics.js"), format: "iife", target: "es2022", sourcemap: true, logLevel: "info" });
-const themeCss = fs.readFileSync(path.join(PUB, "theme.css"));
-const topicVersion = crypto.createHash("sha1").update(fs.readFileSync(path.join(PUB, "topics.js"))).update(fs.readFileSync(path.join(PUB, "topics.css"))).update(themeCss).digest("hex").slice(0, 10);
-const topicHtml = path.join(PUB, "topics.html");
-fs.writeFileSync(topicHtml, fs.readFileSync(topicHtml, "utf8").replace(/topics\.(js|css)(\?v=[a-f0-9]+)?"/g, (_m, ext) => `topics.${ext}?v=${topicVersion}"`).replace(/theme\.css(\?v=[a-f0-9]+)?"/, `theme.css?v=${topicVersion}"`));
-const css = fs.readFileSync(path.join(PUB, "style.css"));
-const v = crypto.createHash("sha1").update(js).update(css).update(themeCss).digest("hex").slice(0, 10);
-const htmlPath = path.join(PUB, "index.html");
-let html = fs.readFileSync(htmlPath, "utf8");
-const jsRe = new RegExp('app[.]js([?]v=[a-f0-9]+)?' + String.fromCharCode(34));
-const cssRe = new RegExp('style[.]css([?]v=[a-f0-9]+)?' + String.fromCharCode(34));
-html = html.replace(jsRe, 'app.js?v=' + v + '"');
-html = html.replace(cssRe, 'style.css?v=' + v + '"');
-html = html.replace(/theme\.css(\?v=[a-f0-9]+)?"/, 'theme.css?v=' + v + '"');
-fs.writeFileSync(htmlPath, html);
+for (const entry of ["study", "topics"]) await esbuild.build({
+  entryPoints: [path.join(ROOT, "src", entry, "app.js")], bundle: true,
+  outfile: path.join(PUB, entry + ".js"), format: "iife", target: "es2022", sourcemap: true, logLevel: "info",
+});
 
-console.log("build ok (v=" + v + ")");
+// Each page includes every shared style it consumes in its cache fingerprint.
+for (const [page, assets] of Object.entries({
+  index: ["app.js", "style.css", "theme.css"],
+  study: ["study.js", "style.css", "study.css", "theme.css"],
+  topics: ["topics.js", "topics.css", "theme.css"],
+})) {
+  const hash = crypto.createHash("sha1");
+  for (const asset of assets) hash.update(fs.readFileSync(path.join(PUB, asset)));
+  const version = hash.digest("hex").slice(0, 10);
+  const htmlPath = path.join(PUB, page + ".html");
+  let html = fs.readFileSync(htmlPath, "utf8");
+  for (const asset of assets) {
+    const escaped = asset.replace(/[.]/g, "[.]");
+    html = html.replace(new RegExp(escaped + '([?]v=[a-f0-9]+)?"', "g"), asset + '?v=' + version + '"');
+  }
+  fs.writeFileSync(htmlPath, html);
+  console.log(page + " build ok (v=" + version + ")");
+}

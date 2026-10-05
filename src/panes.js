@@ -1,5 +1,5 @@
 import { persistence } from "./persistence.js";
-import { $ } from "./app.js";
+import { $ } from "./platform/dom.js";
 
 // Draggable panes plus a persisted presentation layer. The panels keep their
 // existing DOM and behavior; these controls only change their layout.

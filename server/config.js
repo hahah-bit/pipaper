@@ -22,7 +22,7 @@ const DEFAULTS = {
     mineru: { mode: "off", token: "", cmd: "mineru", apiBase: "https://mineru.net" },
     unstructured: { mode: "off", apiKey: "", url: "https://api.unstructured.io" },
   },
-  translate: { url: "http://localhost:5001", model: { provider: "zai-coding-cn", id: "glm-4.7" } },
+  translate: { model: { provider: "zai-coding-cn", id: "glm-4.7" } },
   chat: { thinkingLevel: "high" },
   archify: { path: "" }, // Reuse an existing upstream repository / skill directory.
   topicAnalysis: { openalexApiKey: "" },

@@ -1,9 +1,14 @@
-import { api, state, $, el, toast, updateZoteroFoot, askText, askConfirm } from "./app.js";
+let sidebarBindings;
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast, askText, askConfirm } from "./platform/dom.js";
+import { updateZoteroFoot } from "./features/library/status.js";
 
 let activeCollection = null; // collection id or null = all
 let searchQ = "";
 
-export function initSidebar() {
+export function initSidebar(bindings) {
+  sidebarBindings = bindings;
   window.addEventListener("pipaper:storage-changed", () => { void reloadPapers(); });
   $("#paper-search").addEventListener("input", (e) => {
     searchQ = e.target.value.trim().toLowerCase();
@@ -113,9 +118,7 @@ export async function switchProject(id) {
   renderProjects();
   renderPapers();
   // refresh session list so dropdown regroups
-  const { refreshSessions, syncSessionBinding } = await import("./chat.js");
-  await syncSessionBinding();
-  await refreshSessions();
+  await sidebarBindings.onProjectChange();
 }
 
 async function togglePaperInProject(paperId) {
@@ -211,9 +214,5 @@ export async function selectPaper(p) {
   state.currentPaper = state.papers.find((x) => x.id === p.id) || p;
   window.dispatchEvent(new CustomEvent("pipaper:paper-changed"));
   renderPapers();
-  const { readerLoadPaper } = await import("./reader.js");
-  readerLoadPaper(p);
-  const { updateComposerHint, syncSessionBinding } = await import("./chat.js");
-  updateComposerHint();
-  await syncSessionBinding();
+  await sidebarBindings.onPaperSelection(p);
 }

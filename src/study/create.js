@@ -1,4 +1,4 @@
-import { node, request, button, dialog, notify } from "./ui.js";
+import { node, request, button, dialog, notify } from "../platform/ui.js";
 
 export async function openStudyCreate({ paperId, projectId } = {}) {
   const [library, tasks] = await Promise.all([request("/api/papers"), request("/api/studies")]);

@@ -95,18 +95,6 @@ services:
       retries: 5
       start_period: 40s
 
-  libretranslate:
-    image: libretranslate/libretranslate:latest
-    container_name: pipaper-libretranslate
-    ports:
-      - "5001:5000"
-    environment:
-      # 首次启动自动下载语言模型；如只需中英可加 --load-only zh,en
-      LT_LOAD_ONLY: "zh,en"
-      LT_UPDATE_MODELS: "true"
-    command: --load-only zh,en
-    restart: unless-stopped
-
 volumes:
   milvus-data:
   milvus-etcd:

@@ -1,4 +1,7 @@
-import { api, state, $, el, toast, renderChips, askText } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast, askText } from "./platform/dom.js";
+import { renderChips } from "./features/chat/attachments.js";
 import { waitOperation } from "./sessionTransport.js";
 
 let metrics, extensions, toolbar, queueControls, draftsBox;

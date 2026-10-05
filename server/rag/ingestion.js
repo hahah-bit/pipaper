@@ -1,3 +1,5 @@
+import { terminalJobStates } from "../../shared/contracts/states.js";
+import { ExecutionRegistry } from "../platform/jobs/executions.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -53,7 +55,7 @@ export const stages = [
   "index",
   "publish",
 ];
-const runners = new Map();
+const runners = new ExecutionRegistry("ingestion");
 const mime = (file) =>
   ({
     ".png": "image/png",
@@ -62,7 +64,7 @@ const mime = (file) =>
     ".webp": "image/webp",
     ".gif": "image/gif",
   })[path.extname(file).toLowerCase()] || "image/png";
-const terminal = new Set(["succeeded", "failed", "cancelled"]);
+const terminal = new Set(terminalJobStates);
 function inputOf(r) {
   return {
     hash: r.hash,
@@ -152,7 +154,7 @@ export function controlJob(id, action) {
       status: action === "pause" ? "paused" : "cancelled",
       epoch: (old.epoch || 0) + 1,
     });
-    runners.get(id)?.abort();
+    runners.abort(id);
     return next;
   }
   if (!["resume", "retry"].includes(action)) throw fault("无效任务操作");
@@ -171,12 +173,12 @@ export function controlJob(id, action) {
   return next;
 }
 function dispatch(id) {
-  const controller = new AbortController();
-  runners.set(id, controller);
+  if (runners.has(id)) return;
+  const execution = runners.claim(id), controller = execution.controller;
   setImmediate(() =>
     runJob(id, { signal: controller.signal })
       .catch(() => {})
-      .finally(() => runners.delete(id)),
+      .finally(() => runners.release(id, execution)),
   );
 }
 function guard(j, signal) {
@@ -688,7 +690,7 @@ events.on("lifecycle", ({ affected, id, type }) => {
     for (const j of jobs().filter((j) =>
       [...(affected || []), id].includes(j.resourceId),
     ))
-      runners.get(j.id)?.abort();
+      runners.abort(j.id);
 });
 const rebuildTimers = new Map();
 events.on("invalidate", ({ id }) => {

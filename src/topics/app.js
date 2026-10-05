@@ -1,4 +1,4 @@
-import { node, request, button, markdown, dialog, notify, confirmDelete } from "../study/ui.js";
+import { node, request, button, markdown, dialog, notify, confirmDelete } from "../platform/ui.js";
 import { initPersistence } from "../persistence.js";
 import { initSharedTheme } from "../themeTokens.js";
 import { createAnalysis, manageProfiles, stageNames } from "./profiles.js";

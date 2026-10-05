@@ -1,5 +1,7 @@
 import { persistence } from "./persistence.js";
-import { api, state, $, el, toast } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast } from "./platform/dom.js";
 
 // 筛选条件持久化：检索前设置（年份/分区/OA/排序）记忆在 localStorage
 const LS = "pipaper.sch.";

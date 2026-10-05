@@ -1,4 +1,4 @@
-import { el } from "./app.js";
+import { el } from "./platform/dom.js";
 
 export const retrievalStages = {
   rewrite: "理解问题与改写",

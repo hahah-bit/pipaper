@@ -1,5 +1,6 @@
+import { initSharedTheme } from "../themeTokens.js";
 import { persistence, initPersistence } from "../persistence.js";
-import { node, request, markdown, button, dialog, notify, confirmDelete } from "./ui.js";
+import { node, request, markdown, button, dialog, notify, confirmDelete } from "../platform/ui.js";
 import { openStudyCreate } from "./create.js";
 import { createStudyChat } from "./chat.js";
 import { createStudyReader } from "./reader.js";
@@ -185,6 +186,7 @@ function gutter(index) {
 }
 async function boot() {
   await initPersistence();
+  initSharedTheme();
   const result = await request(`/api/studies/${id}`); task = result.task; currentVersion = task.versionId;
   menu.append(node("summary", {}, node("small", {}, "论文研读"), title, node("span", {}, "⌄")), node("div", { class: "study-task-menu" }, search, menuItems, button("＋ 新建研读", () => openStudyCreate({ projectId: task.projectId }))));
   title.textContent = task.title;

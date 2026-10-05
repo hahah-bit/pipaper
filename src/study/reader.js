@@ -1,4 +1,4 @@
-import { node, markdown, button, request } from "./ui.js";
+import { node, markdown, button, request } from "../platform/ui.js";
 import { createStudyNotes } from "./notes.js";
 import { createPdfReader } from "./pdf-reader.js";
 

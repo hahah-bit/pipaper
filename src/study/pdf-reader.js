@@ -1,5 +1,5 @@
 import * as pdfjs from "pdfjs-dist";
-import { node, button } from "./ui.js";
+import { node, button } from "../platform/ui.js";
 pdfjs.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.min.mjs";
 
 // Keep page geometry mounted while rendering only the visible neighbourhood.

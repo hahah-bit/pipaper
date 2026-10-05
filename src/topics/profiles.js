@@ -1,4 +1,4 @@
-import { node, request, button, dialog, notify, confirmDelete } from "../study/ui.js";
+import { node, request, button, dialog, notify, confirmDelete } from "../platform/ui.js";
 const field = (label, control, help) => node("label", { class: "topic-field" }, node("span", {}, label), control, help && node("small", {}, help));
 export const stageNames = { experiment: "实验结束", manuscript: "论文写完", submission: "完成投稿" };
 export function profileEditor(old, onSaved) {

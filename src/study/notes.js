@@ -1,5 +1,5 @@
 import { persistence } from "../persistence.js";
-import { node, markdown, button, request, dialog, notify } from "./ui.js";
+import { node, markdown, button, request, dialog, notify } from "../platform/ui.js";
 
 export function createStudyNotes({ getTask }) {
   const key = `pipaper.study.notes.${getTask().id}`;

@@ -1,5 +1,6 @@
-import { el, addChip, toast } from "./app.js";
-import { renderMd } from "./chat.js";
+import { el, toast } from "./platform/dom.js";
+import { addChip } from "./features/chat/attachments.js";
+import { renderMd } from "./platform/markdown.js";
 
 export function selectedKnowledgeText(range) {
   const complete = range.cloneRange();

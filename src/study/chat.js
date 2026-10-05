@@ -1,6 +1,6 @@
 import { createSessionEventChannel } from "../sessionEventChannel.js";
 import { createUserInputUI } from "../userInput.js";
-import { node, request, markdown, button, notify } from "./ui.js";
+import { node, request, markdown, button, notify } from "../platform/ui.js";
 import { createActivityView } from "./activity.js";
 
 export function createStudyChat({ root, sessionId, paperId, draft = "", onDraft, onEvent, guide = false }) {

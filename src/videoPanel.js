@@ -1,4 +1,6 @@
-import { $, el, toast, addChip, state } from "./app.js";
+import { $, el, toast } from "./platform/dom.js";
+import { addChip } from "./features/chat/attachments.js";
+import { state } from "./shell/state.js";
 import { streamPrompt, streamPromptInBranch } from "./chat.js";
 import { renderMarkmap } from "./markmapUtil.js";
 
