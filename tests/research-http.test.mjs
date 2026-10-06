@@ -249,3 +249,75 @@ test("文献对比表：创建、单元格来源状态、冲突检测与回收�
   assert.equal(afterRestore.value.matrices.length, 1);
   assert.equal(afterRestore.value.matrices[0].cells["fixture-paper|col_1"].page, 6, "恢复后单元格来源保留");
 });
+
+test("研究假设：登记、证据依据校验、决策历史与回收站恢复", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = await createProject(fixture.url, "假设验收");
+  const hypBase = `/research/projects/${projectId}/hypotheses`;
+  const evBase = `/research/projects/${projectId}/evidence`;
+
+  const evidence = await call(fixture.url, evBase, {
+    method: "POST",
+    body: { type: "fact", content: "修正掩码后 IoU 提升", source: { kind: "paper", paperId: "fixture-paper" } },
+  });
+  const evidenceId = evidence.value.evidence.id;
+
+  const badRef = await call(fixture.url, hypBase, {
+    method: "POST",
+    body: { title: "缺依据", statement: "x", support: ["ev_missing"] },
+  });
+  assert.equal(badRef.status, 400, "不存在的证据不能作为依据");
+
+  const created = await call(fixture.url, hypBase, {
+    method: "POST",
+    body: {
+      title: "掩码修正解释指标差异",
+      statement: "失败样本主要来自掩码口径不一致",
+      prediction: "修正后 IoU 与原文差距缩小",
+      counterExamples: "也可能是阈值选择差异",
+      support: [evidenceId],
+    },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.value));
+  const hyp = created.value.hypothesis;
+  assert.equal(hyp.decision, null, "未做决策时应为空");
+  assert.deepEqual(hyp.decisionHistory, []);
+
+  const decide = await call(fixture.url, hypBase + "/" + hyp.id, {
+    method: "PUT",
+    body: { ...hyp, decision: { status: "continue", reason: "预测可低成本验证" }, revision: hyp.revision },
+  });
+  assert.equal(decide.status, 200);
+  assert.equal(decide.value.hypothesis.decision.status, "continue");
+  assert.equal(decide.value.hypothesis.decisionHistory.length, 1);
+  assert.match(decide.value.hypothesis.decisionHistory[0].reason, /低成本验证/);
+
+  const again = await call(fixture.url, hypBase + "/" + hyp.id, {
+    method: "PUT",
+    body: { ...decide.value.hypothesis, revision: decide.value.hypothesis.revision },
+  });
+  assert.equal(again.value.hypothesis.decisionHistory.length, 1, "未改变状态的保存不应重复记录历史");
+
+  const stopped = await call(fixture.url, hypBase + "/" + hyp.id, {
+    method: "PUT",
+    body: { ...again.value.hypothesis, decision: { status: "hold", reason: "等待更多数据" }, revision: again.value.hypothesis.revision },
+  });
+  assert.equal(stopped.value.hypothesis.decisionHistory.length, 2, "状态变化应追加历史");
+
+  const conflict = await call(fixture.url, hypBase + "/" + hyp.id, {
+    method: "PUT",
+    body: { ...stopped.value.hypothesis, revision: 0 },
+  });
+  assert.equal(conflict.status, 409);
+
+  const removed = await call(fixture.url, hypBase + "/" + hyp.id, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  const list = await call(fixture.url, hypBase);
+  assert.equal(list.value.hypotheses.length, 0);
+  const restored = await call(fixture.url, `/storage/resources/${"research-hypothesis:" + hyp.id}/restore`, { method: "POST" });
+  assert.equal(restored.status, 200, JSON.stringify(restored.value));
+  const afterRestore = await call(fixture.url, hypBase);
+  assert.equal(afterRestore.value.hypotheses.length, 1);
+  assert.equal(afterRestore.value.hypotheses[0].decisionHistory.length, 2, "恢复保留决策历史");
+});

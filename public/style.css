@@ -1532,3 +1532,6 @@ html[data-fs="xlarge"]  { --fs-doc: 19.5px; --fs-chat: 18.5px; --fs-ui: 16.5px; 
 .research-evidence-type { flex: none; font-size: 11px; color: var(--accent); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
 .research-evidence-content { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .research-evidence-item .tool-btn { font-size: 11px; padding: 2px 7px; flex: none; }
+.research-hypothesis-evidence { display: flex; flex-wrap: wrap; gap: 6px; }
+.research-hypothesis-evidence .research-evidence-type { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+.research-hypothesis-evidence .research-evidence-type > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }

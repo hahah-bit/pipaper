@@ -421,3 +421,135 @@ export function deleteMatrix(projectId, id) {
     kind: "research-matrix",
   });
 }
+
+// ---- 假设与研究决策（A03）：记录想法、依据、反例与取舍理由 ----
+
+const DECISION_STATUS = ["exploring", "continue", "hold", "revise", "stop"];
+export const hypothesisResourceId = (id) => "research-hypothesis:" + id;
+
+const hypothesisDirectory = (projectId) => path.join(researchDir(projectId), "hypotheses");
+const hypothesisFile = (projectId, id) => path.join(hypothesisDirectory(projectId), id + ".json");
+
+function normalizeEvidenceRefs(value, projectId, field) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault(`「${field}」必须是证据标识列表`, 400);
+  const refs = [];
+  for (const raw of value) {
+    const id = typeof raw === "string" ? raw : raw?.id;
+    if (typeof id !== "string" || refs.includes(id)) continue;
+    try {
+      getEvidence(projectId, id); // 不存在或已删除的证据不能作为依据
+    } catch {
+      throw fault(`关联的${field}不存在或已删除：${id}`, 400);
+    }
+    refs.push(id);
+  }
+  return refs.slice(0, 50);
+}
+
+function normalizeDecision(value, existing) {
+  if (value == null) return existing?.decision || null;
+  if (typeof value !== "object") throw fault("研究决策无效", 400);
+  if (!DECISION_STATUS.includes(value.status)) throw fault("决策状态必须是 exploring、continue、hold、revise 或 stop", 400);
+  return {
+    status: value.status,
+    reason: limitLength(value.reason, "决策理由无效", 2000),
+    at: existing?.decision?.status === value.status ? existing.decision.at : new Date().toISOString(),
+  };
+}
+
+function saveHypothesisRecord(projectId, existing, patch) {
+  const now = new Date().toISOString();
+  const title = limitLength(patch.title, "假设标题不能为空", 200);
+  if (!title) throw fault("假设标题不能为空", 400);
+  const statement = limitLength(patch.statement ?? existing?.statement, "假设内容不能为空", 4000);
+  if (!statement) throw fault("假设内容不能为空", 400);
+  const decision = normalizeDecision(patch.decision, existing);
+  const record = {
+    id: existing?.id || "hyp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    projectId,
+    title,
+    statement,
+    prediction: limitLength(patch.prediction, "预测描述无效", 2000),
+    scope: limitLength(patch.scope, "作用范围无效", 1000),
+    counterExamples: limitLength(patch.counterExamples, "反例与替代解释无效", 2000),
+    unknowns: limitLength(patch.unknowns, "未知项说明无效", 1000),
+    support: normalizeEvidenceRefs(patch.support ?? existing?.support, projectId, "支持证据"),
+    oppose: normalizeEvidenceRefs(patch.oppose ?? existing?.oppose, projectId, "反对证据"),
+    decision,
+    decisionHistory: existing?.decisionHistory || [],
+    sourceNote: limitLength(patch.sourceNote, "来源说明无效", 500),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    revision: (existing?.revision || 0) + 1,
+  };
+  if (decision && existing?.decision?.status !== decision.status)
+    record.decisionHistory = [...record.decisionHistory, { at: decision.at, status: decision.status, reason: decision.reason }];
+  writeJsonState(hypothesisFile(projectId, record.id), record, {
+    id: hypothesisResourceId(record.id),
+    kind: "research-hypothesis",
+    title: "假设 · " + record.title,
+    metadata: record,
+  });
+  for (const evidenceIdValue of record.support)
+    link(hypothesisResourceId(record.id), evidenceResourceId(evidenceIdValue), "uses");
+  for (const evidenceIdValue of record.oppose)
+    link(hypothesisResourceId(record.id), evidenceResourceId(evidenceIdValue), "uses");
+  return record;
+}
+
+function readHypothesisState(projectId, id) {
+  if (!/^hyp_[A-Za-z0-9_-]{1,64}$/.test(id || "")) throw fault("无效的假设标识", 400);
+  const entry = resource(hypothesisResourceId(id));
+  if (entry && entry.lifecycle !== "active") return null;
+  try {
+    return readJsonState(hypothesisFile(projectId, id), null);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+export function listHypotheses(projectId) {
+  assertProject(projectId);
+  let names = [];
+  try {
+    names = fs.readdirSync(hypothesisDirectory(projectId)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    const value = readHypothesisState(projectId, name.slice(0, -".json".length));
+    if (value) rows.push(value);
+  }
+  rows.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return rows;
+}
+
+export function getHypothesis(projectId, id) {
+  assertProject(projectId);
+  const value = readHypothesisState(projectId, id);
+  if (!value) throw fault("假设不存在", 404);
+  return value;
+}
+
+export function createHypothesis(projectId, patch = {}) {
+  assertProject(projectId);
+  return saveHypothesisRecord(projectId, null, patch);
+}
+
+export function updateHypothesis(projectId, id, patch = {}) {
+  const existing = getHypothesis(projectId, id);
+  if (patch.revision != null && Number(patch.revision) !== existing.revision)
+    throw fault("假设已被其他修改更新，请刷新后重试", 409);
+  return saveHypothesisRecord(projectId, existing, patch);
+}
+
+export function deleteHypothesis(projectId, id) {
+  const existing = getHypothesis(projectId, id);
+  return trashPath(hypothesisFile(projectId, existing.id), {
+    id: hypothesisResourceId(existing.id),
+    kind: "research-hypothesis",
+  });
+}

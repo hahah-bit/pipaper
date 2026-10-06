@@ -12,6 +12,11 @@ import {
   createMatrix,
   updateMatrix,
   deleteMatrix,
+  listHypotheses,
+  getHypothesis,
+  createHypothesis,
+  updateHypothesis,
+  deleteHypothesis,
 } from "./store.js";
 
 // 研究模块路由（加法开发）：入口挂在 /api/research 下，不影响既有路由。
@@ -88,5 +93,30 @@ export function registerResearchRoutes(api) {
   api.delete(
     "/research/projects/:projectId/matrices/:matrixId",
     route((req) => deleteMatrix(req.params.projectId, req.params.matrixId)),
+  );
+
+  api.get(
+    "/research/projects/:projectId/hypotheses",
+    route((req) => ({ hypotheses: listHypotheses(req.params.projectId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/hypotheses",
+    route((req) => ({ hypothesis: createHypothesis(req.params.projectId, req.body || {}) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/hypotheses/:hypothesisId",
+    route((req) => ({ hypothesis: getHypothesis(req.params.projectId, req.params.hypothesisId) })),
+  );
+
+  api.put(
+    "/research/projects/:projectId/hypotheses/:hypothesisId",
+    route((req) => ({ hypothesis: updateHypothesis(req.params.projectId, req.params.hypothesisId, req.body || {}) })),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/hypotheses/:hypothesisId",
+    route((req) => deleteHypothesis(req.params.projectId, req.params.hypothesisId)),
   );
 }
