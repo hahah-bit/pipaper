@@ -35,6 +35,16 @@ import {
   createRun,
   updateRun,
   deleteRun,
+  listComparisons,
+  getComparison,
+  createComparison,
+  updateComparison,
+  deleteComparison,
+  listConclusions,
+  getConclusion,
+  createConclusion,
+  updateConclusion,
+  deleteConclusion,
 } from "./store.js";
 
 // 研究模块路由（加法开发）：入口挂在 /api/research 下，不影响既有路由。
@@ -228,5 +238,55 @@ export function registerResearchRoutes(api) {
   api.delete(
     "/research/projects/:projectId/runs/:runId",
     route((req) => deleteRun(req.params.projectId, req.params.runId)),
+  );
+
+  api.get(
+    "/research/projects/:projectId/comparisons",
+    route((req) => ({ comparisons: listComparisons(req.params.projectId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/comparisons",
+    route((req) => ({ comparison: createComparison(req.params.projectId, req.body || {}) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/comparisons/:comparisonId",
+    route((req) => ({ comparison: getComparison(req.params.projectId, req.params.comparisonId) })),
+  );
+
+  api.put(
+    "/research/projects/:projectId/comparisons/:comparisonId",
+    route((req) => ({ comparison: updateComparison(req.params.projectId, req.params.comparisonId, req.body || {}) })),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/comparisons/:comparisonId",
+    route((req) => deleteComparison(req.params.projectId, req.params.comparisonId)),
+  );
+
+  api.get(
+    "/research/projects/:projectId/conclusions",
+    route((req) => ({ conclusions: listConclusions(req.params.projectId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/conclusions",
+    route((req) => ({ conclusion: createConclusion(req.params.projectId, req.body || {}) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/conclusions/:conclusionId",
+    route((req) => ({ conclusion: getConclusion(req.params.projectId, req.params.conclusionId) })),
+  );
+
+  api.put(
+    "/research/projects/:projectId/conclusions/:conclusionId",
+    route((req) => ({ conclusion: updateConclusion(req.params.projectId, req.params.conclusionId, req.body || {}) })),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/conclusions/:conclusionId",
+    route((req) => deleteConclusion(req.params.projectId, req.params.conclusionId)),
   );
 }

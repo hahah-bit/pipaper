@@ -21,6 +21,8 @@ export const labels = {
   "research-protocol": "研究方案",
   "research-experiment": "逻辑实验",
   "research-run": "运行记录",
+  "research-comparison": "结果比较",
+  "research-conclusion": "结论卡",
 };
 export const storageApi = (url, body, method) => requestJson("/api/" + url, { body, method: method || (body ? "POST" : "GET") });
 export const button = (name, action) =>

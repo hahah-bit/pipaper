@@ -553,3 +553,106 @@ test("实验台账：实验与运行登记、失败保留、重试关系与导�
   assert.equal(afterRestore.value.runs.length, 2);
   assert.equal(afterRestore.value.runs.find((r) => r.id === firstRun.id).error, "第 30 轮显存不足中止", "恢复保留失败原因");
 });
+
+test("结果比较与结论卡：快照固定运行值、口径说明、结论分类与依据校验", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = await createProject(fixture.url, "比较结论验收");
+  const exp = await call(fixture.url, `/research/projects/${projectId}/experiments`, {
+    method: "POST",
+    body: { title: "比较验收实验" },
+  });
+  const experimentId = exp.value.experiment.id;
+  const runBase = `/research/projects/${projectId}/runs`;
+  const runA = await call(fixture.url, runBase, {
+    method: "POST",
+    body: { label: "基线", experimentId, status: "succeeded", metrics: [{ name: "iou", value: 0.81, source: "results.csv" }] },
+  });
+  const runB = await call(fixture.url, runBase, {
+    method: "POST",
+    body: { label: "修正", experimentId, status: "succeeded", metrics: [{ name: "iou", value: 0.87, source: "results.csv" }] },
+  });
+  const runAId = runA.value.run.id, runBId = runB.value.run.id;
+
+  const cmpBase = `/research/projects/${projectId}/comparisons`;
+  const noRuns = await call(fixture.url, cmpBase, { method: "POST", body: { title: "空比较", metricName: "iou", runIds: [] } });
+  assert.equal(noRuns.status, 400, "比较至少需要一个运行");
+
+  const created = await call(fixture.url, cmpBase, {
+    method: "POST",
+    body: {
+      title: "基线 vs 修正 IoU",
+      metricName: "iou",
+      runIds: [runAId, runBId],
+      inclusionNote: "只纳入同数据划分的成功运行",
+      comparabilityNote: "修正运行批量较小，比较为并排参考",
+    },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.value));
+  let comparison = created.value.comparison;
+  assert.equal(comparison.rows.length, 2);
+  assert.equal(comparison.rows.find((r) => r.runId === runAId).value, 0.81);
+
+  // 更新运行值后，已保存的快照不变
+  await call(fixture.url, runBase + "/" + runAId, {
+    method: "PUT",
+    body: { ...runA.value.run, metrics: [{ name: "iou", value: 0.99, source: "results.csv" }], revision: runA.value.run.revision },
+  });
+  const still = await call(fixture.url, cmpBase + "/" + comparison.id);
+  assert.equal(still.value.comparison.rows.find((r) => r.runId === runAId).value, 0.81, "快照不随后续运行更新变化");
+
+  const conBase = `/research/projects/${projectId}/conclusions`;
+  const badSupport = await call(fixture.url, conBase, {
+    method: "POST",
+    body: { statement: "x", kind: "supported", support: [{ kind: "run", id: "run_missing" }] },
+  });
+  assert.equal(badSupport.status, 400);
+  const badKind = await call(fixture.url, conBase, {
+    method: "POST",
+    body: { statement: "x", kind: "proven" },
+  });
+  assert.equal(badKind.status, 400, "结论类型受控，不允许宣称已证实");
+
+  const conclusion = await call(fixture.url, conBase, {
+    method: "POST",
+    body: {
+      statement: "掩码修正后 IoU 由 0.81 提升至 0.87",
+      kind: "exploratory",
+      scope: "本地复现集，单次运行",
+      limits: "未做多种子重复；比较口径存在批量差异",
+      support: [
+        { kind: "comparison", id: comparison.id },
+        { kind: "evidence", id: "ev_missing" },
+      ],
+    },
+  });
+  assert.equal(conclusion.status, 400, "缺失证据应整体拒绝");
+
+  const okConclusion = await call(fixture.url, conBase, {
+    method: "POST",
+    body: {
+      statement: "掩码修正后 IoU 由 0.81 提升至 0.87",
+      kind: "exploratory",
+      scope: "本地复现集，单次运行",
+      limits: "未做多种子重复",
+      support: [{ kind: "comparison", id: comparison.id }],
+    },
+  });
+  assert.equal(okConclusion.status, 200, JSON.stringify(okConclusion.value));
+  const con = okConclusion.value.conclusion;
+  assert.equal(con.kind, "exploratory", "探索性观察不写成已证实结论");
+
+  const checked = await call(fixture.url, conBase + "/" + con.id, {
+    method: "PUT",
+    body: { ...con, checked: true, revision: con.revision },
+  });
+  assert.equal(checked.value.conclusion.checked, true, "人工核对状态独立记录");
+
+  const removed = await call(fixture.url, cmpBase + "/" + comparison.id, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  const restored = await call(fixture.url, `/storage/resources/${"research-comparison:" + comparison.id}/restore`, { method: "POST" });
+  assert.equal(restored.status, 200);
+  const afterRestore = await call(fixture.url, cmpBase);
+  assert.equal(afterRestore.value.comparisons.length, 1);
+  assert.equal(afterRestore.value.comparisons[0].rows[0].snapshottedAt, comparison.rows[0].snapshottedAt, "恢复保留快照时间");
+});

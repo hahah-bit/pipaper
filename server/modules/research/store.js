@@ -940,6 +940,242 @@ export function deleteRun(projectId, id) {
   });
 }
 
+// ---- 结果比较与结论卡（A06）：比较口径显式保存，快照不随后续运行变化 ----
+
+const CONCLUSION_KINDS = ["observation", "exploratory", "supported", "negative"];
+export const comparisonResourceId = (id) => "research-comparison:" + id;
+export const conclusionResourceId = (id) => "research-conclusion:" + id;
+
+const comparisonDirectory = (projectId) => path.join(researchDir(projectId), "comparisons");
+const comparisonFile = (projectId, id) => path.join(comparisonDirectory(projectId), id + ".json");
+const conclusionDirectory = (projectId) => path.join(researchDir(projectId), "conclusions");
+const conclusionFile = (projectId, id) => path.join(conclusionDirectory(projectId), id + ".json");
+
+function comparisonRows(projectId, runIds, metricName) {
+  // 保存瞬间的运行值快照：之后运行更新不会改写这里。
+  const at = new Date().toISOString();
+  return runIds.map((runId) => {
+    const run = getRun(projectId, runId);
+    const metric = (run.metrics || []).find((m) => m.name === metricName);
+    return {
+      runId,
+      label: run.label,
+      runStatus: run.status,
+      value: metric ? metric.value : null,
+      unit: metric?.unit || "",
+      source: metric?.source || "",
+      status: metric ? "value" : "missing",
+      snapshottedAt: at,
+    };
+  });
+}
+
+function readComparisonState(projectId, id) {
+  if (!/^cmp_[A-Za-z0-9_-]{1,64}$/.test(id || "")) throw fault("无效的比较标识", 400);
+  const entry = resource(comparisonResourceId(id));
+  if (entry && entry.lifecycle !== "active") return null;
+  try {
+    return readJsonState(comparisonFile(projectId, id), null);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+function saveComparisonRecord(projectId, existing, patch) {
+  const now = new Date().toISOString();
+  const title = limitLength(patch.title, "比较标题不能为空", 200);
+  const metricName = limitLength(patch.metricName, "比较指标不能为空", 100);
+  if (!title) throw fault("比较标题不能为空", 400);
+  if (!metricName) throw fault("比较必须指明指标", 400);
+  const runIds = Array.isArray(patch.runIds ?? existing?.runIds) ? [...new Set(patch.runIds ?? existing?.runIds)] : [];
+  if (!runIds.length) throw fault("比较至少选择一组运行", 400);
+  if (runIds.length > 30) throw fault("单次比较最多纳入 30 个运行", 400);
+  for (const runId of runIds) getRun(projectId, runId); // 纳入的运行必须存在
+  const record = {
+    id: existing?.id || "cmp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    projectId,
+    title,
+    metricName,
+    runIds,
+    inclusionNote: limitLength(patch.inclusionNote, "纳入与排除理由无效", 2000),
+    comparabilityNote: limitLength(patch.comparabilityNote, "口径差异说明无效", 2000),
+    rows: comparisonRows(projectId, runIds, metricName),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    revision: (existing?.revision || 0) + 1,
+  };
+  writeJsonState(comparisonFile(projectId, record.id), record, {
+    id: comparisonResourceId(record.id),
+    kind: "research-comparison",
+    title: "比较 · " + record.title,
+    metadata: record,
+  });
+  for (const runId of record.runIds)
+    link(comparisonResourceId(record.id), runResourceId(runId), "uses");
+  return record;
+}
+
+export function listComparisons(projectId) {
+  assertProject(projectId);
+  let names = [];
+  try {
+    names = fs.readdirSync(comparisonDirectory(projectId)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    const value = readComparisonState(projectId, name.slice(0, -".json".length));
+    if (value) rows.push(value);
+  }
+  rows.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return rows;
+}
+
+export function getComparison(projectId, id) {
+  assertProject(projectId);
+  const value = readComparisonState(projectId, id);
+  if (!value) throw fault("比较不存在", 404);
+  return value;
+}
+
+export function createComparison(projectId, patch = {}) {
+  assertProject(projectId);
+  return saveComparisonRecord(projectId, null, patch);
+}
+
+export function updateComparison(projectId, id, patch = {}) {
+  const existing = getComparison(projectId, id);
+  if (patch.revision != null && Number(patch.revision) !== existing.revision)
+    throw fault("比较已被其他修改更新，请刷新后重试", 409);
+  return saveComparisonRecord(projectId, existing, patch);
+}
+
+export function deleteComparison(projectId, id) {
+  const existing = getComparison(projectId, id);
+  return trashPath(comparisonFile(projectId, existing.id), {
+    id: comparisonResourceId(existing.id),
+    kind: "research-comparison",
+  });
+}
+
+const SUPPORT_KINDS = {
+  run: (projectId, id) => getRun(projectId, id),
+  comparison: (projectId, id) => getComparison(projectId, id),
+  evidence: (projectId, id) => getEvidence(projectId, id),
+  hypothesis: (projectId, id) => getHypothesis(projectId, id),
+  matrix: (projectId, id) => getMatrix(projectId, id),
+  protocol: (projectId, id) => getProtocol(projectId, id),
+};
+
+function normalizeSupport(value, projectId) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("结论依据必须是列表", 400);
+  const refs = [];
+  for (const entry of value.slice(0, 50)) {
+    const kind = entry?.kind;
+    const id = typeof entry?.id === "string" ? entry.id : "";
+    if (!SUPPORT_KINDS[kind]) throw fault(`结论依据类型无效：${kind}`, 400);
+    try {
+      SUPPORT_KINDS[kind](projectId, id);
+    } catch {
+      throw fault(`结论依据不存在或已删除：${kind}:${id}`, 400);
+    }
+    const key = kind + ":" + id;
+    if (!refs.some((ref) => ref.kind + ":" + ref.id === key)) refs.push({ kind, id });
+  }
+  return refs;
+}
+
+function readConclusionState(projectId, id) {
+  if (!/^con_[A-Za-z0-9_-]{1,64}$/.test(id || "")) throw fault("无效的结论标识", 400);
+  const entry = resource(conclusionResourceId(id));
+  if (entry && entry.lifecycle !== "active") return null;
+  try {
+    return readJsonState(conclusionFile(projectId, id), null);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+function saveConclusionRecord(projectId, existing, patch) {
+  const now = new Date().toISOString();
+  const statement = limitLength(patch.statement, "结论表述不能为空", 4000);
+  if (!statement) throw fault("结论表述不能为空", 400);
+  const kind = CONCLUSION_KINDS.includes(patch.kind) ? patch.kind : existing?.kind;
+  if (!kind) throw fault("结论必须区分 观察 / 探索性 / 得到支持 / 负结果", 400);
+  const record = {
+    id: existing?.id || "con_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    projectId,
+    statement,
+    kind,
+    scope: limitLength(patch.scope, "适用范围无效", 1000),
+    limits: limitLength(patch.limits, "结论限制无效", 2000),
+    support: normalizeSupport(patch.support ?? existing?.support, projectId),
+    checked: Boolean(patch.checked ?? existing?.checked ?? false),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    revision: (existing?.revision || 0) + 1,
+  };
+  writeJsonState(conclusionFile(projectId, record.id), record, {
+    id: conclusionResourceId(record.id),
+    kind: "research-conclusion",
+    title: record.statement.slice(0, 40),
+    metadata: record,
+  });
+  for (const ref of record.support) {
+    const prefix = { run: runResourceId, comparison: comparisonResourceId, evidence: evidenceResourceId, hypothesis: hypothesisResourceId, matrix: matrixResourceId, protocol: protocolResourceId }[ref.kind];
+    link(conclusionResourceId(record.id), prefix(ref.id), "uses");
+  }
+  return record;
+}
+
+export function listConclusions(projectId) {
+  assertProject(projectId);
+  let names = [];
+  try {
+    names = fs.readdirSync(conclusionDirectory(projectId)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    const value = readConclusionState(projectId, name.slice(0, -".json".length));
+    if (value) rows.push(value);
+  }
+  rows.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return rows;
+}
+
+export function getConclusion(projectId, id) {
+  assertProject(projectId);
+  const value = readConclusionState(projectId, id);
+  if (!value) throw fault("结论不存在", 404);
+  return value;
+}
+
+export function createConclusion(projectId, patch = {}) {
+  assertProject(projectId);
+  return saveConclusionRecord(projectId, null, patch);
+}
+
+export function updateConclusion(projectId, id, patch = {}) {
+  const existing = getConclusion(projectId, id);
+  if (patch.revision != null && Number(patch.revision) !== existing.revision)
+    throw fault("结论已被其他修改更新，请刷新后重试", 409);
+  return saveConclusionRecord(projectId, existing, patch);
+}
+
+export function deleteConclusion(projectId, id) {
+  const existing = getConclusion(projectId, id);
+  return trashPath(conclusionFile(projectId, existing.id), {
+    id: conclusionResourceId(existing.id),
+    kind: "research-conclusion",
+  });
+}
+
 // ---- 基础导出与导入（B1.6）：新增研究记录可整体打包、在项目中恢复 ----
 
 export const RESEARCH_SCHEMA_VERSION = 1;
