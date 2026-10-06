@@ -942,6 +942,8 @@ export function deleteRun(projectId, id) {
 
 // ---- 基础导出与导入（B1.6）：新增研究记录可整体打包、在项目中恢复 ----
 
+export const RESEARCH_SCHEMA_VERSION = 1;
+
 function writeImportedRecord(file, resourceId, kind, title, record) {
   writeJsonState(file, record, { id: resourceId, kind, title, metadata: record });
 }
