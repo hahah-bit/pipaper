@@ -83,3 +83,55 @@ test("F01：行动与成果的局部操作不清空研究问题、范围、目�
   assert.equal(cleared.value.profile.question, "");
   assert.equal(cleared.value.profile.scope, "线缆接头检测复现", "清空 question 不影响 scope");
 });
+
+test("F04/F06：后端拒绝空值指标、状态词表归一且未知状态报错", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const created = await call(fixture.url, "/projects", { method: "POST", body: { name: "导入语义验收" } });
+  const projectId = created.value.id;
+  const exp = await call(fixture.url, `/research/projects/${projectId}/experiments`, {
+    method: "POST", body: { title: "导入语义实验" },
+  });
+  const runBase = `/research/projects/${projectId}/runs`;
+
+  // 空字符串指标 → 400，而不是 0
+  const emptyMetric = await call(fixture.url, runBase, {
+    method: "POST",
+    body: { label: "空指标行", experimentId: exp.value.experiment.id, metrics: [{ name: "accuracy", value: "" }] },
+  });
+  assert.equal(emptyMetric.status, 400);
+  assert.match(emptyMetric.value.error, /不能记为 0/);
+
+  // null 指标同样拒绝
+  const nullMetric = await call(fixture.url, runBase, {
+    method: "POST",
+    body: { label: "null 指标", experimentId: exp.value.experiment.id, metrics: [{ name: "a", value: null }] },
+  });
+  assert.equal(nullMetric.status, 400);
+
+  // 真正的 0 与负数保留
+  const zero = await call(fixture.url, runBase, {
+    method: "POST",
+    body: { label: "真零", experimentId: exp.value.experiment.id, status: "succeeded", metrics: [{ name: "a", value: 0 }, { name: "b", value: "-1.5" }] },
+  });
+  assert.equal(zero.status, 200);
+  assert.deepEqual(zero.value.run.metrics.map((m) => m.value), [0, -1.5]);
+
+  // 中英文状态词表
+  for (const [word, expected] of [["succeeded", "succeeded"], ["Succeeded", "succeeded"], ["失败", "failed"], ["failed", "failed"], ["中止", "stopped"]]) {
+    const run = await call(fixture.url, runBase, {
+      method: "POST",
+      body: { label: "状态-" + word, experimentId: exp.value.experiment.id, status: word },
+    });
+    assert.equal(run.status, 200, word + ": " + JSON.stringify(run.value));
+    assert.equal(run.value.run.status, expected, word + " 应解析为 " + expected);
+  }
+
+  // 未知状态 → 400 明确报错
+  const unknown = await call(fixture.url, runBase, {
+    method: "POST",
+    body: { label: "未知状态", experimentId: exp.value.experiment.id, status: "banana" },
+  });
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.value.error, /无法识别的运行状态/);
+});

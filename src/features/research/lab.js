@@ -52,13 +52,40 @@ export function parseDataFile(text) {
   return parseCsv(text);
 }
 
-function metricsFromRow(row, metricColumns, sourceName) {
-  return metricColumns.map((column) => ({
-    name: column,
-    value: Number(row[column]),
-    unit: "",
-    source: sourceName + ":" + column + " 列",
-  })).filter((metric) => Number.isFinite(metric.value));
+// F04 修复：空单元格、空白字符串、缺键是"未报告"，不是 0；
+// 只有能解析为有限数值的才成为指标（真正的 0、负数、科学计数法都保留）。
+export function parseMetricValue(raw) {
+  if (raw == null) return null;
+  const text = String(raw).trim();
+  if (!text) return null;
+  const value = Number(text);
+  return Number.isFinite(value) ? value : null;
+}
+
+export function metricsFromRow(row, metricColumns, sourceName) {
+  return metricColumns
+    .map((column) => ({ column, value: parseMetricValue(row[column]) }))
+    .filter((item) => item.value !== null)
+    .map((item) => ({
+      name: item.column,
+      value: item.value,
+      unit: "",
+      source: sourceName + ":" + item.column + " 列",
+    }));
+}
+
+// F06 修复：状态列词表同时接受中英文，未知值不静默回退——由调用方提示。
+export const RUN_STATUS_WORDS = {
+  succeeded: "succeeded", success: "succeeded", ok: "succeeded", 成功: "succeeded",
+  failed: "failed", failure: "failed", error: "failed", 失败: "failed",
+  stopped: "stopped", aborted: "stopped", cancel: "stopped", cancelled: "stopped", 中止: "stopped", 停止: "stopped",
+  incomplete: "incomplete", partial: "incomplete", running: "incomplete", 不完整: "incomplete", 进行中: "incomplete",
+};
+
+export function parseRunStatus(raw) {
+  const text = String(raw ?? "").trim().toLowerCase();
+  if (!text) return { status: null, known: true }; // 空值由默认逻辑处理
+  return RUN_STATUS_WORDS[text] ? { status: RUN_STATUS_WORDS[text], known: true } : { status: null, known: false };
 }
 
 export function labSection({ projectId }) {
@@ -161,9 +188,9 @@ export function labSection({ projectId }) {
             const metrics = [...metricRows.querySelectorAll(".research-metric-row")]
               .map((row) => {
                 const inputs = row.querySelectorAll("input");
-                return { name: inputs[0].value.trim(), value: Number(inputs[1].value), unit: inputs[2].value.trim(), source: inputs[3].value.trim() };
+                return { name: inputs[0].value.trim(), value: parseMetricValue(inputs[1].value), unit: inputs[2].value.trim(), source: inputs[3].value.trim() };
               })
-              .filter((metric) => metric.name && Number.isFinite(metric.value));
+              .filter((metric) => metric.name && metric.value !== null);
             const config = {};
             for (const input of dlg.querySelectorAll("input[datasetKey]")) config[input.datasetKey || input.getAttribute("datasetKey")] = input.value.trim();
             try {
@@ -214,13 +241,17 @@ export function labSection({ projectId }) {
       class: "tool-btn primary", disabled: true,
       onclick: async () => {
         if (!parsed) return;
-        const rows = parsed.rows.map((row, index) => ({
-          index,
-          label: mapping.label ? row[mapping.label] : "导入-" + (index + 1),
-          status: mapping.status ? (RUN_STATUS_LABEL[row[mapping.status]] ? { 成功: "succeeded", 失败: "failed", 中止: "stopped", 不完整: "incomplete" }[row[mapping.status]] : String(row[mapping.status] || "").toLowerCase()) : "succeeded",
-          metrics: metricsFromRow(row, [...mapping.metrics], parsed.name),
-          duplicate: mapping.label && existingLabels.has(row[mapping.label]),
-        }));
+        const rows = parsed.rows.map((row, index) => {
+          const parsedStatus = mapping.status ? parseRunStatus(row[mapping.status]) : { status: null, known: true };
+          return {
+            index,
+            label: mapping.label ? row[mapping.label] : "导入-" + (index + 1),
+            status: parsedStatus.status || (mapping.status ? "incomplete" : "succeeded"),
+            statusKnown: parsedStatus.known,
+            metrics: metricsFromRow(row, [...mapping.metrics], parsed.name),
+            duplicate: mapping.label && existingLabels.has(row[mapping.label]),
+          };
+        });
         confirmBtn.disabled = true;
         let createdCount = 0;
         const failures = [];
@@ -243,6 +274,26 @@ export function labSection({ projectId }) {
         for (const message of failures) console.warn("[research-import]", message);
       },
     }, "确认导入");
+    // F04/F06：预览即显示导入后的最终解释——空指标按缺失处理、状态按词表解析，
+    // 未知状态逐行列出，不静默回退。
+    const previewInterpretation = () => {
+      const unknownRows = [];
+      let missingMetricCells = 0;
+      parsed.rows.forEach((row, index) => {
+        if (mapping.status && !parseRunStatus(row[mapping.status]).known)
+          unknownRows.push((mapping.label ? row[mapping.label] : "行 " + (index + 1)) + "（" + row[mapping.status] + "）");
+        for (const column of mapping.metrics)
+          if (parseMetricValue(row[column]) === null) missingMetricCells++;
+      });
+      const lines = [
+        "导入解释：空指标单元格按「未报告」处理，不会记为 0（当前 " + missingMetricCells + " 个空/非数值单元格将被跳过）。",
+      ];
+      if (mapping.status)
+        lines.push(unknownRows.length
+          ? "无法识别的状态值（将按「不完整」登记）：" + unknownRows.slice(0, 5).join("、") + (unknownRows.length > 5 ? " 等" : "")
+          : "状态列全部可识别。");
+      return el("div", { class: "research-muted" }, lines.join("；"));
+    };
     const renderPreview = () => {
       if (!parsed) return;
       const columns = parsed.columns;
@@ -268,6 +319,7 @@ export function labSection({ projectId }) {
           el("div", { class: "research-field" }, "指标列", el("div", { class: "research-hypothesis-evidence" }, columns.map(checkbox)))),
         el("div", { class: "research-muted" },
           "共 " + parsed.rows.length + " 行。已存在的运行标识：" + ([...existingLabels].join("、") || "无") + "；重复行会按原样再登记一条，可在确认前改用其他标识列。"),
+        previewInterpretation(),
       );
       previewBox.replaceChildren(el("table", { class: "research-matrix-table" },
         el("thead", {}, el("tr", {}, columns.map((c) => el("th", {}, c)))),

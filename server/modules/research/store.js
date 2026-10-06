@@ -709,6 +709,18 @@ export function deleteProtocol(projectId, id) {
 // ---- 实验台账与运行记录（A05）：登记实际执行，成功与失败都留下记录 ----
 
 const RUN_STATUS = ["succeeded", "failed", "stopped", "incomplete"];
+// F06：状态词表中英文都能解析；无法识别时明确报错，不静默回退。
+const RUN_STATUS_WORDS = {
+  succeeded: "succeeded", success: "succeeded", ok: "succeeded", 成功: "succeeded",
+  failed: "failed", failure: "failed", error: "failed", 失败: "failed",
+  stopped: "stopped", aborted: "stopped", cancelled: "stopped", 中止: "stopped", 停止: "stopped",
+  incomplete: "incomplete", running: "incomplete", 不完整: "incomplete", 进行中: "incomplete",
+};
+function normalizeRunStatusWord(value) {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return null;
+  return RUN_STATUS_WORDS[text] || null;
+}
 const RUN_RELATION_TYPES = ["retry", "resume", "variant"];
 export const experimentResourceId = (id) => "research-experiment:" + id;
 export const runResourceId = (id) => "research-run:" + id;
@@ -721,7 +733,11 @@ const runFile = (projectId, id) => path.join(runDirectory(projectId), id + ".jso
 function normalizeMetricEntry(entry, { requireSource = false } = {}) {
   const name = limitLength(entry?.name, "指标名称无效", 100);
   if (!name) throw fault("指标必须有名称", 400);
-  const value = Number(entry?.value);
+  // F04：空字符串、null、空白不是 0，明确拒绝；真正的 0 与负数保留。
+  const raw = entry?.value;
+  if (raw === "" || raw == null || (typeof raw === "string" && !raw.trim()))
+    throw fault(`指标「${name}」缺少数值（空值是未报告，不能记为 0）`, 400);
+  const value = Number(raw);
   if (!Number.isFinite(value)) throw fault(`指标「${name}」的值必须是数字`, 400);
   const source = limitLength(entry?.source, "指标来源无效", 300);
   if (requireSource && !source) throw fault(`导入的指标「${name}」必须说明来源列或位置`, 400);
@@ -856,7 +872,12 @@ function saveRunRecord(projectId, existing, patch, { requireSource = false } = {
   if (!label) throw fault("运行标识不能为空", 400);
   const experimentId = patch.experimentId ?? existing?.experimentId;
   const experiment = getExperiment(projectId, experimentId); // 运行必须挂在存在的实验下
-  const status = RUN_STATUS.includes(patch.status) ? patch.status : existing?.status || "incomplete";
+  let status = RUN_STATUS.includes(patch.status) ? patch.status
+    : patch.status != null && String(patch.status).trim() !== "" ? normalizeRunStatusWord(patch.status)
+    : null;
+  if (status === null && patch.status != null && String(patch.status).trim() !== "" && !RUN_STATUS.includes(patch.status))
+    throw fault(`无法识别的运行状态：${patch.status}（可用：成功/失败/中止/不完整或对应英文）`, 400);
+  if (status === null) status = existing?.status || "incomplete";
   let relation = existing?.relation || null;
   if (patch.relation !== undefined) {
     if (patch.relation == null) relation = null;
