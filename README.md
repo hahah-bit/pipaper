@@ -133,6 +133,10 @@ Pi 对话可通过 `search_knowledge` 和 `get_knowledge_element` 使用相同�
 
 **选题分析**从右侧「选题」进入 `/topics`，任务页面为 `/topics/:id`，保留独立报告、证据检索与方向对话。首次选题结合调查卡、真实文献、代码、硬件／数据证据及政策来源生成候选问题、验证路线与期刊分析；保留引用与来源，证据不足显示缺口。当前尚未实现基于既有论文与技术栈的二次选题。详见 [选题分析说明](docs/topic-analysis.md)。
 
+## 项目研究（可选）
+
+**研究模块**为选定项目附加可选研究档案：项目栏 🔬 或 dock「研究」打开研究概览，记录研究问题、目标、成果关联与下一步行动；阅读选区与知识检索选区可「保存为证据」（固定来源与页码），面板内维护文献对比表（单元格区分零值/未报告/未核对/不适用并附来源）、想法与假设（关联支持/反对证据，记录决策与历史）；支持研究记录 JSON 导出与幂等导入。全部记录进统一存储与回收站，不启用时各功能照常使用。详见 [研究模块说明](docs/research.md)。
+
 ## 对话、写作与视频
 
 **Pi 原生对话**支持 JSONL 会话、分支、压缩、重试、排队／插队、扩展交互和导出。多页面打开同一会话时后连接的页面接管控制，原页面可以重新连接。每个问题结束后，思考、工具步骤与模型用量合并到一条默认折叠的「执行记录」，回答和失败提示保留；输入区的高级操作、快捷提问与剪贴板集中在「更多」。论文工具包括 `read_paper`、`list_library`、`search_library`、`get_paper_pages`。详见 [Pi 原生接入](docs/pi-native-integration.md)。
@@ -224,5 +228,6 @@ node --use-system-ca scripts/retrieval-evaluate.mjs
 - [工作区导航与前端状态](docs/workspace-navigation.md)：入口分工、主题、草稿与旧布局迁移
 - [PDF 解析与恢复](docs/pdf-parser.md)：解析证据、版本采用、质量检查与限制
 - [选题分析](docs/topic-analysis.md)：调查卡、真实来源、报告与任务恢复
+- [研究模块](docs/research.md)：研究档案、证据卡、文献对比表、假设与导出导入
 - [Pi 原生接入](docs/pi-native-integration.md)：会话、资源、模型与扩展
 - [Pi 原生能力审计](docs/pi-native-capability-audit.md)：接入范围与验证记录
