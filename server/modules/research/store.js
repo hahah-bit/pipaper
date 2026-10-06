@@ -1811,6 +1811,8 @@ export function exportBundle(projectId) {
     comparisons: listComparisons(projectId),
     conclusions: listConclusions(projectId),
     manuscripts: listManuscripts(projectId),
+    reselections: listReselections(projectId),
+    submissions: listSubmissions(projectId),
   };
 }
 
@@ -1827,6 +1829,8 @@ const BUNDLE_SECTIONS = [
   ["comparisons", (b) => b?.comparisons || []],
   ["conclusions", (b) => b?.conclusions || []],
   ["manuscripts", (b) => b?.manuscripts || []],
+  ["reselections", (b) => b?.reselections || []],
+  ["submissions", (b) => b?.submissions || []],
 ];
 
 function bundleChecksums(bundle) {
@@ -2210,13 +2214,84 @@ function importConclusionRecord(projectId, data, existing, force) {
   return { saved: record };
 }
 
+function importReselectionRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const title = limitLength(data.title, "导入的二次选题缺少标题", 200);
+  if (!title) throw fault("导入的二次选题缺少标题", 400);
+  const contextRefs = normalizeContextRefs(data.contextRefs);
+  const candidates = normalizeCandidates(data.candidates);
+  let decision = null;
+  if (data.decision && RESELECTION_CHOICES.includes(data.decision.choice))
+    decision = {
+      choice: data.decision.choice,
+      reason: limitLength(data.decision.reason, "决定理由无效", 2000),
+      at: typeof data.decision.at === "string" ? data.decision.at : now,
+    };
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    title,
+    note: limitLength(data.note, "补充说明无效", 2000),
+    contextRefs,
+    contextSnapshot: Array.isArray(data.contextSnapshot) ? data.contextSnapshot.slice(0, 100) : snapshotContext(projectId, contextRefs),
+    openQuestions: normalizeOpenQuestions(data.openQuestions),
+    candidates,
+    decision,
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^rs_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的二次选题标识无效", 400);
+  writeImportedRecord(reselectionFile(projectId, record.id), reselectionResourceId(record.id),
+    "research-reselection", "二次选题 · " + record.title, record);
+  return { saved: record };
+}
+
+function importSubmissionRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const target = normalizeSubmissionTarget(data.target);
+  const manuscriptId = typeof data.manuscriptId === "string" ? data.manuscriptId : "";
+  if (manuscriptId) getManuscript(projectId, manuscriptId);
+  const comments = normalizeComments(data.comments);
+  for (const comment of comments)
+    for (const ref of comment.disposition.refs)
+      DISPOSITION_REFS[ref.kind](projectId, ref.id);
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    round: Number.isInteger(data.round) && data.round > 0 ? data.round : 1,
+    manuscriptId,
+    target,
+    status: SUBMISSION_STATUS.includes(data.status) ? data.status : "preparing",
+    dates: {
+      preparedAt: limitLength(data.dates?.preparedAt, "准备时间无效", 40),
+      submittedAt: limitLength(data.dates?.submittedAt, "提交时间无效", 40),
+      decisionAt: limitLength(data.dates?.decisionAt, "结果时间无效", 40),
+    },
+    materials: normalizeMaterials(data.materials),
+    comments,
+    outcomeNote: limitLength(data.outcomeNote, "结局说明无效", 2000),
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^sub_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的投稿标识无效", 400);
+  writeImportedRecord(submissionFile(projectId, record.id), submissionResourceId(record.id),
+    "research-submission", "投稿 · " + record.target + " 第 " + record.round + " 轮", record);
+  if (record.manuscriptId)
+    link(submissionResourceId(record.id), manuscriptResourceId(record.manuscriptId), "uses");
+  return { saved: record };
+}
+
 export function importBundle(projectId, bundle, { force = false } = {}) {
   assertProject(projectId);
   if (!bundle || bundle.schemaVersion !== RESEARCH_SCHEMA_VERSION)
     throw fault(`不支持的研究记录包版本：${bundle?.schemaVersion}`, 400);
   verifyBundleChecksums(bundle);
   const result = {
-    imported: { profile: 0, evidence: 0, matrices: 0, hypotheses: 0, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0, manuscripts: 0 },
+    imported: { profile: 0, evidence: 0, matrices: 0, hypotheses: 0, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0, manuscripts: 0, reselections: 0, submissions: 0 },
     skipped: [],
     errors: [],
   };
@@ -2254,6 +2329,8 @@ export function importBundle(projectId, bundle, { force = false } = {}) {
   importStep("比较", bundle.comparisons, importComparisonRecord, readComparisonState, "comparisons");
   importStep("结论", bundle.conclusions, importConclusionRecord, readConclusionState, "conclusions");
   importStep("稿件", bundle.manuscripts, importManuscriptRecord, readManuscriptState, "manuscripts");
+  importStep("二次选题", bundle.reselections, importReselectionRecord, readReselectionState, "reselections");
+  importStep("投稿", bundle.submissions, importSubmissionRecord, readSubmissionState, "submissions");
   // 批内运行关系（如续跑指向批次中较后的运行）在全部运行落盘后补建。
   for (const relation of pendingRelations) {
     try {
