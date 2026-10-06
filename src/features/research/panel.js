@@ -333,22 +333,37 @@ export function researchModule() {
       },
     }, "删除档案");
 
+    const downloadJson = (data, filename) => {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const link = el("a", { href: URL.createObjectURL(blob), download: filename });
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+    };
     const exportBtn = el("button", {
       class: "tool-btn",
       title: "把研究档案、证据卡、对比表与假设打包为 JSON",
       onclick: async () => {
         try {
           const data = await requestJson("/api/research/projects/" + encodeURIComponent(projectId) + "/export");
-          const blob = new Blob([JSON.stringify(data.export, null, 2)], { type: "application/json" });
-          const link = el("a", { href: URL.createObjectURL(blob), download: "pipaper-research-" + projectId + ".json" });
-          document.body.append(link);
-          link.click();
-          link.remove();
-          setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+          downloadJson(data.export, "pipaper-research-" + projectId + ".json");
           toast("研究记录已导出");
         } catch (e) { toast(e.message, true); }
       },
     }, "导出研究记录");
+    const exportProjectBtn = el("button", {
+      class: "tool-btn",
+      title: "完整课题包：研究记录 + 文献元数据清单 + 包含/排除清单与校验和（不含 PDF 原文与凭据）",
+      onclick: async () => {
+        try {
+          const data = await requestJson("/api/research/projects/" + encodeURIComponent(projectId) + "/export?scope=project");
+          downloadJson(data.export, "pipaper-project-" + projectId + ".json");
+          const papers = data.export.papers || [];
+          toast("课题包已导出（" + papers.length + " 篇文献元数据；PDF 原文与外部文件未包含，见包内清单）");
+        } catch (e) { toast(e.message, true); }
+      },
+    }, "导出完整课题包");
 
     const importInput = el("input", {
       type: "file",
@@ -370,10 +385,19 @@ export function researchModule() {
           if (imported.evidence) parts.push("证据 " + imported.evidence);
           if (imported.matrices) parts.push("对比表 " + imported.matrices);
           if (imported.hypotheses) parts.push("假设 " + imported.hypotheses);
+          if (imported.manuscripts) parts.push("稿件 " + imported.manuscripts);
           toast("导入完成：" + (parts.join("、") || "无新记录")
             + (skipped.length ? "；跳过 " + skipped.length + " 条已存在记录" : "")
             + (errors.length ? "；失败 " + errors.length + " 条（见控制台）" : ""));
           for (const message of errors) console.warn("[research-import]", message);
+          if (Array.isArray(result.papers)) {
+            const missing = result.papers.filter((p) => p.status === "missing");
+            if (missing.length)
+              toast("课题包恢复报告：" + (result.papers.length - missing.length) + " 篇文献在当前库可用，" + missing.length + " 篇缺原文（"
+                + missing.map((p) => p.title || p.id).slice(0, 3).join("、") + (missing.length > 3 ? " 等" : "") + "）", true);
+            else if (result.papers.length)
+              toast("课题包恢复报告：" + result.papers.length + " 篇文献全部可用");
+          }
           void refresh(bodyArea);
         } catch (e) {
           toast("导入失败：" + e.message, true);
@@ -503,7 +527,7 @@ export function researchModule() {
               onclick: () => window.dispatchEvent(new CustomEvent("pipaper:workspace-open", { detail: { moduleId: "knowledge" } })),
             }, "打开知识检索"))),
       ),
-      el("div", { class: "research-foot" }, importInput, importBtn, exportBtn, deleteBtn),
+      el("div", { class: "research-foot" }, importInput, importBtn, exportBtn, exportProjectBtn, deleteBtn),
     );
   }
 
