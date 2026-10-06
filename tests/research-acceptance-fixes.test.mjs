@@ -135,3 +135,89 @@ test("F04/F06：后端拒绝空值指标、状态词表归一且未知状态报�
   assert.equal(unknown.status, 400);
   assert.match(unknown.value.error, /无法识别的运行状态/);
 });
+
+test("F02/F03/F07/F09：跨项目复制隔离、重试恢复保配置、页码保留、原文可用性", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectA = (await call(fixture.url, "/projects", { method: "POST", body: { name: "原课题 A" } })).value.id;
+  const projectB = (await call(fixture.url, "/projects", { method: "POST", body: { name: "副本课题 B" } })).value.id;
+
+  // 准备 A：带页码的论文证据 + 失败运行 + 带完整配置的重试运行
+  const evidenceA = await call(fixture.url, `/research/projects/${projectA}/evidence`, {
+    method: "POST",
+    body: { type: "fact", content: "第 7 页的对比数值", source: { kind: "paper", paperId: "fixture-paper", page: 7 } },
+  });
+  const evidenceAId = evidenceA.value.evidence.id;
+  assert.deepEqual(evidenceA.value.evidence.source.pages, [7], "保存时页码为 [7]");
+
+  const expA = await call(fixture.url, `/research/projects/${projectA}/experiments`, { method: "POST", body: { title: "A 实验" } });
+  const run1 = await call(fixture.url, `/research/projects/${projectA}/runs`, {
+    method: "POST",
+    body: { label: "尝试1", experimentId: expA.value.experiment.id, status: "failed", error: "数据加载失败" },
+  });
+  const run2 = await call(fixture.url, `/research/projects/${projectA}/runs`, {
+    method: "POST",
+    body: {
+      label: "尝试2-重试", experimentId: expA.value.experiment.id, status: "failed",
+      config: { code: "commit-v2", data: "data-v1", environment: "gpu-test", seed: "42", notes: "lower-batch" },
+      error: "数据加载失败",
+      relation: { type: "retry", ofRunId: run1.value.run.id },
+    },
+  });
+
+  const bundle = (await call(fixture.url, `/research/projects/${projectA}/export`)).value.export;
+
+  // F02：导入 B 得到新身份
+  const restored = await call(fixture.url, `/research/projects/${projectB}/import`, { method: "POST", body: { data: bundle } });
+  assert.equal(restored.status, 200, JSON.stringify(restored.value));
+  assert.deepEqual(restored.value.errors, []);
+  assert.equal(restored.value.imported.evidence, 1);
+  const evidenceB = (await call(fixture.url, `/research/projects/${projectB}/evidence`)).value.evidence[0];
+  assert.notEqual(evidenceB.id, evidenceAId, "B 的证据使用新身份");
+  assert.deepEqual(evidenceB.source.pages, [7], "F07：恢复后页码保留");
+
+  // F02：删除 B 的证据不影响 A
+  await call(fixture.url, `/research/projects/${projectB}/evidence/${evidenceB.id}`, { method: "DELETE" });
+  const stillA = await call(fixture.url, `/research/projects/${projectA}/evidence/${evidenceAId}`);
+  assert.equal(stillA.status, 200, "删除副本后原课题证据仍可读");
+  const listA = await call(fixture.url, `/research/projects/${projectA}/evidence`);
+  assert.equal(listA.value.evidence.length, 1, "原课题证据列表不变");
+
+  // F03：重试运行恢复后配置与失败原因逐字段保留
+  const runsB = (await call(fixture.url, `/research/projects/${projectB}/runs`)).value.runs;
+  assert.equal(runsB.length, 2);
+  const retryB = runsB.find((r) => r.label === "尝试2-重试");
+  const run1B = runsB.find((r) => r.label === "尝试1");
+  assert.ok(retryB.relation, "重试关系存在");
+  assert.notEqual(retryB.relation.ofRunId, run1.value.run.id, "F02：关系指向 B 自己的运行");
+  assert.equal(retryB.relation.ofRunId, run1B.id);
+  assert.deepEqual(
+    {
+      code: retryB.config.code, data: retryB.config.data, environment: retryB.config.environment,
+      seed: retryB.config.seed, notes: retryB.config.notes, error: retryB.error,
+    },
+    { code: "commit-v2", data: "data-v1", environment: "gpu-test", seed: "42", notes: "lower-batch", error: "数据加载失败" },
+    "F03：配置与失败原因逐字段保留",
+  );
+
+  // 同项目重复导入仍幂等（原语义不变）
+  const again = await call(fixture.url, `/research/projects/${projectA}/import`, { method: "POST", body: { data: bundle } });
+  assert.equal(again.value.imported.evidence, 0, "同项目重复导入跳过");
+});
+
+test("F09：仅元数据论文的报告不再显示为可用", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  // fixture 的论文只有元数据，没有 pdfPath —— 元数据匹配应为 metadata-only
+  const projectA = (await call(fixture.url, "/projects", { method: "POST", body: { name: "元数据课题" } })).value.id;
+  await fetch(fixture.url + "/api/projects/" + projectA, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ addPaper: "fixture-paper" }),
+  });
+  const bundle = (await call(fixture.url, `/research/projects/${projectA}/export?scope=project`)).value.export;
+  const target = (await call(fixture.url, "/projects", { method: "POST", body: { name: "元数据恢复目标" } })).value.id;
+  const restored = await call(fixture.url, `/research/projects/${target}/import`, { method: "POST", body: { data: bundle } });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.value.papers[0].status, "metadata-only", "无 PDF 的论文报告为仅元数据");
+  assert.equal(restored.value.papers[0].matchedBy, "id");
+});

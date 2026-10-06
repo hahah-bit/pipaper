@@ -15,6 +15,28 @@ import { submissionSection } from "./submission.js";
 // 研究面板（加法开发 A01）：可选的项目研究档案。
 // 不选中项目时只显示空状态；面板加载失败只影响本面板，随时可以关闭返回原工作区。
 
+// F07：证据回原文定位——切换 PDF 视图并滚动到保存的页码；
+// 定位失败时说明缺的是页码还是源文件，不静默停在别处。
+function locateEvidencePage(page) {
+  if (!page) {
+    toast("该证据未记录页码，已打开原文，请手动定位");
+    return;
+  }
+  document.querySelector("#tab-pdf")?.click();
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const target = document.querySelector(`.page-el[data-page="${page}"]`);
+    if (target) {
+      clearInterval(timer);
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      toast("已定位到原文第 " + page + " 页");
+    } else if (Date.now() - started > 12000) {
+      clearInterval(timer);
+      toast("未能定位到第 " + page + " 页：原文可能仍在渲染，或该页不存在/源文件缺失", true);
+    }
+  }, 400);
+}
+
 const profileUrl = (projectId) => "/api/research/projects/" + encodeURIComponent(projectId) + "/profile";
 const evidenceUrl = (projectId) => "/api/research/projects/" + encodeURIComponent(projectId) + "/evidence";
 const STATUS_OPTIONS = ["todo", "doing", "done", "blocked"];
@@ -260,10 +282,12 @@ export function researchModule() {
           ...(item.source?.kind === "paper"
             ? [el("button", {
                 class: "tool-btn",
+                title: item.source.pages?.length ? "打开原文并定位到第 " + item.source.pages[0] + " 页" : "打开原文（未记录页码）",
                 onclick: () => {
                   const paper = state.papers.find((p) => p.id === item.source.paperId);
                   if (!paper) return toast("论文不在当前文献列表中", true);
                   selectPaper(paper);
+                  locateEvidencePage(item.source.pages?.[0]);
                 },
               }, "查看原文")]
             : []),
@@ -393,12 +417,14 @@ export function researchModule() {
             + (errors.length ? "；失败 " + errors.length + " 条（见控制台）" : ""));
           for (const message of errors) console.warn("[research-import]", message);
           if (Array.isArray(result.papers)) {
+            // F09：区分原文可读 / 仅元数据 / 缺失，元数据匹配不算恢复成功。
+            const readable = result.papers.filter((p) => p.status === "available");
+            const metadataOnly = result.papers.filter((p) => p.status === "metadata-only");
             const missing = result.papers.filter((p) => p.status === "missing");
-            if (missing.length)
-              toast("课题包恢复报告：" + (result.papers.length - missing.length) + " 篇文献在当前库可用，" + missing.length + " 篇缺原文（"
-                + missing.map((p) => p.title || p.id).slice(0, 3).join("、") + (missing.length > 3 ? " 等" : "") + "）", true);
-            else if (result.papers.length)
-              toast("课题包恢复报告：" + result.papers.length + " 篇文献全部可用");
+            const parts = [readable.length + " 篇原文可读"];
+            if (metadataOnly.length) parts.push(metadataOnly.length + " 篇仅元数据（需重新导入或定位 PDF）");
+            if (missing.length) parts.push(missing.length + " 篇缺失（" + missing.map((p) => p.title || p.id).slice(0, 3).join("、") + (missing.length > 3 ? " 等" : "") + "）");
+            toast("课题包恢复报告：" + parts.join("，"), missing.length > 0 || metadataOnly.length > 0);
           }
           void refresh(bodyArea);
         } catch (e) {

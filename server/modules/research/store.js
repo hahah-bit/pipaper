@@ -172,8 +172,15 @@ function normalizeEvidenceSource(source) {
     const paper = getPaper(normalized.paperId);
     if (!paper) throw fault("证据来源论文不存在", 400);
     normalized.label = normalized.label || paper.title || "";
-    const page = Number(source.page);
-    normalized.pages = Number.isInteger(page) && page > 0 ? [page] : [];
+    // F07：已保存/导出的结构使用 source.pages；旧输入与选区保存使用 source.page。
+    const pages = Array.isArray(source.pages)
+      ? source.pages.map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 50)
+      : [];
+    if (!pages.length) {
+      const page = Number(source.page);
+      if (Number.isInteger(page) && page > 0) pages.push(page);
+    }
+    normalized.pages = pages;
     return normalized;
   }
   if (source.kind === "retrieval") {
@@ -1816,6 +1823,121 @@ export function deleteSubmission(projectId, id) {
   });
 }
 
+// ---- 跨项目复制身份隔离（F02）：导入到不同项目时分配新身份并重映射内部引用 ----
+
+// 各类型的 ID 前缀与引用映射表。复制到新课题时旧身份可能已被占用，
+// 共用会破坏资源生命周期隔离（删除副本影响原课题）。
+const COPY_SECTIONS = [
+  ["evidence", "ev_"],
+  ["matrices", "mtx_"],
+  ["hypotheses", "hyp_"],
+  ["protocols", "prt_"],
+  ["experiments", "exp_"],
+  ["runs", "run_"],
+  ["comparisons", "cmp_"],
+  ["conclusions", "con_"],
+  ["manuscripts", "man_"],
+  ["reselections", "rs_"],
+  ["submissions", "sub_"],
+];
+
+// 引用字段中的 kind → 所属 section（结论/处置依据等多类型引用）。
+const REF_KIND_SECTIONS = {
+  evidence: "evidence", matrix: "matrices", hypothesis: "hypotheses", protocol: "protocols",
+  run: "runs", comparison: "comparisons", conclusion: "conclusions", manuscript: "manuscripts",
+};
+
+function freshCopyId(prefix, taken) {
+  let id = prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  while (taken.has(id)) id = prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  taken.add(id);
+  return id;
+}
+
+function remapRef(ref, idMap) {
+  if (!ref || typeof ref !== "object") return ref;
+  const section = REF_KIND_SECTIONS[ref.kind];
+  if (!section) return { ...ref };
+  const mapped = idMap[section + ":" + ref.id];
+  return mapped ? { ...ref, id: mapped } : { ...ref };
+}
+
+export function remapBundleForCopy(bundle) {
+  const copy = structuredClone(bundle);
+  const taken = new Set();
+  const idMap = new Map(); // "section:oldId" -> newId
+  for (const [section, prefix] of COPY_SECTIONS)
+    for (const record of copy[section] || []) {
+      if (!record?.id) continue;
+      idMap.set(section + ":" + record.id, freshCopyId(prefix, taken));
+    }
+
+  for (const record of copy.evidence || []) if (record?.id) record.id = idMap.get("evidence:" + record.id);
+  for (const record of copy.matrices || []) if (record?.id) record.id = idMap.get("matrices:" + record.id);
+  for (const record of copy.hypotheses || []) {
+    if (!record?.id) continue;
+    record.id = idMap.get("hypotheses:" + record.id);
+    for (const key of ["support", "oppose"])
+      record[key] = (record[key] || []).map((old) => idMap.get("evidence:" + old)).filter(Boolean);
+  }
+  for (const record of copy.protocols || []) if (record?.id) record.id = idMap.get("protocols:" + record.id);
+  for (const record of copy.experiments || []) {
+    if (!record?.id) continue;
+    record.id = idMap.get("experiments:" + record.id);
+    if (record.protocolId) record.protocolId = idMap.get("protocols:" + record.protocolId) || "";
+  }
+  for (const record of copy.runs || []) {
+    if (!record?.id) continue;
+    record.id = idMap.get("runs:" + record.id);
+    if (record.experimentId) record.experimentId = idMap.get("experiments:" + record.experimentId) || record.experimentId;
+    if (record.relation?.ofRunId) record.relation.ofRunId = idMap.get("runs:" + record.relation.ofRunId) || record.relation.ofRunId;
+  }
+  for (const record of copy.comparisons || []) {
+    if (!record?.id) continue;
+    record.id = idMap.get("comparisons:" + record.id);
+    record.runIds = (record.runIds || []).map((old) => idMap.get("runs:" + old)).filter(Boolean);
+    for (const row of record.rows || []) if (row?.runId) row.runId = idMap.get("runs:" + row.runId) || row.runId;
+  }
+  for (const record of copy.conclusions || []) {
+    if (!record?.id) continue;
+    record.id = idMap.get("conclusions:" + record.id);
+    record.support = (record.support || []).map((ref) => remapRef(ref, idMap));
+  }
+  for (const record of copy.manuscripts || []) {
+    if (!record?.id) continue;
+    record.id = idMap.get("manuscripts:" + record.id);
+    record.linkedConclusions = (record.linkedConclusions || [])
+      .map((old) => idMap.get("conclusions:" + old)).filter(Boolean);
+  }
+  for (const record of copy.reselections || []) {
+    if (!record?.id) continue;
+    record.id = idMap.get("reselections:" + record.id);
+    const remapContext = (refs) => (refs || []).map((ref) => remapRef(ref, idMap));
+    record.contextRefs = remapContext(record.contextRefs);
+    for (const question of record.openQuestions || [])
+      if (question?.sourceRef) question.sourceRef = remapRef(question.sourceRef, idMap);
+    for (const snapshot of record.contextSnapshot || []) {
+      const mapped = idMap.get((REF_KIND_SECTIONS[snapshot.kind] || "") + ":" + snapshot.id);
+      if (mapped) snapshot.id = mapped;
+    }
+    for (const candidate of record.candidates || []) {
+      candidate.basedOn = remapContext(candidate.basedOn);
+      // 复制出的候选不指向原课题的草稿；批内草稿对象已重映射的除外。
+      if (candidate.createdHypothesisId) candidate.createdHypothesisId = idMap.get("hypotheses:" + candidate.createdHypothesisId) || "";
+      if (candidate.createdProtocolId) candidate.createdProtocolId = idMap.get("protocols:" + candidate.createdProtocolId) || "";
+    }
+  }
+  for (const record of copy.submissions || []) {
+    if (!record?.id) continue;
+    record.id = idMap.get("submissions:" + record.id);
+    if (record.manuscriptId) record.manuscriptId = idMap.get("manuscripts:" + record.manuscriptId) || "";
+    for (const comment of record.comments || [])
+      if (comment?.disposition?.refs) comment.disposition.refs = comment.disposition.refs.map((ref) => remapRef(ref, idMap));
+  }
+  // 研究档案无 ID 列表，跨项目复制后指向新项目本身，无需处理。
+  return copy;
+}
+
 // ---- 基础导出与导入（B1.6）：新增研究记录可整体打包、在项目中恢复 ----
 
 export const RESEARCH_SCHEMA_VERSION = 1;
@@ -1907,16 +2029,20 @@ function verifyBundleChecksums(bundle) {
 }
 
 function paperReport(papers) {
-  // 恢复报告：哪些论文在目标库可用（按 contentHash 或 ID 匹配），哪些缺原文。
+  // F09：恢复报告区分「原文存在且可读 / 仅元数据 / 缺失」；
+  // 元数据匹配不等于原文可用，不能作为恢复成功的依据。
   return (Array.isArray(papers) ? papers : []).map((paper) => {
     const byHash = paper.contentHash ? findByHash(paper.contentHash) : null;
     const byId = getPaper(paper.id);
     const found = byHash || byId;
+    if (!found)
+      return { id: paper.id, title: paper.title || "", status: "missing", matchedBy: null };
+    const fileReadable = Boolean(found.pdfPath) && fs.existsSync(found.pdfPath);
     return {
       id: paper.id,
-      title: paper.title || found?.title || "",
-      status: found ? "available" : "missing",
-      matchedBy: byHash ? "contentHash" : byId ? "id" : null,
+      title: paper.title || found.title || "",
+      status: fileReadable ? "available" : "metadata-only",
+      matchedBy: byHash ? "contentHash" : "id",
     };
   });
 }
@@ -2319,6 +2445,10 @@ export function importBundle(projectId, bundle, { force = false } = {}) {
   if (!bundle || bundle.schemaVersion !== RESEARCH_SCHEMA_VERSION)
     throw fault(`不支持的研究记录包版本：${bundle?.schemaVersion}`, 400);
   verifyBundleChecksums(bundle);
+  // F02：导入到不同项目属于“复制到新课题”——分配新身份并重映射内部引用，
+  // 副本的编辑/删除/回收站不再影响原课题的同 ID 资源。
+  if (bundle.project?.id && bundle.project.id !== projectId)
+    bundle = remapBundleForCopy(bundle);
   const result = {
     imported: { profile: 0, evidence: 0, matrices: 0, hypotheses: 0, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0, manuscripts: 0, reselections: 0, submissions: 0 },
     skipped: [],
@@ -2370,7 +2500,8 @@ export function importBundle(projectId, bundle, { force = false } = {}) {
       }
       const source = readRunState(projectId, relation.runId);
       if (!source) continue;
-      saveRunRecord(projectId, source, { label: source.label, relation: { type: relation.type, ofRunId: relation.ofRunId } });
+      // F03：补建关联只补关系字段，其余内容（配置、失败原因、指标等）原样保留。
+      saveRunRecord(projectId, source, { ...source, relation: { type: relation.type, ofRunId: relation.ofRunId } });
     } catch (e) {
       result.errors.push("运行关系补建失败：" + e.message);
     }
