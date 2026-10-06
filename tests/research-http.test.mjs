@@ -14,7 +14,14 @@ async function call(url, route, { method = "GET", body } = {}) {
 async function createProject(url, name) {
   const created = await call(url, "/projects", { method: "POST", body: { name } });
   assert.equal(created.status, 200, "创建项目失败: " + JSON.stringify(created.value));
-  return created.value.id;
+  const projectId = created.value.id;
+  // 服务器 health 就绪后 bootstrap 的清单恢复可能仍在进行，等待项目在列表中稳定可见。
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const list = await call(url, "/projects");
+    if (list.value?.projects?.some((p) => p.id === projectId)) return projectId;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  assert.fail("项目创建后未出现在项目列表（启动恢复未完成或项目被覆盖）");
 }
 
 test("研究档案：未启用为空，保存后可读取与更新，冲突返回 409", async (t) => {
@@ -802,4 +809,55 @@ test("写作引用助手：稿件登记、引用键稳定、bib 导出、检查�
   const afterRestore = await call(fixture.url, base);
   assert.equal(afterRestore.value.manuscripts.length, 1);
   assert.equal(afterRestore.value.manuscripts[0].snapshots.length, 1, "恢复保留稿件快照");
+});
+
+test("完整课题包：包含/排除清单、校验和、恢复报告明示外部缺口", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = await createProject(fixture.url, "课题包验收");
+  const base = `/research/projects/${projectId}`;
+  await call(fixture.url, base + "/profile", { method: "PUT", body: { question: "课题包验收" } });
+  await call(fixture.url, base + "/projects/" + projectId, { method: "PUT", headersSkipped: true }).catch(() => {});
+  // 给项目加论文
+  await fetch(fixture.url + "/api/projects/" + projectId, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ addPaper: "fixture-paper" }) });
+  await call(fixture.url, base + "/manuscripts", {
+    method: "POST",
+    body: { title: "课题包稿件", filePath: "papers/draft.md", fileKind: "markdown" },
+  });
+
+  const exported = await call(fixture.url, base + "/export?scope=project");
+  assert.equal(exported.status, 200, JSON.stringify(exported.value));
+  const bundle = exported.value.export;
+  assert.equal(bundle.scope, "project");
+  assert.equal(bundle.papers.length, 1);
+  assert.ok(bundle.manifest.checksums, "课题包含校验和");
+  assert.ok(bundle.manifest.excluded.some((e) => e.kind === "PDF 原文"), "排除清单明示 PDF 原文不含");
+  assert.ok(bundle.manifest.included.some((i) => i.kind === "文献元数据"));
+
+  // 篡改检测：改动数据后校验失败
+  const tampered = structuredClone(bundle);
+  tampered.profile.question = "被篡改的问题";
+  const tamperedResult = await call(fixture.url, `/research/projects/${await createProject(fixture.url, "篡改检测")}/import`, {
+    method: "POST", body: { data: tampered },
+  });
+  assert.equal(tamperedResult.status, 400, "被篡改的课题包应拒绝导入");
+
+  // 恢复到新项目：研究记录恢复，论文按 contentHash 匹配，报告明示可用性
+  const target = await createProject(fixture.url, "课题包恢复");
+  const restored = await call(fixture.url, `/research/projects/${target}/import`, { method: "POST", body: { data: bundle } });
+  assert.equal(restored.status, 200, JSON.stringify(restored.value));
+  assert.deepEqual(restored.value.errors, []);
+  assert.equal(restored.value.imported.manuscripts, 1);
+  assert.equal(restored.value.papers[0].status, "available", "fixture 论文在目标库可用");
+  assert.equal(restored.value.papers[0].matchedBy, "id", "无 contentHash 的论文按 ID 匹配");
+
+  // 未知论文的恢复报告
+  const bundle2 = structuredClone(bundle);
+  bundle2.papers.push({ id: "lib_unknown", title: "只存在于原设备的论文", contentHash: "deadbeef" });
+  delete bundle2.manifest;
+  const restored2 = await call(fixture.url, `/research/projects/${await createProject(fixture.url, "缺口报告")}/import`, {
+    method: "POST", body: { data: bundle2 },
+  });
+  assert.equal(restored2.status, 200, JSON.stringify(restored2.value));
+  assert.equal(restored2.value.papers.find((p) => p.id === "lib_unknown").status, "missing", "未知论文标记缺失");
 });

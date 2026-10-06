@@ -56,6 +56,7 @@ import {
   snapshotManuscript,
   checkManuscript,
   deleteManuscript,
+  exportProjectBundle,
 } from "./store.js";
 
 // 研究模块路由（加法开发）：入口挂在 /api/research 下，不影响既有路由。
@@ -161,7 +162,7 @@ export function registerResearchRoutes(api) {
 
   api.get(
     "/research/projects/:projectId/export",
-    route((req) => ({ export: exportBundle(req.params.projectId) })),
+    route((req) => ({ export: req.query.scope === "project" ? exportProjectBundle(req.params.projectId) : exportBundle(req.params.projectId) })),
   );
 
   api.post(

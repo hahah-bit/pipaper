@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { DATA_DIR } from "../../config.js";
-import { getPaper, getProject } from "../../store.js";
+import { getPaper, getProject, findByHash } from "../../store.js";
 import { readJsonState, writeJsonState, trashPath } from "../../storage/files.js";
 import { link, resource } from "../../storage/catalog.js";
 import { fault } from "../../platform/errors.js";
@@ -1413,7 +1414,82 @@ export function exportBundle(projectId) {
     runs: listRuns(projectId),
     comparisons: listComparisons(projectId),
     conclusions: listConclusions(projectId),
+    manuscripts: listManuscripts(projectId),
   };
+}
+
+// ---- 完整课题包（A08）：包含/排除清单与校验和明确的可移植包 ----
+
+const BUNDLE_SECTIONS = [
+  ["profile", (b) => (b?.profile ? [b.profile] : [])],
+  ["evidence", (b) => b?.evidence || []],
+  ["matrices", (b) => b?.matrices || []],
+  ["hypotheses", (b) => b?.hypotheses || []],
+  ["protocols", (b) => b?.protocols || []],
+  ["experiments", (b) => b?.experiments || []],
+  ["runs", (b) => b?.runs || []],
+  ["comparisons", (b) => b?.comparisons || []],
+  ["conclusions", (b) => b?.conclusions || []],
+  ["manuscripts", (b) => b?.manuscripts || []],
+];
+
+function bundleChecksums(bundle) {
+  const checksums = {};
+  for (const [key, get] of BUNDLE_SECTIONS)
+    checksums[key] = createHash("sha256").update(JSON.stringify(get(bundle))).digest("hex").slice(0, 16);
+  return checksums;
+}
+
+export function exportProjectBundle(projectId) {
+  const project = assertProject(projectId);
+  const bundle = exportBundle(projectId);
+  bundle.scope = "project";
+  // 文献元数据清单随包导出；PDF 原文与外部文件明确排除。
+  bundle.papers = project.paperIds.map((paperId) => {
+    const paper = getPaper(paperId);
+    return paper
+      ? { id: paper.id, title: paper.title, creators: paper.creators || [], year: paper.year || null, doi: paper.doi || "", contentHash: paper.contentHash || "" }
+      : { id: paperId, title: "", missing: true };
+  });
+  const manuscriptPaths = bundle.manuscripts.map((m) => m.filePath).filter(Boolean);
+  bundle.manifest = {
+    generatedAt: bundle.exportedAt,
+    included: [
+      { kind: "研究记录", detail: "档案、证据、对比表、假设、方案（含冻结版本）、实验、运行、比较快照、结论、稿件记录" },
+      { kind: "文献元数据", detail: bundle.papers.length + " 篇（不含 PDF 原文）" },
+    ],
+    excluded: [
+      { kind: "PDF 原文", reason: "受管原文文件不随包复制；恢复后按 contentHash 在目标库匹配，未匹配的论文标记为缺原文" },
+      { kind: "知识索引与解析产物", reason: "可在目标环境重新入库或重建" },
+      { kind: "运行产物与外部文件", reason: manuscriptPaths.length ? "稿件引用的外部路径：" + manuscriptPaths.join("、") : "无稿件文件引用" },
+      { kind: "凭据与服务配置", reason: "凭据默认不进入课题包" },
+    ],
+    checksums: bundleChecksums(bundle),
+  };
+  return bundle;
+}
+
+function verifyBundleChecksums(bundle) {
+  if (!bundle.manifest?.checksums) return null; // 研究记录包：跳过校验
+  const expected = bundleChecksums(bundle);
+  for (const [key, sum] of Object.entries(bundle.manifest.checksums))
+    if (expected[key] !== sum) throw fault(`课题包校验失败：${key} 与清单不符，文件可能损坏或被改动`, 400);
+  return expected;
+}
+
+function paperReport(papers) {
+  // 恢复报告：哪些论文在目标库可用（按 contentHash 或 ID 匹配），哪些缺原文。
+  return (Array.isArray(papers) ? papers : []).map((paper) => {
+    const byHash = paper.contentHash ? findByHash(paper.contentHash) : null;
+    const byId = getPaper(paper.id);
+    const found = byHash || byId;
+    return {
+      id: paper.id,
+      title: paper.title || found?.title || "",
+      status: found ? "available" : "missing",
+      matchedBy: byHash ? "contentHash" : byId ? "id" : null,
+    };
+  });
 }
 
 function importedRevision(existing, incoming) {
@@ -1678,6 +1754,37 @@ function importComparisonRecord(projectId, data, existing, force) {
   return { saved: record };
 }
 
+function importManuscriptRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const title = limitLength(data.title, "导入的稿件缺少标题", 200);
+  if (!title) throw fault("导入的稿件缺少标题", 400);
+  const citations = Array.isArray(data.citations) ? data.citations.slice(0, 200) : [];
+  for (const citation of citations)
+    if (typeof citation?.key !== "string" || !citation.key) throw fault("导入的引用条目缺少引用键", 400);
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    title,
+    filePath: limitLength(data.filePath, "稿件路径无效", 500),
+    fileKind: data.fileKind === "latex" ? "latex" : "markdown",
+    citations,
+    linkedConclusions: Array.isArray(data.linkedConclusions) ? [...new Set(data.linkedConclusions)].slice(0, 50) : [],
+    snapshots: Array.isArray(data.snapshots) ? data.snapshots.slice(-50) : [],
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^man_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的稿件标识无效", 400);
+  writeImportedRecord(manuscriptFile(projectId, record.id), manuscriptResourceId(record.id),
+    "research-manuscript", "稿件 · " + record.title, record);
+  for (const citation of record.citations)
+    link(manuscriptResourceId(record.id), "paper:" + citation.paperId, "uses");
+  for (const conclusionId of record.linkedConclusions)
+    link(manuscriptResourceId(record.id), conclusionResourceId(conclusionId), "uses");
+  return { saved: record };
+}
+
 function importConclusionRecord(projectId, data, existing, force) {
   if (existing && !force) return { skipped: true };
   const now = new Date().toISOString();
@@ -1711,11 +1818,14 @@ export function importBundle(projectId, bundle, { force = false } = {}) {
   assertProject(projectId);
   if (!bundle || bundle.schemaVersion !== RESEARCH_SCHEMA_VERSION)
     throw fault(`不支持的研究记录包版本：${bundle?.schemaVersion}`, 400);
+  verifyBundleChecksums(bundle);
   const result = {
-    imported: { profile: 0, evidence: 0, matrices: 0, hypotheses: 0, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0 },
+    imported: { profile: 0, evidence: 0, matrices: 0, hypotheses: 0, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0, manuscripts: 0 },
     skipped: [],
     errors: [],
   };
+  if (bundle.scope === "project")
+    result.papers = paperReport(bundle.papers); // 外部缺口明示，不自动创建无原文的论文
   // 恢复顺序与依赖一致：档案/证据 → 矩阵/假设 → 方案 → 实验 → 运行 → 比较 → 结论。
   const existingProfile = readProfileState(projectId);
   const pendingRelations = [];
@@ -1747,6 +1857,7 @@ export function importBundle(projectId, bundle, { force = false } = {}) {
   importStep("运行", bundle.runs, importRunRecord, readRunState, "runs");
   importStep("比较", bundle.comparisons, importComparisonRecord, readComparisonState, "comparisons");
   importStep("结论", bundle.conclusions, importConclusionRecord, readConclusionState, "conclusions");
+  importStep("稿件", bundle.manuscripts, importManuscriptRecord, readManuscriptState, "manuscripts");
   // 批内运行关系（如续跑指向批次中较后的运行）在全部运行落盘后补建。
   for (const relation of pendingRelations) {
     try {
