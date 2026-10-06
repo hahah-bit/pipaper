@@ -10,6 +10,7 @@ import { labSection } from "./lab.js";
 import { findingsSection } from "./findings.js";
 import { writingSection } from "./writing.js";
 import { reselectionSection } from "./reselection.js";
+import { submissionSection } from "./submission.js";
 
 // 研究面板（加法开发 A01）：可选的项目研究档案。
 // 不选中项目时只显示空状态；面板加载失败只影响本面板，随时可以关闭返回原工作区。
@@ -525,6 +526,19 @@ export function researchModule() {
             }
           },
         }, el("summary", {}, "二次选题（从已有成果整理下一轮方向）"), box);
+      })(),
+      (() => {
+        let loaded = false;
+        const box = el("div");
+        return el("details", {
+          class: "research-matrix-details",
+          ontoggle: (event) => {
+            if (event.target.open && !loaded) {
+              loaded = true;
+              box.append(submissionSection({ projectId }).container);
+            }
+          },
+        }, el("summary", {}, "投稿与修订（轮次、意见拆解与处置）"), box);
       })(),
       el("div", { class: "research-columns" },
         el("div", { class: "research-card" }, timeline),
