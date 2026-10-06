@@ -364,7 +364,9 @@ test("研究记录导出与导入：整体打包、重复导入幂等、恢复�
     body: { data: bundle },
   });
   assert.equal(again.status, 200);
-  assert.deepEqual(again.value.imported, { profile: 0, evidence: 0, matrices: 0, hypotheses: 0 }, "重复导入应全部跳过");
+  assert.deepEqual(again.value.imported, {
+    profile: 0, evidence: 0, matrices: 0, hypotheses: 0, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0,
+  }, "重复导入应全部跳过");
 
   const target = await createProject(fixture.url, "恢复验收");
   const restored = await call(fixture.url, `/research/projects/${target}/import`, {
@@ -372,7 +374,9 @@ test("研究记录导出与导入：整体打包、重复导入幂等、恢复�
     body: { data: bundle },
   });
   assert.equal(restored.status, 200, JSON.stringify(restored.value));
-  assert.deepEqual(restored.value.imported, { profile: 1, evidence: 1, matrices: 1, hypotheses: 1 });
+  assert.deepEqual(restored.value.imported, {
+    profile: 1, evidence: 1, matrices: 1, hypotheses: 1, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0,
+  });
   assert.deepEqual(restored.value.errors, [], "完整恢复不应有错误");
 
   const targetProfile = await call(fixture.url, `/research/projects/${target}/profile`);
@@ -655,4 +659,63 @@ test("结果比较与结论卡：快照固定运行值、口径说明、结论�
   const afterRestore = await call(fixture.url, cmpBase);
   assert.equal(afterRestore.value.comparisons.length, 1);
   assert.equal(afterRestore.value.comparisons[0].rows[0].snapshottedAt, comparison.rows[0].snapshottedAt, "恢复保留快照时间");
+});
+
+test("第二批研究记录随导出包整体恢复（方案/实验/运行/比较/结论）", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = await createProject(fixture.url, "二批导出验收");
+  const base = `/research/projects/${projectId}`;
+
+  const protocol = await call(fixture.url, base + "/protocols", { method: "POST", body: { title: "二批方案" } });
+  const protocolId = protocol.value.protocol.id;
+  await call(fixture.url, base + "/protocols/" + protocolId + "/freeze", { method: "POST", body: { reason: "执行" } });
+  const exp = await call(fixture.url, base + "/experiments", { method: "POST", body: { title: "二批实验", protocolId } });
+  const experimentId = exp.value.experiment.id;
+  const run1 = await call(fixture.url, base + "/runs", {
+    method: "POST",
+    body: { label: "尝试1", experimentId, status: "failed", error: "显存不足" },
+  });
+  const run2 = await call(fixture.url, base + "/runs", {
+    method: "POST",
+    body: { label: "尝试2-续跑", experimentId, status: "succeeded", imported: true, metrics: [{ name: "iou", value: 0.87, source: "csv" }], relation: { type: "resume", ofRunId: run1.value.run.id } },
+  });
+  const cmp = await call(fixture.url, base + "/comparisons", {
+    method: "POST",
+    body: { title: "二批比较", metricName: "iou", runIds: [run2.value.run.id], inclusionNote: "仅成功运行" },
+  });
+  const con = await call(fixture.url, base + "/conclusions", {
+    method: "POST",
+    body: { statement: "续跑后 IoU 0.87", kind: "exploratory", support: [{ kind: "comparison", id: cmp.value.comparison.id }] },
+  });
+
+  const exported = await call(fixture.url, base + "/export");
+  const bundle = exported.value.export;
+  assert.equal(bundle.protocols.length, 1);
+  assert.equal(bundle.experiments.length, 1);
+  assert.equal(bundle.runs.length, 2);
+  assert.equal(bundle.comparisons.length, 1);
+  assert.equal(bundle.conclusions.length, 1);
+  assert.deepEqual(bundle.comparisons[0].rows[0].value, 0.87, "导出包含比较快照值");
+
+  const target = await createProject(fixture.url, "二批恢复验收");
+  const restored = await call(fixture.url, `/research/projects/${target}/import`, { method: "POST", body: { data: bundle } });
+  assert.equal(restored.status, 200, JSON.stringify(restored.value));
+  assert.deepEqual(restored.value.errors, [], "完整恢复不应有错误");
+  assert.equal(restored.value.imported.protocols, 1);
+  assert.equal(restored.value.imported.runs, 2);
+  assert.equal(restored.value.imported.comparisons, 1);
+  assert.equal(restored.value.imported.conclusions, 1);
+
+  // 恢复后的链路：结论 → 比较 → 运行 → 实验 → 方案
+  const targetCons = await call(fixture.url, `/research/projects/${target}/conclusions`);
+  assert.equal(targetCons.value.conclusions[0].support[0].id, cmp.value.comparison.id);
+  const targetCmp = await call(fixture.url, `/research/projects/${target}/comparisons`);
+  assert.equal(targetCmp.value.comparisons[0].rows[0].runId, run2.value.run.id);
+  const targetRuns = await call(fixture.url, `/research/projects/${target}/runs`);
+  const restoredRun2 = targetRuns.value.runs.find((r) => r.id === run2.value.run.id);
+  assert.equal(restoredRun2.relation.ofRunId, run1.value.run.id, "批内续跑关系恢复");
+  assert.equal(restoredRun2.metrics[0].source, "csv", "导入指标来源保留");
+  const targetProtocols = await call(fixture.url, `/research/projects/${target}/protocols`);
+  assert.equal(targetProtocols.value.protocols[0].versions.length, 1, "冻结版本随包恢复");
 });

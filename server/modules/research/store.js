@@ -1194,6 +1194,11 @@ export function exportBundle(projectId) {
     evidence: listEvidence(projectId),
     matrices: listMatrices(projectId),
     hypotheses: listHypotheses(projectId),
+    protocols: listProtocols(projectId),
+    experiments: listExperiments(projectId),
+    runs: listRuns(projectId),
+    comparisons: listComparisons(projectId),
+    conclusions: listConclusions(projectId),
   };
 }
 
@@ -1277,8 +1282,7 @@ function importMatrixRecord(projectId, data, existing, force) {
   return { saved: record };
 }
 
-function importHypothesisRecord(projectId, data, existing, force) {
-  if (existing && !force) return { skipped: true };
+function importHypothesisRecord(projectId, data, existing, force) {  if (existing && !force) return { skipped: true };
   const now = new Date().toISOString();
   const title = limitLength(data.title, "导入的假设缺少标题", 200);
   const statement = limitLength(data.statement, "导入的假设缺少内容", 4000);
@@ -1320,48 +1324,229 @@ function importHypothesisRecord(projectId, data, existing, force) {
   return { saved: record };
 }
 
+function importProtocolRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const title = limitLength(data.title, "导入的方案缺少标题", 200);
+  if (!title) throw fault("导入的方案缺少标题", 400);
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    title,
+    sourceNote: limitLength(data.sourceNote, "方案来源说明无效", 500),
+    objective: limitLength(data.objective, "验证目标无效", 4000),
+    datasets: limitLength(data.datasets, "数据与划分说明无效", 4000),
+    metrics: limitLength(data.metrics, "指标定义无效", 4000),
+    budget: limitLength(data.budget, "预算与停止条件无效", 2000),
+    baselines: normalizeBaselines(data.baselines),
+    status: PROTOCOL_STATUS.includes(data.status) ? data.status : "draft",
+    versions: Array.isArray(data.versions) ? data.versions.slice(0, 50) : [],
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^prt_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的方案标识无效", 400);
+  writeImportedRecord(protocolFile(projectId, record.id), protocolResourceId(record.id),
+    "research-protocol", "研究方案 · " + record.title, record);
+  return { saved: record };
+}
+
+function importExperimentRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const title = limitLength(data.title, "导入的实验缺少标题", 200);
+  if (!title) throw fault("导入的实验缺少标题", 400);
+  const protocolId = typeof data.protocolId === "string" ? data.protocolId : "";
+  if (protocolId) getProtocol(projectId, protocolId);
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    title,
+    purpose: limitLength(data.purpose, "实验目的无效", 2000),
+    protocolId,
+    groups: Array.isArray(data.groups) ? data.groups.slice(0, 10).map((group, index) => ({
+      name: limitLength(group?.name, "实验组名称无效", 100) || "组 " + (index + 1),
+      note: limitLength(group?.note, "实验组说明无效", 500),
+    })) : [],
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^exp_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的实验标识无效", 400);
+  writeImportedRecord(experimentFile(projectId, record.id), experimentResourceId(record.id),
+    "research-experiment", "实验 · " + record.title, record);
+  if (record.protocolId)
+    link(experimentResourceId(record.id), protocolResourceId(record.protocolId), "uses");
+  return { saved: record };
+}
+
+function importRunRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const label = limitLength(data.label, "导入的运行缺少标识", 200);
+  if (!label) throw fault("导入的运行缺少标识", 400);
+  const experimentId = typeof data.experimentId === "string" ? data.experimentId : "";
+  const experiment = getExperiment(projectId, experimentId);
+  let relation = null;
+  let pendingRelation = null;
+  if (data.relation && RUN_RELATION_TYPES.includes(data.relation.type) && typeof data.relation.ofRunId === "string") {
+    try {
+      getRun(projectId, data.relation.ofRunId);
+      relation = { type: data.relation.type, ofRunId: data.relation.ofRunId };
+    } catch {
+      pendingRelation = { runId: data.id, type: data.relation.type, ofRunId: data.relation.ofRunId }; // 批内后置运行，第二遍补
+    }
+  }
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    experimentId: experiment.id,
+    experimentTitle: experiment.title,
+    label,
+    status: RUN_STATUS.includes(data.status) ? data.status : "incomplete",
+    config: {
+      code: limitLength(data.config?.code, "代码版本说明无效", 2000),
+      data: limitLength(data.config?.data, "数据说明无效", 2000),
+      environment: limitLength(data.config?.environment, "环境说明无效", 2000),
+      seed: limitLength(data.config?.seed, "种子说明无效", 200),
+      notes: limitLength(data.config?.notes, "配置备注无效", 2000),
+    },
+    metrics: normalizeMetrics(data.metrics, { requireSource: Boolean(data.imported) }),
+    artifacts: normalizeArtifacts(data.artifacts),
+    imported: Boolean(data.imported),
+    error: limitLength(data.error, "失败原因无效", 4000),
+    relation,
+    startedAt: limitLength(data.startedAt, "开始时间无效", 40) || "",
+    finishedAt: limitLength(data.finishedAt, "结束时间无效", 40) || "",
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^run_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的运行标识无效", 400);
+  writeImportedRecord(runFile(projectId, record.id), runResourceId(record.id),
+    "research-run", record.label + " · " + record.status, record);
+  link(runResourceId(record.id), experimentResourceId(experiment.id), "uses");
+  if (relation)
+    link(runResourceId(record.id), runResourceId(relation.ofRunId), "derives");
+  return { saved: record, pendingRelation };
+}
+
+function importComparisonRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const title = limitLength(data.title, "导入的比较缺少标题", 200);
+  const metricName = limitLength(data.metricName, "导入的比较缺少指标", 100);
+  if (!title || !metricName) throw fault("导入的比较缺少标题或指标", 400);
+  const runIds = Array.isArray(data.runIds) ? [...new Set(data.runIds)] : [];
+  if (!runIds.length) throw fault("导入的比较没有运行集合", 400);
+  for (const runId of runIds) getRun(projectId, runId);
+  const rows = Array.isArray(data.rows)
+    ? data.rows.filter((row) => runIds.includes(row?.runId)).slice(0, 30)
+    : comparisonRows(projectId, runIds, metricName);
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    title,
+    metricName,
+    runIds,
+    inclusionNote: limitLength(data.inclusionNote, "纳入与排除理由无效", 2000),
+    comparabilityNote: limitLength(data.comparabilityNote, "口径差异说明无效", 2000),
+    rows,
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^cmp_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的比较标识无效", 400);
+  writeImportedRecord(comparisonFile(projectId, record.id), comparisonResourceId(record.id),
+    "research-comparison", "比较 · " + record.title, record);
+  for (const runId of record.runIds)
+    link(comparisonResourceId(record.id), runResourceId(runId), "uses");
+  return { saved: record };
+}
+
+function importConclusionRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const statement = limitLength(data.statement, "导入的结论缺少表述", 4000);
+  if (!statement) throw fault("导入的结论缺少表述", 400);
+  if (!CONCLUSION_KINDS.includes(data.kind)) throw fault("导入的结论类型无效", 400);
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    statement,
+    kind: data.kind,
+    scope: limitLength(data.scope, "适用范围无效", 1000),
+    limits: limitLength(data.limits, "结论限制无效", 2000),
+    support: normalizeSupport(data.support, projectId),
+    checked: Boolean(data.checked),
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^con_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的结论标识无效", 400);
+  writeImportedRecord(conclusionFile(projectId, record.id), conclusionResourceId(record.id),
+    "research-conclusion", record.statement.slice(0, 40), record);
+  for (const ref of record.support) {
+    const prefix = { run: runResourceId, comparison: comparisonResourceId, evidence: evidenceResourceId, hypothesis: hypothesisResourceId, matrix: matrixResourceId, protocol: protocolResourceId }[ref.kind];
+    link(conclusionResourceId(record.id), prefix(ref.id), "uses");
+  }
+  return { saved: record };
+}
+
 export function importBundle(projectId, bundle, { force = false } = {}) {
   assertProject(projectId);
   if (!bundle || bundle.schemaVersion !== RESEARCH_SCHEMA_VERSION)
     throw fault(`不支持的研究记录包版本：${bundle?.schemaVersion}`, 400);
   const result = {
-    imported: { profile: 0, evidence: 0, matrices: 0, hypotheses: 0 },
+    imported: { profile: 0, evidence: 0, matrices: 0, hypotheses: 0, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0 },
     skipped: [],
     errors: [],
   };
-  // 恢复顺序与导出结构一致：先档案与证据，再矩阵与假设（假设引用证据）。
+  // 恢复顺序与依赖一致：档案/证据 → 矩阵/假设 → 方案 → 实验 → 运行 → 比较 → 结论。
   const existingProfile = readProfileState(projectId);
+  const pendingRelations = [];
+  const importStep = (label, items, importFn, readFn, countKey) => {
+    for (const item of Array.isArray(items) ? items : []) {
+      try {
+        const outcome = importFn(projectId, item, readFn(projectId, item?.id), force);
+        if (outcome.skipped) result.skipped.push(label + " " + item.id);
+        else result.imported[countKey]++;
+        if (outcome.pendingRelation) pendingRelations.push(outcome.pendingRelation);
+      } catch (e) {
+        result.errors.push(label + " " + (item?.id || "?") + "：" + e.message);
+      }
+    }
+  };
   try {
     if (bundle.profile) {
       const outcome = importProfileRecord(projectId, bundle.profile, existingProfile, force);
       outcome.skipped ? result.skipped.push("研究档案（已存在）") : result.imported.profile++;
     }
-    for (const item of Array.isArray(bundle.evidence) ? bundle.evidence : []) {
-      try {
-        const outcome = importEvidenceRecord(projectId, item, readEvidenceState(projectId, item?.id), force);
-        outcome.skipped ? result.skipped.push("证据 " + item.id) : result.imported.evidence++;
-      } catch (e) {
-        result.errors.push("证据 " + (item?.id || "?") + "：" + e.message);
-      }
-    }
-    for (const item of Array.isArray(bundle.matrices) ? bundle.matrices : []) {
-      try {
-        const outcome = importMatrixRecord(projectId, item, readMatrixState(projectId, item?.id), force);
-        outcome.skipped ? result.skipped.push("对比表 " + item.id) : result.imported.matrices++;
-      } catch (e) {
-        result.errors.push("对比表 " + (item?.id || "?") + "：" + e.message);
-      }
-    }
-    for (const item of Array.isArray(bundle.hypotheses) ? bundle.hypotheses : []) {
-      try {
-        const outcome = importHypothesisRecord(projectId, item, readHypothesisState(projectId, item?.id), force);
-        outcome.skipped ? result.skipped.push("假设 " + item.id) : result.imported.hypotheses++;
-      } catch (e) {
-        result.errors.push("假设 " + (item?.id || "?") + "：" + e.message);
-      }
-    }
   } catch (e) {
     result.errors.push("研究档案：" + e.message);
+  }
+  importStep("证据", bundle.evidence, importEvidenceRecord, readEvidenceState, "evidence");
+  importStep("对比表", bundle.matrices, importMatrixRecord, readMatrixState, "matrices");
+  importStep("假设", bundle.hypotheses, importHypothesisRecord, readHypothesisState, "hypotheses");
+  importStep("方案", bundle.protocols, importProtocolRecord, readProtocolState, "protocols");
+  importStep("实验", bundle.experiments, importExperimentRecord, readExperimentState, "experiments");
+  importStep("运行", bundle.runs, importRunRecord, readRunState, "runs");
+  importStep("比较", bundle.comparisons, importComparisonRecord, readComparisonState, "comparisons");
+  importStep("结论", bundle.conclusions, importConclusionRecord, readConclusionState, "conclusions");
+  // 批内运行关系（如续跑指向批次中较后的运行）在全部运行落盘后补建。
+  for (const relation of pendingRelations) {
+    try {
+      const existing = readRunState(projectId, relation.ofRunId);
+      if (!existing) {
+        result.errors.push("运行关系目标缺失：" + relation.ofRunId);
+        continue;
+      }
+      const source = readRunState(projectId, relation.runId);
+      if (!source) continue;
+      saveRunRecord(projectId, source, { label: source.label, relation: { type: relation.type, ofRunId: relation.ofRunId } });
+    } catch (e) {
+      result.errors.push("运行关系补建失败：" + e.message);
+    }
   }
   return result;
 }
