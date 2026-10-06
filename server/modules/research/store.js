@@ -1604,6 +1604,189 @@ export function deleteReselection(projectId, id) {
   });
 }
 
+// ---- 投稿与审稿修订台账（A10）：轮次、意见拆解与处置对应 ----
+
+const SUBMISSION_STATUS = ["preparing", "submitted", "under-review", "revision", "accepted", "rejected", "withdrawn"];
+const COMMENT_CATEGORIES = ["explain", "revise", "experiment", "other"];
+const DISPOSITION_STATUS = ["pending", "done", "declined"];
+export const submissionResourceId = (id) => "research-submission:" + id;
+
+const submissionDirectory = (projectId) => path.join(researchDir(projectId), "submissions");
+const submissionFile = (projectId, id) => path.join(submissionDirectory(projectId), id + ".json");
+
+function normalizeSubmissionTarget(value) {
+  const target = typeof value === "string" ? value.trim() : "";
+  if (!target) throw fault("投稿目标（期刊/会议）不能为空", 400);
+  return limitLength(target, "投稿目标无效", 300);
+}
+
+function normalizeMaterials(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("提交材料必须是列表", 400);
+  return value.slice(0, 30).map((entry, index) => ({
+    label: limitLength(entry?.label, "材料名称不能为空", 200) || (() => { throw fault(`第 ${index + 1} 项材料缺少名称`, 400); })(),
+    note: limitLength(entry?.note, "材料说明无效", 500),
+    kind: ["prepared", "submitted"].includes(entry?.kind) ? entry.kind : "prepared",
+  }));
+}
+
+// 意见处置可引用的记录类型：补充实验、新结论或稿件修改说明
+const DISPOSITION_REFS = {
+  run: getRun,
+  conclusion: getConclusion,
+  manuscript: getManuscript,
+};
+
+function normalizeComments(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("审稿意见必须是列表", 400);
+  return value.slice(0, 100).map((entry, index) => {
+    const text = limitLength(entry?.text, "意见内容不能为空", 4000);
+    if (!text) throw fault(`第 ${index + 1} 条意见为空`, 400);
+    const refs = [];
+    for (const ref of Array.isArray(entry?.disposition?.refs) ? entry.disposition.refs : []) {
+      if (!DISPOSITION_REFS[ref?.kind]) throw fault(`意见处置引用类型无效：${ref?.kind}`, 400);
+      refs.push({ kind: ref.kind, id: String(ref.id || "") });
+    }
+    return {
+      id: ID_PATTERN.test(entry?.id || "") ? entry.id : "cm_" + (index + 1) + "_" + Date.now().toString(36),
+      text,
+      category: COMMENT_CATEGORIES.includes(entry?.category) ? entry.category : "other",
+      disposition: {
+        status: DISPOSITION_STATUS.includes(entry?.disposition?.status) ? entry.disposition.status : "pending",
+        note: limitLength(entry?.disposition?.note, "处置说明无效", 2000),
+        refs,
+      },
+    };
+  });
+}
+
+function readSubmissionState(projectId, id) {
+  if (!/^sub_[A-Za-z0-9_-]{1,64}$/.test(id || "")) throw fault("无效的投稿标识", 400);
+  const entry = resource(submissionResourceId(id));
+  if (entry && entry.lifecycle !== "active") return null;
+  try {
+    return readJsonState(submissionFile(projectId, id), null);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+function saveSubmissionRecord(projectId, existing, patch) {
+  const now = new Date().toISOString();
+  const status = SUBMISSION_STATUS.includes(patch.status) ? patch.status : existing?.status || "preparing";
+  const manuscriptId = typeof patch.manuscriptId === "string" ? patch.manuscriptId : existing?.manuscriptId || "";
+  if (manuscriptId) getManuscript(projectId, manuscriptId); // 关联的稿件记录必须存在
+  const round = Number(patch.round ?? existing?.round) || 1;
+  if (!Number.isInteger(round) || round < 1 || round > 50) throw fault("投稿轮次无效", 400);
+  const comments = normalizeComments(patch.comments ?? existing?.comments);
+  for (const comment of comments)
+    for (const ref of comment.disposition.refs)
+      DISPOSITION_REFS[ref.kind](projectId, ref.id); // 处置引用必须存在
+  const record = {
+    id: existing?.id || "sub_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    projectId,
+    round,
+    manuscriptId,
+    target: normalizeSubmissionTarget(patch.target ?? existing?.target),
+    status,
+    dates: {
+      preparedAt: limitLength(patch.dates?.preparedAt ?? existing?.dates?.preparedAt, "准备时间无效", 40),
+      submittedAt: limitLength(patch.dates?.submittedAt ?? existing?.dates?.submittedAt, "提交时间无效", 40),
+      decisionAt: limitLength(patch.dates?.decisionAt ?? existing?.dates?.decisionAt, "结果时间无效", 40),
+    },
+    materials: normalizeMaterials(patch.materials ?? existing?.materials),
+    comments,
+    outcomeNote: limitLength(patch.outcomeNote ?? existing?.outcomeNote, "结局说明无效", 2000),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    revision: (existing?.revision || 0) + 1,
+  };
+  writeJsonState(submissionFile(projectId, record.id), record, {
+    id: submissionResourceId(record.id),
+    kind: "research-submission",
+    title: "投稿 · " + record.target + " 第 " + record.round + " 轮",
+    metadata: record,
+  });
+  if (record.manuscriptId)
+    link(submissionResourceId(record.id), manuscriptResourceId(record.manuscriptId), "uses");
+  return record;
+}
+
+export function listSubmissions(projectId) {
+  assertProject(projectId);
+  let names = [];
+  try {
+    names = fs.readdirSync(submissionDirectory(projectId)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    const value = readSubmissionState(projectId, name.slice(0, -".json".length));
+    if (value) rows.push(value);
+  }
+  rows.sort((a, b) => (b.round || 1) - (a.round || 1) || (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return rows;
+}
+
+export function getSubmission(projectId, id) {
+  assertProject(projectId);
+  const value = readSubmissionState(projectId, id);
+  if (!value) throw fault("投稿记录不存在", 404);
+  return value;
+}
+
+export function createSubmission(projectId, patch = {}) {
+  assertProject(projectId);
+  return saveSubmissionRecord(projectId, null, patch);
+}
+
+export function updateSubmission(projectId, id, patch = {}) {
+  const existing = getSubmission(projectId, id);
+  if (patch.revision != null && Number(patch.revision) !== existing.revision)
+    throw fault("投稿记录已被其他修改更新，请刷新后重试", 409);
+  return saveSubmissionRecord(projectId, existing, patch);
+}
+
+// 粘贴审稿意见：按空行分段拆成意见草稿，等待用户分类与处置（只创建草稿，不对外回复）。
+export function importReviewComments(projectId, id, { text } = {}) {
+  const existing = getSubmission(projectId, id);
+  const source = limitLength(text, "意见文本无效", 50000);
+  if (!source) throw fault("意见文本不能为空", 400);
+  const paragraphs = source.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean).slice(0, 100);
+  if (!paragraphs.length) throw fault("没有可拆解的意见段落", 400);
+  const comments = paragraphs.map((paragraph, index) => ({
+    id: "cm_" + (index + 1) + "_" + Date.now().toString(36),
+    text: paragraph,
+    category: "other",
+    disposition: { status: "pending", note: "", refs: [] },
+  }));
+  return saveSubmissionRecord(projectId, existing, { ...existing, comments: [...existing.comments, ...comments] });
+}
+
+export function submissionChecklist(projectId, id) {
+  const existing = getSubmission(projectId, id);
+  const pending = existing.comments.filter((c) => c.disposition.status === "pending");
+  const preparedNotSubmitted = existing.materials.filter((m) => m.kind === "prepared");
+  return {
+    totalComments: existing.comments.length,
+    pending: pending.map((c) => c.id),
+    preparedNotSubmitted: preparedNotSubmitted.map((m) => m.label),
+    status: existing.status,
+    hasSubmittedAt: Boolean(existing.dates.submittedAt),
+  };
+}
+
+export function deleteSubmission(projectId, id) {
+  const existing = getSubmission(projectId, id);
+  return trashPath(submissionFile(projectId, existing.id), {
+    id: submissionResourceId(existing.id),
+    kind: "research-submission",
+  });
+}
+
 // ---- 基础导出与导入（B1.6）：新增研究记录可整体打包、在项目中恢复 ----
 
 export const RESEARCH_SCHEMA_VERSION = 1;

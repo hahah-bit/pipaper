@@ -25,6 +25,7 @@ export const labels = {
   "research-conclusion": "结论卡",
   "research-manuscript": "稿件记录",
   "research-reselection": "二次选题",
+  "research-submission": "投稿轮次",
 };
 export const storageApi = (url, body, method) => requestJson("/api/" + url, { body, method: method || (body ? "POST" : "GET") });
 export const button = (name, action) =>

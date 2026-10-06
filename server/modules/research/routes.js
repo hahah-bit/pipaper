@@ -63,6 +63,13 @@ import {
   updateReselection,
   draftFromCandidate,
   deleteReselection,
+  listSubmissions,
+  getSubmission,
+  createSubmission,
+  updateSubmission,
+  importReviewComments,
+  submissionChecklist,
+  deleteSubmission,
 } from "./store.js";
 
 // 研究模块路由（加法开发）：入口挂在 /api/research 下，不影响既有路由。
@@ -194,6 +201,41 @@ export function registerResearchRoutes(api) {
   api.delete(
     "/research/projects/:projectId/reselections/:reselectionId",
     route((req) => deleteReselection(req.params.projectId, req.params.reselectionId)),
+  );
+
+  api.get(
+    "/research/projects/:projectId/submissions",
+    route((req) => ({ submissions: listSubmissions(req.params.projectId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/submissions",
+    route((req) => ({ submission: createSubmission(req.params.projectId, req.body || {}) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/submissions/:submissionId",
+    route((req) => ({ submission: getSubmission(req.params.projectId, req.params.submissionId) })),
+  );
+
+  api.put(
+    "/research/projects/:projectId/submissions/:submissionId",
+    route((req) => ({ submission: updateSubmission(req.params.projectId, req.params.submissionId, req.body || {}) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/submissions/:submissionId/comments",
+    route((req) => ({ submission: importReviewComments(req.params.projectId, req.params.submissionId, req.body || {}) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/submissions/:submissionId/checklist",
+    route((req) => submissionChecklist(req.params.projectId, req.params.submissionId)),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/submissions/:submissionId",
+    route((req) => deleteSubmission(req.params.projectId, req.params.submissionId)),
   );
 
   api.get(
