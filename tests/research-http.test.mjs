@@ -372,7 +372,7 @@ test("研究记录导出与导入：整体打包、重复导入幂等、恢复�
   });
   assert.equal(again.status, 200);
   assert.deepEqual(again.value.imported, {
-    profile: 0, evidence: 0, matrices: 0, hypotheses: 0, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0,
+    profile: 0, evidence: 0, matrices: 0, hypotheses: 0, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0, manuscripts: 0,
   }, "重复导入应全部跳过");
 
   const target = await createProject(fixture.url, "恢复验收");
@@ -382,7 +382,7 @@ test("研究记录导出与导入：整体打包、重复导入幂等、恢复�
   });
   assert.equal(restored.status, 200, JSON.stringify(restored.value));
   assert.deepEqual(restored.value.imported, {
-    profile: 1, evidence: 1, matrices: 1, hypotheses: 1, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0,
+    profile: 1, evidence: 1, matrices: 1, hypotheses: 1, protocols: 0, experiments: 0, runs: 0, comparisons: 0, conclusions: 0, manuscripts: 0,
   });
   assert.deepEqual(restored.value.errors, [], "完整恢复不应有错误");
 
