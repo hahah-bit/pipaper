@@ -453,3 +453,103 @@ test("研究方案：创建、基线对齐表、冻结版本与修订", async (t
   const afterRestore = await call(fixture.url, base);
   assert.equal(afterRestore.value.protocols[0].versions.length, 1, "恢复保留冻结版本");
 });
+
+test("实验台账：实验与运行登记、失败保留、重试关系与导入指标来源校验", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = await createProject(fixture.url, "实验台账验收");
+
+  const protocol = await call(fixture.url, `/research/projects/${projectId}/protocols`, {
+    method: "POST",
+    body: { title: "台账验收方案" },
+  });
+  const protocolId = protocol.value.protocol.id;
+
+  const expBase = `/research/projects/${projectId}/experiments`;
+  const created = await call(fixture.url, expBase, {
+    method: "POST",
+    body: { title: "掩码修正对比", purpose: "验证修正对 IoU 的影响", protocolId, groups: [{ name: "基线" }, { name: "修正" }] },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.value));
+  const experiment = created.value.experiment;
+  assert.equal(experiment.groups.length, 2);
+
+  const badProtocol = await call(fixture.url, expBase, {
+    method: "POST",
+    body: { title: "坏引用", protocolId: "prt_missing" },
+  });
+  assert.equal(badProtocol.status, 404, "引用不存在的方案应拒绝");
+
+  const runBase = `/research/projects/${projectId}/runs`;
+  const importedNoSource = await call(fixture.url, runBase, {
+    method: "POST",
+    body: { label: "csv-行1", experimentId: experiment.id, status: "succeeded", imported: true, metrics: [{ name: "auroc", value: 0.97 }] },
+  });
+  assert.equal(importedNoSource.status, 400, "导入指标必须说明来源列");
+
+  const first = await call(fixture.url, runBase, {
+    method: "POST",
+    body: {
+      label: "尝试1",
+      experimentId: experiment.id,
+      status: "failed",
+      config: { code: "commit a1b2", data: "复现集 8:2", environment: "RTX 5060 8G", seed: "42" },
+      error: "第 30 轮显存不足中止",
+      startedAt: "2026-10-06T08:00:00Z",
+      finishedAt: "2026-10-06T09:00:00Z",
+    },
+  });
+  assert.equal(first.status, 200, JSON.stringify(first.value));
+  const firstRun = first.value.run;
+  assert.equal(firstRun.status, "failed", "失败运行应可登记");
+  assert.equal(firstRun.experimentTitle, "掩码修正对比");
+
+  const second = await call(fixture.url, runBase, {
+    method: "POST",
+    body: {
+      label: "尝试2-续跑",
+      experimentId: experiment.id,
+      status: "succeeded",
+      imported: true,
+      config: { code: "commit a1b2", notes: "降低批量后继续" },
+      metrics: [{ name: "auroc", value: 0.976, unit: "", source: "results.csv:auroc 列" }],
+      relation: { type: "resume", ofRunId: firstRun.id },
+    },
+  });
+  assert.equal(second.status, 200, JSON.stringify(second.value));
+  const secondRun = second.value.run;
+  assert.equal(secondRun.relation.type, "resume");
+  assert.equal(secondRun.relation.ofRunId, firstRun.id, "续跑应关联上次尝试");
+
+  const selfRelation = await call(fixture.url, runBase + "/" + secondRun.id, {
+    method: "PUT",
+    body: { ...secondRun, relation: { type: "retry", ofRunId: secondRun.id }, revision: secondRun.revision },
+  });
+  assert.equal(selfRelation.status, 400, "运行不能关联自身");
+
+  const conflict = await call(fixture.url, runBase + "/" + secondRun.id, {
+    method: "PUT",
+    body: { ...secondRun, revision: 0 },
+  });
+  assert.equal(conflict.status, 409);
+
+  const allRuns = await call(fixture.url, runBase);
+  assert.equal(allRuns.value.runs.length, 2, "两次尝试都保留且不互相覆盖");
+  const byExperiment = await call(fixture.url, `/research/projects/${projectId}/runs?experimentId=${experiment.id}`);
+  assert.equal(byExperiment.value.runs.length, 2);
+
+  const removed = await call(fixture.url, expBase + "/" + experiment.id, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  const orphanRuns = await call(fixture.url, runBase);
+  assert.equal(orphanRuns.value.runs.length, 2, "删除实验不影响运行记录");
+  const restoredExp = await call(fixture.url, `/storage/resources/${"research-experiment:" + experiment.id}/restore`, { method: "POST" });
+  assert.equal(restoredExp.status, 200);
+
+  const removedRun = await call(fixture.url, runBase + "/" + firstRun.id, { method: "DELETE" });
+  assert.equal(removedRun.status, 200);
+  const restoredRun = await call(fixture.url, `/storage/resources/${"research-run:" + firstRun.id}/restore`, { method: "POST" });
+  assert.equal(restoredRun.status, 200);
+  const afterRestore = await call(fixture.url, runBase);
+  assert.equal(afterRestore.value.runs.length, 2);
+  assert.equal(afterRestore.value.runs.find((r) => r.id === firstRun.id).error, "第 30 轮显存不足中止", "恢复保留失败原因");
+});

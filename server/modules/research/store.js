@@ -697,9 +697,250 @@ export function deleteProtocol(projectId, id) {
   });
 }
 
-// ---- 基础导出与导入（B1.6）：新增研究记录可整体打包、在项目中恢复 ----
+// ---- 实验台账与运行记录（A05）：登记实际执行，成功与失败都留下记录 ----
 
-export const RESEARCH_SCHEMA_VERSION = 1;
+const RUN_STATUS = ["succeeded", "failed", "stopped", "incomplete"];
+const RUN_RELATION_TYPES = ["retry", "resume", "variant"];
+export const experimentResourceId = (id) => "research-experiment:" + id;
+export const runResourceId = (id) => "research-run:" + id;
+
+const experimentDirectory = (projectId) => path.join(researchDir(projectId), "experiments");
+const experimentFile = (projectId, id) => path.join(experimentDirectory(projectId), id + ".json");
+const runDirectory = (projectId) => path.join(researchDir(projectId), "runs");
+const runFile = (projectId, id) => path.join(runDirectory(projectId), id + ".json");
+
+function normalizeMetricEntry(entry, { requireSource = false } = {}) {
+  const name = limitLength(entry?.name, "指标名称无效", 100);
+  if (!name) throw fault("指标必须有名称", 400);
+  const value = Number(entry?.value);
+  if (!Number.isFinite(value)) throw fault(`指标「${name}」的值必须是数字`, 400);
+  const source = limitLength(entry?.source, "指标来源无效", 300);
+  if (requireSource && !source) throw fault(`导入的指标「${name}」必须说明来源列或位置`, 400);
+  return { name, value, unit: limitLength(entry?.unit, "指标单位无效", 50), source };
+}
+
+function normalizeMetrics(value, options) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("指标必须是列表", 400);
+  if (value.length > 100) throw fault("单次运行最多登记 100 个指标", 400);
+  return value.map((entry) => normalizeMetricEntry(entry, options));
+}
+
+function normalizeArtifacts(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("产物必须是列表", 400);
+  if (value.length > 50) throw fault("单次运行最多登记 50 个产物", 400);
+  return value.map((entry) => {
+    const label = limitLength(entry?.label, "产物名称无效", 200);
+    const target = limitLength(entry?.path, "产物路径无效", 1000);
+    if (!label || !target) throw fault("产物必须同时有名称与路径", 400);
+    return { label, path: target, managed: Boolean(entry?.managed), note: limitLength(entry?.note, "产物说明无效", 500) };
+  });
+}
+
+function readExperimentState(projectId, id) {
+  if (!/^exp_[A-Za-z0-9_-]{1,64}$/.test(id || "")) throw fault("无效的实验标识", 400);
+  const entry = resource(experimentResourceId(id));
+  if (entry && entry.lifecycle !== "active") return null;
+  try {
+    return readJsonState(experimentFile(projectId, id), null);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+function readRunState(projectId, id) {
+  if (!/^run_[A-Za-z0-9_-]{1,64}$/.test(id || "")) throw fault("无效的运行标识", 400);
+  const entry = resource(runResourceId(id));
+  if (entry && entry.lifecycle !== "active") return null;
+  try {
+    return readJsonState(runFile(projectId, id), null);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+function saveExperimentRecord(projectId, existing, patch) {
+  const now = new Date().toISOString();
+  const title = limitLength(patch.title, "实验标题不能为空", 200);
+  if (!title) throw fault("实验标题不能为空", 400);
+  const protocolId = typeof patch.protocolId === "string" && patch.protocolId ? patch.protocolId : existing?.protocolId || "";
+  if (protocolId) getProtocol(projectId, protocolId); // 引用的方案必须存在
+  const groups = Array.isArray(patch.groups ?? existing?.groups)
+    ? (patch.groups ?? existing?.groups).slice(0, 10).map((group, index) => ({
+        name: limitLength(group?.name, "实验组名称无效", 100) || "组 " + (index + 1),
+        note: limitLength(group?.note, "实验组说明无效", 500),
+      }))
+    : [];
+  const record = {
+    id: existing?.id || "exp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    projectId,
+    title,
+    purpose: limitLength(patch.purpose, "实验目的无效", 2000),
+    protocolId,
+    groups,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    revision: (existing?.revision || 0) + 1,
+  };
+  writeJsonState(experimentFile(projectId, record.id), record, {
+    id: experimentResourceId(record.id),
+    kind: "research-experiment",
+    title: "实验 · " + record.title,
+    metadata: record,
+  });
+  if (record.protocolId)
+    link(experimentResourceId(record.id), protocolResourceId(record.protocolId), "uses");
+  return record;
+}
+
+export function listExperiments(projectId) {
+  assertProject(projectId);
+  let names = [];
+  try {
+    names = fs.readdirSync(experimentDirectory(projectId)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    const value = readExperimentState(projectId, name.slice(0, -".json".length));
+    if (value) rows.push(value);
+  }
+  rows.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return rows;
+}
+
+export function getExperiment(projectId, id) {
+  assertProject(projectId);
+  const value = readExperimentState(projectId, id);
+  if (!value) throw fault("实验不存在", 404);
+  return value;
+}
+
+export function createExperiment(projectId, patch = {}) {
+  assertProject(projectId);
+  return saveExperimentRecord(projectId, null, patch);
+}
+
+export function updateExperiment(projectId, id, patch = {}) {
+  const existing = getExperiment(projectId, id);
+  if (patch.revision != null && Number(patch.revision) !== existing.revision)
+    throw fault("实验已被其他修改更新，请刷新后重试", 409);
+  return saveExperimentRecord(projectId, existing, patch);
+}
+
+export function deleteExperiment(projectId, id) {
+  const existing = getExperiment(projectId, id);
+  // 只删除实验本身；运行记录是独立对象，保留在台账中供回查。
+  return trashPath(experimentFile(projectId, existing.id), {
+    id: experimentResourceId(existing.id),
+    kind: "research-experiment",
+  });
+}
+
+function saveRunRecord(projectId, existing, patch, { requireSource = false } = {}) {
+  const now = new Date().toISOString();
+  const label = limitLength(patch.label, "运行标识不能为空", 200);
+  if (!label) throw fault("运行标识不能为空", 400);
+  const experimentId = patch.experimentId ?? existing?.experimentId;
+  const experiment = getExperiment(projectId, experimentId); // 运行必须挂在存在的实验下
+  const status = RUN_STATUS.includes(patch.status) ? patch.status : existing?.status || "incomplete";
+  let relation = existing?.relation || null;
+  if (patch.relation !== undefined) {
+    if (patch.relation == null) relation = null;
+    else {
+      if (!RUN_RELATION_TYPES.includes(patch.relation.type)) throw fault("运行关系必须是 retry、resume 或 variant", 400);
+      const ofRun = getRun(projectId, patch.relation.ofRunId);
+      if (existing && ofRun.id === existing.id) throw fault("运行不能关联自身", 400);
+      relation = { type: patch.relation.type, ofRunId: ofRun.id };
+    }
+  }
+  const record = {
+    id: existing?.id || "run_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    projectId,
+    experimentId: experiment.id,
+    experimentTitle: experiment.title,
+    label,
+    status,
+    config: {
+      code: limitLength(patch.config?.code, "代码版本说明无效", 2000),
+      data: limitLength(patch.config?.data, "数据说明无效", 2000),
+      environment: limitLength(patch.config?.environment, "环境说明无效", 2000),
+      seed: limitLength(patch.config?.seed, "种子说明无效", 200),
+      notes: limitLength(patch.config?.notes, "配置备注无效", 2000),
+    },
+    metrics: normalizeMetrics(patch.metrics ?? existing?.metrics, { requireSource }),
+    artifacts: normalizeArtifacts(patch.artifacts ?? existing?.artifacts),
+    imported: Boolean(patch.imported ?? existing?.imported),
+    error: limitLength(patch.error, "失败原因无效", 4000),
+    relation,
+    startedAt: limitLength(patch.startedAt, "开始时间无效", 40) || existing?.startedAt || "",
+    finishedAt: limitLength(patch.finishedAt, "结束时间无效", 40) || existing?.finishedAt || "",
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    revision: (existing?.revision || 0) + 1,
+  };
+  writeJsonState(runFile(projectId, record.id), record, {
+    id: runResourceId(record.id),
+    kind: "research-run",
+    title: record.label + " · " + record.status,
+    metadata: record,
+  });
+  link(runResourceId(record.id), experimentResourceId(experiment.id), "uses");
+  if (relation)
+    link(runResourceId(record.id), runResourceId(relation.ofRunId), "derives");
+  return record;
+}
+
+export function listRuns(projectId, { experimentId } = {}) {
+  assertProject(projectId);
+  if (experimentId) getExperiment(projectId, experimentId);
+  let names = [];
+  try {
+    names = fs.readdirSync(runDirectory(projectId)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    const value = readRunState(projectId, name.slice(0, -".json".length));
+    if (value && (!experimentId || value.experimentId === experimentId)) rows.push(value);
+  }
+  rows.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  return rows;
+}
+
+export function getRun(projectId, id) {
+  assertProject(projectId);
+  const value = readRunState(projectId, id);
+  if (!value) throw fault("运行记录不存在", 404);
+  return value;
+}
+
+export function createRun(projectId, patch = {}) {
+  assertProject(projectId);
+  return saveRunRecord(projectId, null, patch, { requireSource: Boolean(patch.imported) });
+}
+
+export function updateRun(projectId, id, patch = {}) {
+  const existing = getRun(projectId, id);
+  if (patch.revision != null && Number(patch.revision) !== existing.revision)
+    throw fault("运行记录已被其他修改更新，请刷新后重试", 409);
+  return saveRunRecord(projectId, existing, patch, { requireSource: Boolean(existing.imported) });
+}
+
+export function deleteRun(projectId, id) {
+  const existing = getRun(projectId, id);
+  return trashPath(runFile(projectId, existing.id), {
+    id: runResourceId(existing.id),
+    kind: "research-run",
+  });
+}
+
+// ---- 基础导出与导入（B1.6）：新增研究记录可整体打包、在项目中恢复 ----
 
 function writeImportedRecord(file, resourceId, kind, title, record) {
   writeJsonState(file, record, { id: resourceId, kind, title, metadata: record });

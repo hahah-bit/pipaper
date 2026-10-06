@@ -25,6 +25,16 @@ import {
   updateProtocol,
   freezeProtocol,
   deleteProtocol,
+  listExperiments,
+  getExperiment,
+  createExperiment,
+  updateExperiment,
+  deleteExperiment,
+  listRuns,
+  getRun,
+  createRun,
+  updateRun,
+  deleteRun,
 } from "./store.js";
 
 // 研究模块路由（加法开发）：入口挂在 /api/research 下，不影响既有路由。
@@ -166,5 +176,52 @@ export function registerResearchRoutes(api) {
   api.delete(
     "/research/projects/:projectId/protocols/:protocolId",
     route((req) => deleteProtocol(req.params.projectId, req.params.protocolId)),
+  );
+
+  api.get(
+    "/research/projects/:projectId/experiments",
+    route((req) => ({ experiments: listExperiments(req.params.projectId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/experiments",
+    route((req) => ({ experiment: createExperiment(req.params.projectId, req.body || {}) })),
+  );
+
+  api.put(
+    "/research/projects/:projectId/experiments/:experimentId",
+    route((req) => ({ experiment: updateExperiment(req.params.projectId, req.params.experimentId, req.body || {}) })),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/experiments/:experimentId",
+    route((req) => deleteExperiment(req.params.projectId, req.params.experimentId)),
+  );
+
+  api.get(
+    "/research/projects/:projectId/runs",
+    route((req) => ({
+      runs: listRuns(req.params.projectId, { experimentId: req.query.experimentId || undefined }),
+    })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/runs/:runId",
+    route((req) => ({ run: getRun(req.params.projectId, req.params.runId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/runs",
+    route((req) => ({ run: createRun(req.params.projectId, req.body || {}) })),
+  );
+
+  api.put(
+    "/research/projects/:projectId/runs/:runId",
+    route((req) => ({ run: updateRun(req.params.projectId, req.params.runId, req.body || {}) })),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/runs/:runId",
+    route((req) => deleteRun(req.params.projectId, req.params.runId)),
   );
 }
