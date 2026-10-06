@@ -1528,3 +1528,7 @@ html[data-fs="xlarge"]  { --fs-doc: 19.5px; --fs-chat: 18.5px; --fs-ui: 16.5px; 
 .research-timeline-at { color: var(--fg2); flex: none; font-variant-numeric: tabular-nums; }
 .research-muted { color: var(--fg2); font-size: 12.5px; line-height: 1.6; }
 .research-foot { display: flex; justify-content: flex-end; }
+.research-evidence-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--border); font-size: 13px; min-width: 0; }
+.research-evidence-type { flex: none; font-size: 11px; color: var(--accent); border: 1px solid var(--border); border-radius: 5px; padding: 1px 6px; }
+.research-evidence-content { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.research-evidence-item .tool-btn { font-size: 11px; padding: 2px 7px; flex: none; }

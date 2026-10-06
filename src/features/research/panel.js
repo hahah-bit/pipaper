@@ -8,8 +8,10 @@ import { actionStatusLabel, buildTimeline, openActions } from "./overview.js";
 // 不选中项目时只显示空状态；面板加载失败只影响本面板，随时可以关闭返回原工作区。
 
 const profileUrl = (projectId) => "/api/research/projects/" + encodeURIComponent(projectId) + "/profile";
+const evidenceUrl = (projectId) => "/api/research/projects/" + encodeURIComponent(projectId) + "/evidence";
 const STATUS_OPTIONS = ["todo", "doing", "done", "blocked"];
 const KIND_ICON = { paper: "📄" };
+const EVIDENCE_TYPE_LABEL = { fact: "事实", "author-claim": "作者结论", interpretation: "解释", observation: "个人观察" };
 
 export function researchModule() {
   let alive = false;
@@ -233,6 +235,80 @@ export function researchModule() {
     };
     renderTimeline();
 
+    // ---- 证据卡（A02）：阅读选区 / 检索选区保存的证据在此汇总 ----
+    const evidenceList = el("div", { class: "research-evidence-list" },
+      el("div", { class: "research-muted" }, "正在加载证据卡…"));
+    const renderEvidenceItems = (items) => {
+      evidenceList.replaceChildren(
+        ...items.map((item) => el("div", { class: "research-evidence-item" },
+          el("span", { class: "research-evidence-type" }, EVIDENCE_TYPE_LABEL[item.type] || item.type),
+          el("span", {
+            class: "research-evidence-content",
+            title: item.content + (item.conditions ? "\n适用条件：" + item.conditions : ""),
+          }, item.content),
+          el("span", { class: "research-muted", title: "来源" },
+            (item.source?.label || "手工记录") + (item.source?.pages?.length ? ` · 第 ${item.source.pages.join(",")} 页` : "")
+            + (item.checked ? " · 已核对" : "")),
+          ...(item.source?.kind === "paper"
+            ? [el("button", {
+                class: "tool-btn",
+                onclick: () => {
+                  const paper = state.papers.find((p) => p.id === item.source.paperId);
+                  if (!paper) return toast("论文不在当前文献列表中", true);
+                  selectPaper(paper);
+                },
+              }, "查看原文")]
+            : []),
+          el("button", {
+            class: "tool-btn danger",
+            title: "删除证据卡（进入回收站，可恢复）",
+            onclick: async () => {
+              try {
+                await requestJson(evidenceUrl(projectId) + "/" + item.id, { method: "DELETE" });
+                void renderEvidence();
+              } catch (e) { toast(e.message, true); }
+            },
+          }, "删除"),
+        )),
+        ...items.length ? [] : [el("div", { class: "research-muted" },
+          "还没有证据卡。在阅读器划选文本或知识检索结果选区，点「保存为证据」。")],
+      );
+    };
+    const renderEvidence = async () => {
+      try {
+        const data = await requestJson(evidenceUrl(projectId));
+        renderEvidenceItems(data.evidence || []);
+      } catch (e) {
+        evidenceList.replaceChildren(el("div", { class: "research-muted" }, "证据卡加载失败：" + e.message));
+      }
+    };
+    void renderEvidence();
+    const evidenceType = el("select", { class: "research-status-select" },
+      Object.entries(EVIDENCE_TYPE_LABEL).map(([value, label]) => el("option", { value }, label)));
+    const evidenceInput = el("input", { type: "text", placeholder: "手工添加一条带来源说明的记录…" });
+    const evidenceSource = el("input", { type: "text", placeholder: "来源说明（必填）" });
+    const addEvidenceBtn = el("button", {
+      class: "tool-btn",
+      onclick: async () => {
+        const content = evidenceInput.value.trim();
+        if (!content) return;
+        try {
+          await requestJson(evidenceUrl(projectId), {
+            method: "POST",
+            body: {
+              type: evidenceType.value,
+              content,
+              source: { kind: "manual", label: evidenceSource.value.trim() || "手工记录" },
+            },
+          });
+          evidenceInput.value = "";
+          evidenceSource.value = "";
+          toast("证据卡已保存");
+          void renderEvidence();
+        } catch (e) { toast(e.message, true); }
+      },
+    }, "添加证据");
+
     const deleteBtn = el("button", {
       class: "tool-btn danger",
       onclick: async () => {
@@ -270,6 +346,10 @@ export function researchModule() {
           el("h4", {}, "下一步与阻塞（" + openActions(profile).length + " 项未完成）"),
           actionList,
           el("div", { class: "research-add-row" }, statusSelect, actionInput, addAction))),
+      el("div", { class: "research-card" },
+        el("h4", {}, "证据卡（阅读与检索的固定来源记录）"),
+        evidenceList,
+        el("div", { class: "research-add-row" }, evidenceType, evidenceInput, evidenceSource, addEvidenceBtn)),
       el("div", { class: "research-columns" },
         el("div", { class: "research-card" }, timeline),
         el("div", { class: "research-card" },

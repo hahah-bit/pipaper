@@ -6,6 +6,7 @@ import { renderMd } from "./platform/markdown.js";
 import { streamPrompt } from "./chat.js";
 import { api } from "./platform/api.js";
 import { state } from "./shell/state.js";
+import { requestJson } from "./platform/http.js";
 import { $, el, toast } from "./platform/dom.js";
 import { addChip } from "./features/chat/attachments.js";
 import { getTemplates, saveTemplates, applyTemplate } from "./templates.js";
@@ -475,6 +476,31 @@ function initSelection() {
       toast("选中文本已加入对话");
     }
     popup.hidden = true;
+  });
+  $("#btn-sel-evidence").addEventListener("click", async () => {
+    const text = selectedSourceText();
+    popup.hidden = true;
+    if (previewing) return toast("请先采用该版本，再保存证据", true);
+    if (!text) return;
+    const paper = state.currentPaper;
+    if (!paper) return toast("先选择论文再保存证据", true);
+    if (!state.projectId) return toast("先在顶部选择项目，才能保存证据卡", true);
+    try {
+      await requestJson(
+        "/api/research/projects/" + encodeURIComponent(state.projectId) + "/evidence",
+        {
+          method: "POST",
+          body: {
+            type: "fact",
+            content: text.slice(0, 8000),
+            source: { kind: "paper", paperId: paper.id, page: parseInt(popup.dataset.page) || null },
+          },
+        },
+      );
+      toast("已保存为证据卡，可在「研究」面板查看");
+    } catch (e) {
+      toast("保存证据失败: " + e.message, true);
+    }
   });
 }
 

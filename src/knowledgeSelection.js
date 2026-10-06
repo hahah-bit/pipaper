@@ -1,6 +1,38 @@
 import { el, toast } from "./platform/dom.js";
+import { requestJson } from "./platform/http.js";
+import { state } from "./shell/state.js";
 import { addChip } from "./features/chat/attachments.js";
 import { renderMd } from "./platform/markdown.js";
+
+async function saveKnowledgeEvidence({ text, source }) {
+  if (text.length > 8000) return toast("请选择不超过 8000 字的文本", true);
+  if (!state.projectId) return toast("先在顶部选择项目，才能保存证据卡", true);
+  try {
+    await requestJson(
+      "/api/research/projects/" + encodeURIComponent(state.projectId) + "/evidence",
+      {
+        method: "POST",
+        body: {
+          type: "fact",
+          content: text,
+          source: {
+            kind: "retrieval",
+            resourceId: source.resourceId || "",
+            versionId: source.versionId || "",
+            generationId: source.generationId || "",
+            recordId: source.recordId || "",
+            pages: source.pages || [],
+            sectionPath: source.sectionPath || [],
+            label: source.title || "知识库选区",
+          },
+        },
+      },
+    );
+    toast("已保存为证据卡，可在「研究」面板查看");
+  } catch (e) {
+    toast("保存证据失败: " + e.message, true);
+  }
+}
 
 export function selectedKnowledgeText(range) {
   const complete = range.cloneRange();
@@ -48,6 +80,9 @@ export function createKnowledgeSelection(root) {
         body: `【知识库选区 · ${source.title}\n${source.sectionPath?.join(" > ") || "文档根节点"} · 页 ${source.pages?.join(", ") || "—"} · 版本 ${source.versionId}】\n${text}` });
       toast("已添加进对话，发送下一条消息时带上这段引用"); hide();
     } }, "添加进对话"));
+    popup.append(el("button", { type: "button", onclick: () => {
+      const choice = selected; hide(); void saveKnowledgeEvidence(choice);
+    } }, "保存为证据"));
     document.body.append(popup);
     const rects = [...range.getClientRects()].filter(rect => rect.width && rect.height);
     const rect = rects.at(-1) || range.getBoundingClientRect();

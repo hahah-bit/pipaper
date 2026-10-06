@@ -115,3 +115,74 @@ test("研究档案：删除进入回收站，可从回收站恢复；重启后�
   const afterRestart = await call(fixture.url, `/research/projects/${projectId}/profile`);
   assert.equal(afterRestart.value.profile.question, "待恢复的问题", "重启后档案数据应保持");
 });
+
+test("证据卡：从论文与知识检索保存，可更新、冲突检测与回收站恢复", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = await createProject(fixture.url, "证据卡验收");
+  const base = `/research/projects/${projectId}/evidence`;
+
+  const missingSource = await call(fixture.url, base, { method: "POST", body: { content: "没有来源", source: { kind: "retrieval" } } });
+  assert.equal(missingSource.status, 400, "检索证据缺 resourceId/recordId 应拒绝");
+
+  const manualNoLabel = await call(fixture.url, base, { method: "POST", body: { content: "手工记录", source: { kind: "manual" } } });
+  assert.equal(manualNoLabel.status, 400, "手工证据必须说明来源");
+
+  const paperCard = await call(fixture.url, base, {
+    method: "POST",
+    body: {
+      type: "author-claim",
+      content: "原文表 2 报告 AUROC 0.976",
+      conditions: "仅在批次 32、轮次 40 条件下",
+      source: { kind: "paper", paperId: "fixture-paper", page: 6 },
+    },
+  });
+  assert.equal(paperCard.status, 200, JSON.stringify(paperCard.value));
+  const card = paperCard.value.evidence;
+  assert.equal(card.source.label, "本地验收论文", "论文来源应自动补充标题");
+  assert.deepEqual(card.source.pages, [6]);
+  assert.equal(card.revision, 1);
+
+  const conflict = await call(fixture.url, `${base}/${card.id}`, { method: "PUT", body: { content: "过期更新", revision: 0 } });
+  assert.equal(conflict.status, 409);
+
+  const updated = await call(fixture.url, `${base}/${card.id}`, {
+    method: "PUT",
+    body: { content: card.content, checked: true, revision: card.revision },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.value.evidence.checked, true, "人工核对状态应可更新");
+
+  const retrievalCard = await call(fixture.url, base, {
+    method: "POST",
+    body: {
+      type: "fact",
+      content: "知识检索发现的对比数值",
+      source: { kind: "retrieval", resourceId: "file:missing", recordId: "rec_1", pages: [3, 4], sectionPath: ["实验", "表格"] },
+    },
+  });
+  assert.equal(retrievalCard.status, 400, "resourceId 不存在时应拒绝");
+
+  const list = await call(fixture.url, base);
+  assert.equal(list.value.evidence.length, 1);
+  assert.equal(list.value.evidence[0].id, card.id);
+
+  const removed = await call(fixture.url, `${base}/${card.id}`, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  const afterDelete = await call(fixture.url, base);
+  assert.equal(afterDelete.value.evidence.length, 0, "删除后列表不应包含证据");
+
+  const trashed = await call(fixture.url, "/storage/resources?kind=research-evidence");
+  const entry = trashed.value.resources.find((r) => r.id === "research-evidence:" + card.id);
+  assert.equal(entry?.lifecycle, "trashed");
+  const restored = await call(fixture.url, `/storage/resources/${"research-evidence:" + card.id}/restore`, { method: "POST" });
+  assert.equal(restored.status, 200, JSON.stringify(restored.value));
+  const afterRestore = await call(fixture.url, base);
+  assert.equal(afterRestore.value.evidence.length, 1, "恢复后证据应重新出现");
+  assert.equal(afterRestore.value.evidence[0].checked, true, "恢复保留核对状态");
+
+  const detail = await call(fixture.url, `${base}/${card.id}`);
+  assert.equal(detail.status, 200);
+  const missingDetail = await call(fixture.url, `${base}/ev_nope`);
+  assert.equal(missingDetail.status, 404);
+});
