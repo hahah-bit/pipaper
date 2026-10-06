@@ -17,6 +17,8 @@ import {
   createHypothesis,
   updateHypothesis,
   deleteHypothesis,
+  exportBundle,
+  importBundle,
 } from "./store.js";
 
 // 研究模块路由（加法开发）：入口挂在 /api/research 下，不影响既有路由。
@@ -118,5 +120,15 @@ export function registerResearchRoutes(api) {
   api.delete(
     "/research/projects/:projectId/hypotheses/:hypothesisId",
     route((req) => deleteHypothesis(req.params.projectId, req.params.hypothesisId)),
+  );
+
+  api.get(
+    "/research/projects/:projectId/export",
+    route((req) => ({ export: exportBundle(req.params.projectId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/import",
+    route((req) => importBundle(req.params.projectId, req.body?.data, { force: Boolean(req.body?.force) })),
   );
 }

@@ -553,3 +553,193 @@ export function deleteHypothesis(projectId, id) {
     kind: "research-hypothesis",
   });
 }
+
+// ---- 基础导出与导入（B1.6）：新增研究记录可整体打包、在项目中恢复 ----
+
+export const RESEARCH_SCHEMA_VERSION = 1;
+
+function writeImportedRecord(file, resourceId, kind, title, record) {
+  writeJsonState(file, record, { id: resourceId, kind, title, metadata: record });
+}
+
+export function exportBundle(projectId) {
+  const project = assertProject(projectId);
+  return {
+    schemaVersion: RESEARCH_SCHEMA_VERSION,
+    exportedAt: new Date().toISOString(),
+    project: { id: project.id, name: project.name },
+    profile: loadProfile(projectId),
+    evidence: listEvidence(projectId),
+    matrices: listMatrices(projectId),
+    hypotheses: listHypotheses(projectId),
+  };
+}
+
+function importedRevision(existing, incoming) {
+  return Math.max(existing?.revision || 0, incoming.revision || 0) + 1;
+}
+
+function importProfileRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const next = {
+    projectId,
+    question: limitText(data.question, "question"),
+    scope: limitText(data.scope, "scope"),
+    goal: limitText(data.goal, "goal"),
+    constraints: limitText(data.constraints, "constraints"),
+    outcomes: normalizeList(data.outcomes, resolveOutcome, 100, "成果关联"),
+    actions: normalizeList(data.actions, normalizeAction, 200, "行动项"),
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : existing?.createdAt || now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  writeImportedRecord(profileFile(projectId), profileId(projectId), "research-profile",
+    "研究档案 · " + (getProject(projectId)?.name || projectId), next);
+  link(profileId(projectId), "project:" + projectId, "uses");
+  return { saved: next };
+}
+
+function importEvidenceRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const content = limitLength(data.content, "证据内容不能为空", 8000);
+  if (!content) throw fault("导入的证据缺少内容", 400);
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    type: EVIDENCE_TYPES.includes(data.type) ? data.type : "fact",
+    content,
+    note: limitLength(data.note, "证据备注无效", 2000),
+    conditions: limitLength(data.conditions, "适用条件无效", 2000),
+    checked: Boolean(data.checked),
+    source: normalizeEvidenceSource(data.source),
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^ev_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的证据标识无效", 400);
+  writeImportedRecord(evidenceFile(projectId, record.id), evidenceResourceId(record.id),
+    "research-evidence", record.content.slice(0, 40), record);
+  if (record.source.kind === "paper")
+    link(evidenceResourceId(record.id), "paper:" + record.source.paperId, "uses");
+  else if (record.source.kind === "retrieval" && record.source.resourceId)
+    link(evidenceResourceId(record.id), record.source.resourceId, "uses");
+  return { saved: record };
+}
+
+function importMatrixRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const title = limitLength(data.title, "导入的对比表缺少标题", 200);
+  if (!title) throw fault("导入的对比表缺少标题", 400);
+  const paperIds = normalizeMatrixPapers(data.paperIds);
+  const columns = normalizeColumns(data.columns);
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    title,
+    conditions: limitLength(data.conditions, "比较条件说明无效", 2000),
+    paperIds,
+    columns,
+    cells: normalizeCells(data.cells, paperIds, columns),
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^mtx_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的对比表标识无效", 400);
+  writeImportedRecord(matrixFile(projectId, record.id), matrixResourceId(record.id),
+    "research-matrix", "对比表 · " + record.title, record);
+  for (const paperId of record.paperIds)
+    link(matrixResourceId(record.id), "paper:" + paperId, "uses");
+  return { saved: record };
+}
+
+function importHypothesisRecord(projectId, data, existing, force) {
+  if (existing && !force) return { skipped: true };
+  const now = new Date().toISOString();
+  const title = limitLength(data.title, "导入的假设缺少标题", 200);
+  const statement = limitLength(data.statement, "导入的假设缺少内容", 4000);
+  if (!title || !statement) throw fault("导入的假设缺少标题或内容", 400);
+  const record = {
+    id: existing?.id || data.id,
+    projectId,
+    title,
+    statement,
+    prediction: limitLength(data.prediction, "预测描述无效", 2000),
+    scope: limitLength(data.scope, "作用范围无效", 1000),
+    counterExamples: limitLength(data.counterExamples, "反例与替代解释无效", 2000),
+    unknowns: limitLength(data.unknowns, "未知项说明无效", 1000),
+    support: normalizeEvidenceRefs(data.support, projectId, "支持证据"),
+    oppose: normalizeEvidenceRefs(data.oppose, projectId, "反对证据"),
+    decision: data.decision && DECISION_STATUS.includes(data.decision.status)
+      ? {
+          status: data.decision.status,
+          reason: limitLength(data.decision.reason, "决策理由无效", 2000),
+          at: typeof data.decision.at === "string" ? data.decision.at : now,
+        }
+      : null,
+    decisionHistory: Array.isArray(data.decisionHistory)
+      ? data.decisionHistory
+        .filter((entry) => entry && DECISION_STATUS.includes(entry.status))
+        .map((entry) => ({ at: entry.at, status: entry.status, reason: limitLength(entry.reason, "决策理由无效", 2000) }))
+        .slice(0, 100)
+      : [],
+    sourceNote: limitLength(data.sourceNote, "来源说明无效", 500),
+    createdAt: typeof data.createdAt === "string" ? data.createdAt : now,
+    updatedAt: now,
+    revision: importedRevision(existing, data),
+  };
+  if (!/^hyp_[A-Za-z0-9_-]{1,64}$/.test(record.id)) throw fault("导入的假设标识无效", 400);
+  writeImportedRecord(hypothesisFile(projectId, record.id), hypothesisResourceId(record.id),
+    "research-hypothesis", "假设 · " + record.title, record);
+  for (const evidenceIdValue of [...record.support, ...record.oppose])
+    link(hypothesisResourceId(record.id), evidenceResourceId(evidenceIdValue), "uses");
+  return { saved: record };
+}
+
+export function importBundle(projectId, bundle, { force = false } = {}) {
+  assertProject(projectId);
+  if (!bundle || bundle.schemaVersion !== RESEARCH_SCHEMA_VERSION)
+    throw fault(`不支持的研究记录包版本：${bundle?.schemaVersion}`, 400);
+  const result = {
+    imported: { profile: 0, evidence: 0, matrices: 0, hypotheses: 0 },
+    skipped: [],
+    errors: [],
+  };
+  // 恢复顺序与导出结构一致：先档案与证据，再矩阵与假设（假设引用证据）。
+  const existingProfile = readProfileState(projectId);
+  try {
+    if (bundle.profile) {
+      const outcome = importProfileRecord(projectId, bundle.profile, existingProfile, force);
+      outcome.skipped ? result.skipped.push("研究档案（已存在）") : result.imported.profile++;
+    }
+    for (const item of Array.isArray(bundle.evidence) ? bundle.evidence : []) {
+      try {
+        const outcome = importEvidenceRecord(projectId, item, readEvidenceState(projectId, item?.id), force);
+        outcome.skipped ? result.skipped.push("证据 " + item.id) : result.imported.evidence++;
+      } catch (e) {
+        result.errors.push("证据 " + (item?.id || "?") + "：" + e.message);
+      }
+    }
+    for (const item of Array.isArray(bundle.matrices) ? bundle.matrices : []) {
+      try {
+        const outcome = importMatrixRecord(projectId, item, readMatrixState(projectId, item?.id), force);
+        outcome.skipped ? result.skipped.push("对比表 " + item.id) : result.imported.matrices++;
+      } catch (e) {
+        result.errors.push("对比表 " + (item?.id || "?") + "：" + e.message);
+      }
+    }
+    for (const item of Array.isArray(bundle.hypotheses) ? bundle.hypotheses : []) {
+      try {
+        const outcome = importHypothesisRecord(projectId, item, readHypothesisState(projectId, item?.id), force);
+        outcome.skipped ? result.skipped.push("假设 " + item.id) : result.imported.hypotheses++;
+      } catch (e) {
+        result.errors.push("假设 " + (item?.id || "?") + "：" + e.message);
+      }
+    }
+  } catch (e) {
+    result.errors.push("研究档案：" + e.message);
+  }
+  return result;
+}

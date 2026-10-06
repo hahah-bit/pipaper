@@ -329,6 +329,59 @@ export function researchModule() {
       },
     }, "删除档案");
 
+    const exportBtn = el("button", {
+      class: "tool-btn",
+      title: "把研究档案、证据卡、对比表与假设打包为 JSON",
+      onclick: async () => {
+        try {
+          const data = await requestJson("/api/research/projects/" + encodeURIComponent(projectId) + "/export");
+          const blob = new Blob([JSON.stringify(data.export, null, 2)], { type: "application/json" });
+          const link = el("a", { href: URL.createObjectURL(blob), download: "pipaper-research-" + projectId + ".json" });
+          document.body.append(link);
+          link.click();
+          link.remove();
+          setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+          toast("研究记录已导出");
+        } catch (e) { toast(e.message, true); }
+      },
+    }, "导出研究记录");
+
+    const importInput = el("input", {
+      type: "file",
+      accept: ".json,application/json",
+      hidden: true,
+      onchange: async (event) => {
+        const file = event.target.files?.[0];
+        event.target.value = "";
+        if (!file) return;
+        try {
+          const data = JSON.parse(await file.text());
+          const result = await requestJson("/api/research/projects/" + encodeURIComponent(projectId) + "/import", {
+            method: "POST",
+            body: { data },
+          });
+          const { imported, skipped, errors } = result;
+          const parts = [];
+          if (imported.profile) parts.push("档案 1");
+          if (imported.evidence) parts.push("证据 " + imported.evidence);
+          if (imported.matrices) parts.push("对比表 " + imported.matrices);
+          if (imported.hypotheses) parts.push("假设 " + imported.hypotheses);
+          toast("导入完成：" + (parts.join("、") || "无新记录")
+            + (skipped.length ? "；跳过 " + skipped.length + " 条已存在记录" : "")
+            + (errors.length ? "；失败 " + errors.length + " 条（见控制台）" : ""));
+          for (const message of errors) console.warn("[research-import]", message);
+          void refresh(bodyArea);
+        } catch (e) {
+          toast("导入失败：" + e.message, true);
+        }
+      },
+    });
+    const importBtn = el("button", {
+      class: "tool-btn",
+      title: "从导出的 JSON 恢复研究记录；已存在的记录会跳过",
+      onclick: () => importInput.click(),
+    }, "导入研究记录");
+
     bodyArea.replaceChildren(
       el("div", { class: "research-card" },
         el("h4", {}, "研究问题与目标"),
@@ -394,7 +447,7 @@ export function researchModule() {
               onclick: () => window.dispatchEvent(new CustomEvent("pipaper:workspace-open", { detail: { moduleId: "knowledge" } })),
             }, "打开知识检索"))),
       ),
-      el("div", { class: "research-foot" }, deleteBtn),
+      el("div", { class: "research-foot" }, importInput, importBtn, exportBtn, deleteBtn),
     );
   }
 

@@ -321,3 +321,65 @@ test("研究假设：登记、证据依据校验、决策历史与回收站恢�
   assert.equal(afterRestore.value.hypotheses.length, 1);
   assert.equal(afterRestore.value.hypotheses[0].decisionHistory.length, 2, "恢复保留决策历史");
 });
+
+test("研究记录导出与导入：整体打包、重复导入幂等、恢复到新项目", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = await createProject(fixture.url, "导出验收");
+  await call(fixture.url, `/research/projects/${projectId}/profile`, {
+    method: "PUT",
+    body: { question: "导出验收问题", actions: [{ text: "恢复后继续行动" }] },
+  });
+  const evidence = await call(fixture.url, `/research/projects/${projectId}/evidence`, {
+    method: "POST",
+    body: { type: "fact", content: "导出验收证据", source: { kind: "paper", paperId: "fixture-paper" } },
+  });
+  const evidenceId = evidence.value.evidence.id;
+  await call(fixture.url, `/research/projects/${projectId}/matrices`, {
+    method: "POST",
+    body: { title: "导出验收对比表", paperIds: ["fixture-paper"], columns: [{ name: "指标" }], cells: {} },
+  });
+  await call(fixture.url, `/research/projects/${projectId}/hypotheses`, {
+    method: "POST",
+    body: { title: "导出验收假设", statement: "内容", support: [evidenceId] },
+  });
+
+  const exported = await call(fixture.url, `/research/projects/${projectId}/export`);
+  assert.equal(exported.status, 200);
+  const bundle = exported.value.export;
+  assert.equal(bundle.schemaVersion, 1);
+  assert.equal(bundle.profile.question, "导出验收问题");
+  assert.equal(bundle.evidence.length, 1);
+  assert.equal(bundle.matrices.length, 1);
+  assert.equal(bundle.hypotheses.length, 1);
+
+  const badVersion = await call(fixture.url, `/research/projects/${projectId}/import`, {
+    method: "POST",
+    body: { data: { schemaVersion: 99 } },
+  });
+  assert.equal(badVersion.status, 400);
+
+  const again = await call(fixture.url, `/research/projects/${projectId}/import`, {
+    method: "POST",
+    body: { data: bundle },
+  });
+  assert.equal(again.status, 200);
+  assert.deepEqual(again.value.imported, { profile: 0, evidence: 0, matrices: 0, hypotheses: 0 }, "重复导入应全部跳过");
+
+  const target = await createProject(fixture.url, "恢复验收");
+  const restored = await call(fixture.url, `/research/projects/${target}/import`, {
+    method: "POST",
+    body: { data: bundle },
+  });
+  assert.equal(restored.status, 200, JSON.stringify(restored.value));
+  assert.deepEqual(restored.value.imported, { profile: 1, evidence: 1, matrices: 1, hypotheses: 1 });
+  assert.deepEqual(restored.value.errors, [], "完整恢复不应有错误");
+
+  const targetProfile = await call(fixture.url, `/research/projects/${target}/profile`);
+  assert.equal(targetProfile.value.profile.question, "导出验收问题");
+  assert.equal(targetProfile.value.profile.actions[0].text, "恢复后继续行动", "恢复保留行动项");
+  const targetEvidence = await call(fixture.url, `/research/projects/${target}/evidence`);
+  assert.equal(targetEvidence.value.evidence[0].id, evidenceId, "恢复保留证据标识");
+  const targetHypotheses = await call(fixture.url, `/research/projects/${target}/hypotheses`);
+  assert.deepEqual(targetHypotheses.value.hypotheses[0].support, [evidenceId], "恢复保留假设与证据的关联");
+});
