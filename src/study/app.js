@@ -18,6 +18,32 @@ const guideBody = node("div", { class: "study-guide-body" }), progress = node("s
 const guideDraft = node("textarea", { rows: 3, placeholder: "告诉引导你哪里没理解，或提出实验想法…", "aria-label": "研读引导输入", oninput: () => saveUI({ guideDraft: guideDraft.value }) });
 const stageNav = node("nav", { class: "study-stage-nav", "aria-label": "研读阶段" });
 const editPlan = button("修改实验计划", () => run("plan", { checkpointId: cpNow()?.id, text: guideDraft.value }));
+
+// 研读计划交接（加法开发 B2.1）：把已确认的实验计划复制为独立研究方案草稿；
+// 原研读完成状态与快照不变，不复制原文或附件。
+async function savePlanAsProtocol(t) {
+  const plans = (t.checkpoints || []).flatMap((c) => c.lesson?.experiments || []);
+  if (!plans.length) return notify("本次研读没有已确认的实验计划", true);
+  if (!t.projectId) return notify("该研读任务未关联项目，请先在主界面把论文加入项目", true);
+  const describe = (e) => {
+    const label = ({ reproduction: "复现", ablation: "消融", destruction: "破坏性实验", innovation: "baseline 改进" })[e.kind] || e.kind || "实验";
+    return label + "：" + Object.entries({ hypothesis: "假设", variables: "变量", control: "对照", metrics: "指标", expected: "预期", failure: "失败判据" })
+      .map(([key, text]) => e[key] ? text + " " + e[key] : "").filter(Boolean).join("；");
+  };
+  const objective = plans.map(describe).join("\n");
+  const metrics = plans.map((e) => e.metrics).filter(Boolean).join("；");
+  try {
+    const response = await fetch("/api/research/projects/" + encodeURIComponent(t.projectId) + "/protocols", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: (t.title || "研读成果") + " · 研究方案", sourceNote: "来自研读任务 " + t.id, objective, metrics }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "HTTP " + response.status);
+    notify("已保存为研究方案草稿，可在主界面「研究」面板查看");
+  } catch (error) {
+    notify("保存研究方案失败：" + error.message, true);
+  }
+}
 const menu = node("details", { class: "study-task-picker" }), title = node("span", { class: "study-task-title" });
 const menuItems = node("div", { class: "study-task-items" });
 const search = node("input", { type: "search", placeholder: "搜索论文、目标…", "aria-label": "搜索研读任务" });
@@ -136,7 +162,7 @@ function renderGuide() {
   if (cp.status === "passed" && cp.id === activeCheckpoint.id && task.status === "active") {
     guideBody.append(node("div", { class: "study-next" }, button(cp.kind === "summary" ? "确认实验计划，完成研读" : "继续下一步 →", async () => { reviewId = null; await run("advance", { checkpointId: cp.id, confirmPlan: cp.kind === "summary" }); }, "tool-btn primary"), cp.kind === "rough" ? button("粗读到此结束", () => run("advance", { checkpointId: cp.id, stopAfterRough: true })) : null));
   }
-  if (task.status === "completed" || task.status === "rough-completed") guideBody.append(node("div", { class: "study-completed" }, node("h3", {}, task.status === "completed" ? "本次研读已完成" : "本次粗读已完成"), button("将完整成果注入知识库", async () => { await run("export"); notify("已保存完整成果快照"); }, "tool-btn primary")));
+  if (task.status === "completed" || task.status === "rough-completed") guideBody.append(node("div", { class: "study-completed" }, node("h3", {}, task.status === "completed" ? "本次研读已完成" : "本次粗读已完成"), button("将完整成果注入知识库", async () => { await run("export"); notify("已保存完整成果快照"); }, "tool-btn primary"), task.status === "completed" ? button("保存为研究方案", () => savePlanAsProtocol(task)) : null));
   if (task.lastError && !busy) guideBody.append(node("p", { class: "study-error", role: "alert" }, task.lastError));
   if (busy) guideBody.querySelectorAll("button").forEach(b => b.disabled = true);
   guideBody.scrollTop = previousScroll;

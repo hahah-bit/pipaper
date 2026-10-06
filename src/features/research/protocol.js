@@ -128,6 +128,19 @@ export function protocolSection({ projectId }) {
       },
     }, "保存草稿");
 
+    const createExpBtn = el("button", {
+      class: "tool-btn",
+      title: "在实验台账建立关联本方案的实验",
+      onclick: async () => {
+        try {
+          await requestJson("/api/research/projects/" + encodeURIComponent(projectId) + "/experiments", {
+            method: "POST",
+            body: { title: current.title, purpose: current.objective || "", protocolId: current.id },
+          });
+          toast("实验已创建并关联本方案（revision " + current.revision + "）");
+        } catch (e) { toast(e.message, true); }
+      },
+    }, "创建关联实验");
     const freezeReason = el("input", { type: "text", placeholder: "冻结理由（本轮为什么执行这个版本）" });
     const freezeBtn = el("button", {
       class: "tool-btn",
@@ -178,7 +191,8 @@ export function protocolSection({ projectId }) {
           el("h4", {}, "基线对齐表（论文设置 / 仓库配置 / 实际条件）"),
           baselineRows,
           el("div", { class: "research-add-row" }, addBaselineBtn),
-          el("div", { class: "research-add-row" }, freezeReason, freezeBtn))),
+          el("div", { class: "research-add-row" }, freezeReason, freezeBtn),
+          el("div", { class: "research-add-row" }, createExpBtn))),
       el("div", { class: "research-card" },
         el("h4", {}, "方案版本（冻结后的快照不会被后续修改改写）"),
         ...(current.versions || []).map((v) => el("div", { class: "research-timeline-item" },
