@@ -719,3 +719,87 @@ test("第二批研究记录随导出包整体恢复（方案/实验/运行/比�
   const targetProtocols = await call(fixture.url, `/research/projects/${target}/protocols`);
   assert.equal(targetProtocols.value.protocols[0].versions.length, 1, "冻结版本随包恢复");
 });
+
+test("写作引用助手：稿件登记、引用键稳定、bib 导出、检查与快照", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = await createProject(fixture.url, "稿件验收");
+  const base = `/research/projects/${projectId}/manuscripts`;
+
+  const created = await call(fixture.url, base, {
+    method: "POST",
+    body: { title: "CFM 失败模式分析", filePath: "papers/cfm-draft.md", fileKind: "markdown" },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.value));
+  const manuscript = created.value.manuscript;
+  assert.equal(manuscript.citations.length, 0);
+
+  const add1 = await call(fixture.url, base + "/" + manuscript.id + "/citations", {
+    method: "POST",
+    body: { paperId: "fixture-paper" },
+  });
+  assert.equal(add1.status, 200, JSON.stringify(add1.value));
+  const firstKey = add1.value.manuscript.citations[0].key;
+  assert.ok(firstKey, "应自动生成引用键");
+  assert.equal(add1.value.manuscript.citations[0].title, "本地验收论文");
+
+  // 同一键显式重复添加 → 409 不静默覆盖
+  const duplicate = await call(fixture.url, base + "/" + manuscript.id + "/citations", {
+    method: "POST",
+    body: { paperId: "fixture-paper", key: firstKey },
+  });
+  assert.equal(duplicate.status, 409, "重复引用键应拒绝");
+
+  const add2 = await call(fixture.url, base + "/" + manuscript.id + "/citations", {
+    method: "POST",
+    body: { paperId: "fixture-paper", key: "custom2026key" },
+  });
+  assert.equal(add2.status, 200);
+  assert.equal(add2.value.manuscript.citations.length, 2);
+
+  const badPaper = await call(fixture.url, base + "/" + manuscript.id + "/citations", {
+    method: "POST",
+    body: { paperId: "no-such-paper" },
+  });
+  assert.equal(badPaper.status, 404);
+
+  const bib = await call(fixture.url, base + "/" + manuscript.id + "/bib");
+  assert.equal(bib.status, 200);
+  assert.match(bib.value.bib, /@misc\{custom2026key,/);
+  assert.match(bib.value.bib, /title = \{本地验收论文\}/);
+
+  // 结论关联
+  const con = await call(fixture.url, `/research/projects/${projectId}/conclusions`, {
+    method: "POST",
+    body: { statement: "稿件验收结论", kind: "observation" },
+  });
+  const linked = await call(fixture.url, base + "/" + manuscript.id + "/conclusion-links", {
+    method: "POST",
+    body: { conclusionId: con.value.conclusion.id },
+  });
+  assert.equal(linked.status, 200);
+  assert.deepEqual(linked.value.manuscript.linkedConclusions, [con.value.conclusion.id]);
+
+  const checks = await call(fixture.url, base + "/" + manuscript.id + "/checks");
+  assert.equal(checks.status, 200);
+  assert.deepEqual(checks.value.duplicates, []);
+  assert.deepEqual(checks.value.missing, []);
+
+  const snapshot = await call(fixture.url, base + "/" + manuscript.id + "/snapshot", { method: "POST" });
+  assert.equal(snapshot.status, 200);
+  assert.equal(snapshot.value.manuscript.snapshots.length, 1);
+  assert.match(snapshot.value.manuscript.snapshots[0].bib, /custom2026key/);
+
+  // 删除一条引用
+  const removed = await call(fixture.url, base + "/" + manuscript.id + "/citations/" + encodeURIComponent(firstKey), { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.value.manuscript.citations.length, 1);
+
+  const manuscriptRemoved = await call(fixture.url, base + "/" + manuscript.id, { method: "DELETE" });
+  assert.equal(manuscriptRemoved.status, 200);
+  const restored = await call(fixture.url, `/storage/resources/${"research-manuscript:" + manuscript.id}/restore`, { method: "POST" });
+  assert.equal(restored.status, 200);
+  const afterRestore = await call(fixture.url, base);
+  assert.equal(afterRestore.value.manuscripts.length, 1);
+  assert.equal(afterRestore.value.manuscripts[0].snapshots.length, 1, "恢复保留稿件快照");
+});

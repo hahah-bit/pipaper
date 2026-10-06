@@ -1176,6 +1176,220 @@ export function deleteConclusion(projectId, id) {
   });
 }
 
+// ---- 写作引用助手与稿件登记（A07）：稿件记录只引用原文件，不移动不重写 ----
+
+export const manuscriptResourceId = (id) => "research-manuscript:" + id;
+const manuscriptDirectory = (projectId) => path.join(researchDir(projectId), "manuscripts");
+const manuscriptFile = (projectId, id) => path.join(manuscriptDirectory(projectId), id + ".json");
+
+function paperCitation(paper) {
+  return {
+    paperId: paper.id,
+    title: paper.title || "",
+    authors: Array.isArray(paper.creators) ? paper.creators.map(String).slice(0, 20) : [],
+    year: paper.year || null,
+    doi: paper.doi || "",
+  };
+}
+
+function suggestCitationKey(citation, existingKeys) {
+  const surname = (citation.authors[0] || "").trim().split(/\s+/).at(-1) || "";
+  const word = (citation.title.match(/[A-Za-z]+/) || citation.title.match(/[\u4e00-\u9fa5]+/) || ["item"])[0];
+  const base = ((surname || word) + (citation.year || "nd") + word)
+    .replace(/[^A-Za-z0-9\u4e00-\u9fa5]/g, "")
+    .slice(0, 40) || "ref";
+  let key = base;
+  for (let i = 2; existingKeys.has(key); i++) key = base + "_" + i;
+  return key;
+}
+
+function toBibtex(citations) {
+  return citations.map((c) =>
+    [
+      "@misc{" + c.key + ",",
+      "  title = {" + (c.title || "无标题") + "},",
+      "  author = {" + (c.authors || []).join(" and ") + "},",
+      "  year = {" + (c.year || "") + "},",
+      c.doi ? "  doi = {" + c.doi + "}," : null,
+      "}",
+    ].filter(Boolean).join("\n"),
+  ).join("\n\n");
+}
+
+function readManuscriptState(projectId, id) {
+  if (!/^man_[A-Za-z0-9_-]{1,64}$/.test(id || "")) throw fault("无效的稿件标识", 400);
+  const entry = resource(manuscriptResourceId(id));
+  if (entry && entry.lifecycle !== "active") return null;
+  try {
+    return readJsonState(manuscriptFile(projectId, id), null);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+function saveManuscriptRecord(projectId, existing, patch) {
+  const now = new Date().toISOString();
+  const title = limitLength(patch.title, "稿件标题不能为空", 200);
+  if (!title) throw fault("稿件标题不能为空", 400);
+  const citations = Array.isArray(patch.citations ?? existing?.citations) ? (patch.citations ?? existing?.citations).slice(0, 200) : [];
+  const record = {
+    id: existing?.id || "man_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    projectId,
+    title,
+    filePath: limitLength(patch.filePath, "稿件路径无效", 500),
+    fileKind: patch.fileKind === "latex" ? "latex" : "markdown",
+    citations,
+    linkedConclusions: Array.isArray(patch.linkedConclusions ?? existing?.linkedConclusions)
+      ? [...new Set(patch.linkedConclusions ?? existing?.linkedConclusions)].slice(0, 50)
+      : [],
+    snapshots: existing?.snapshots || [],
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    revision: (existing?.revision || 0) + 1,
+  };
+  for (const citation of record.citations) {
+    if (typeof citation?.key !== "string" || !citation.key) throw fault("引用条目缺少引用键", 400);
+    if (citation.paperId) getPaper(citation.paperId); // 引用的论文必须仍在文献库
+  }
+  for (const conclusionId of record.linkedConclusions) getConclusion(projectId, conclusionId);
+  writeJsonState(manuscriptFile(projectId, record.id), record, {
+    id: manuscriptResourceId(record.id),
+    kind: "research-manuscript",
+    title: "稿件 · " + record.title,
+    metadata: record,
+  });
+  for (const citation of record.citations)
+    link(manuscriptResourceId(record.id), "paper:" + citation.paperId, "uses");
+  for (const conclusionId of record.linkedConclusions)
+    link(manuscriptResourceId(record.id), conclusionResourceId(conclusionId), "uses");
+  return record;
+}
+
+export function listManuscripts(projectId) {
+  assertProject(projectId);
+  let names = [];
+  try {
+    names = fs.readdirSync(manuscriptDirectory(projectId)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    const value = readManuscriptState(projectId, name.slice(0, -".json".length));
+    if (value) rows.push(value);
+  }
+  rows.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return rows;
+}
+
+export function getManuscript(projectId, id) {
+  assertProject(projectId);
+  const value = readManuscriptState(projectId, id);
+  if (!value) throw fault("稿件不存在", 404);
+  return value;
+}
+
+export function createManuscript(projectId, patch = {}) {
+  assertProject(projectId);
+  return saveManuscriptRecord(projectId, null, patch);
+}
+
+export function updateManuscript(projectId, id, patch = {}) {
+  const existing = getManuscript(projectId, id);
+  if (patch.revision != null && Number(patch.revision) !== existing.revision)
+    throw fault("稿件记录已被其他修改更新，请刷新后重试", 409);
+  return saveManuscriptRecord(projectId, existing, patch);
+}
+
+export function addManuscriptCitation(projectId, id, { paperId, key } = {}) {
+  const existing = getManuscript(projectId, id);
+  const paper = getPaper(typeof paperId === "string" ? paperId : "");
+  if (!paper) throw fault("引用的论文不存在", 404);
+  const keys = new Set(existing.citations.map((c) => c.key));
+  if (key != null) {
+    const requested = limitLength(key, "引用键无效", 100);
+    if (keys.has(requested)) throw fault(`引用键 ${requested} 已存在，不会静默覆盖`, 409);
+    keys.add(requested);
+    const citation = { key: requested, ...paperCitation(paper) };
+    return saveManuscriptRecord(projectId, existing, { ...existing, citations: [...existing.citations, citation] });
+  }
+  const citation = { key: suggestCitationKey(paperCitation(paper), keys), ...paperCitation(paper) };
+  return saveManuscriptRecord(projectId, existing, { ...existing, citations: [...existing.citations, citation] });
+}
+
+export function removeManuscriptCitation(projectId, id, key) {
+  const existing = getManuscript(projectId, id);
+  const next = existing.citations.filter((c) => c.key !== key);
+  if (next.length === existing.citations.length) throw fault("引用条目不存在", 404);
+  return saveManuscriptRecord(projectId, existing, { ...existing, citations: next });
+}
+
+export function toggleManuscriptConclusion(projectId, id, { conclusionId, remove } = {}) {
+  const existing = getManuscript(projectId, id);
+  if (remove) {
+    const next = existing.linkedConclusions.filter((c) => c !== conclusionId);
+    if (next.length === existing.linkedConclusions.length) throw fault("结论关联不存在", 404);
+    return saveManuscriptRecord(projectId, existing, { ...existing, linkedConclusions: next });
+  }
+  getConclusion(projectId, typeof conclusionId === "string" ? conclusionId : "");
+  if (existing.linkedConclusions.includes(conclusionId)) return existing;
+  return saveManuscriptRecord(projectId, existing, { ...existing, linkedConclusions: [...existing.linkedConclusions, conclusionId] });
+}
+
+export function manuscriptBib(projectId, id) {
+  const existing = getManuscript(projectId, id);
+  return { bib: toBibtex(existing.citations), count: existing.citations.length };
+}
+
+export function snapshotManuscript(projectId, id) {
+  const existing = getManuscript(projectId, id);
+  const now = new Date().toISOString();
+  const snapshot = {
+    at: now,
+    bib: toBibtex(existing.citations),
+    citations: existing.citations,
+    linkedConclusions: existing.linkedConclusions,
+  };
+  // 快照只在此处追加；普通保存不接触 snapshots，历史快照不被后续元数据更新改写。
+  const record = {
+    ...existing,
+    snapshots: [...(existing.snapshots || []), snapshot].slice(-50),
+    updatedAt: now,
+    revision: existing.revision + 1,
+  };
+  writeJsonState(manuscriptFile(projectId, id), record, {
+    id: manuscriptResourceId(id),
+    kind: "research-manuscript",
+    title: "稿件 · " + record.title,
+    metadata: record,
+  });
+  return record;
+}
+
+export function checkManuscript(projectId, id) {
+  const existing = getManuscript(projectId, id);
+  const seen = new Map();
+  const duplicates = [];
+  for (const citation of existing.citations) {
+    if (seen.has(citation.key)) duplicates.push(citation.key);
+    seen.set(citation.key, citation);
+  }
+  const missing = existing.citations.filter((c) => !getPaper(c.paperId)).map((c) => c.key);
+  const missingConclusions = existing.linkedConclusions.filter((c) => {
+    try { getConclusion(projectId, c); return false; } catch { return true; }
+  });
+  return { missing, duplicates, missingConclusions, total: existing.citations.length };
+}
+
+export function deleteManuscript(projectId, id) {
+  const existing = getManuscript(projectId, id);
+  return trashPath(manuscriptFile(projectId, existing.id), {
+    id: manuscriptResourceId(existing.id),
+    kind: "research-manuscript",
+  });
+}
+
 // ---- 基础导出与导入（B1.6）：新增研究记录可整体打包、在项目中恢复 ----
 
 export const RESEARCH_SCHEMA_VERSION = 1;

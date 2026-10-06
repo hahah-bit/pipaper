@@ -45,6 +45,17 @@ import {
   createConclusion,
   updateConclusion,
   deleteConclusion,
+  listManuscripts,
+  getManuscript,
+  createManuscript,
+  updateManuscript,
+  addManuscriptCitation,
+  removeManuscriptCitation,
+  toggleManuscriptConclusion,
+  manuscriptBib,
+  snapshotManuscript,
+  checkManuscript,
+  deleteManuscript,
 } from "./store.js";
 
 // 研究模块路由（加法开发）：入口挂在 /api/research 下，不影响既有路由。
@@ -288,5 +299,60 @@ export function registerResearchRoutes(api) {
   api.delete(
     "/research/projects/:projectId/conclusions/:conclusionId",
     route((req) => deleteConclusion(req.params.projectId, req.params.conclusionId)),
+  );
+
+  api.get(
+    "/research/projects/:projectId/manuscripts",
+    route((req) => ({ manuscripts: listManuscripts(req.params.projectId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/manuscripts",
+    route((req) => ({ manuscript: createManuscript(req.params.projectId, req.body || {}) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/manuscripts/:manuscriptId",
+    route((req) => ({ manuscript: getManuscript(req.params.projectId, req.params.manuscriptId) })),
+  );
+
+  api.put(
+    "/research/projects/:projectId/manuscripts/:manuscriptId",
+    route((req) => ({ manuscript: updateManuscript(req.params.projectId, req.params.manuscriptId, req.body || {}) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/manuscripts/:manuscriptId/citations",
+    route((req) => ({ manuscript: addManuscriptCitation(req.params.projectId, req.params.manuscriptId, req.body || {}) })),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/manuscripts/:manuscriptId/citations/:key",
+    route((req) => ({ manuscript: removeManuscriptCitation(req.params.projectId, req.params.manuscriptId, req.params.key) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/manuscripts/:manuscriptId/conclusion-links",
+    route((req) => ({ manuscript: toggleManuscriptConclusion(req.params.projectId, req.params.manuscriptId, req.body || {}) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/manuscripts/:manuscriptId/bib",
+    route((req) => manuscriptBib(req.params.projectId, req.params.manuscriptId)),
+  );
+
+  api.post(
+    "/research/projects/:projectId/manuscripts/:manuscriptId/snapshot",
+    route((req) => ({ manuscript: snapshotManuscript(req.params.projectId, req.params.manuscriptId) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/manuscripts/:manuscriptId/checks",
+    route((req) => checkManuscript(req.params.projectId, req.params.manuscriptId)),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/manuscripts/:manuscriptId",
+    route((req) => deleteManuscript(req.params.projectId, req.params.manuscriptId)),
   );
 }
