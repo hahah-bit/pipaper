@@ -1391,6 +1391,219 @@ export function deleteManuscript(projectId, id) {
   });
 }
 
+// ---- 基于已有成果的二次选题（A09）：输入快照、未解问题与候选方向 ----
+
+const RESELECTION_CHOICES = ["continue", "shrink", "pivot", "stop"];
+export const reselectionResourceId = (id) => "research-reselection:" + id;
+
+const reselectionDirectory = (projectId) => path.join(researchDir(projectId), "reselections");
+const reselectionFile = (projectId, id) => path.join(reselectionDirectory(projectId), id + ".json");
+
+// 输入快照引用的项目内记录：类型 → 读取校验函数
+const RESELECTION_SOURCES = {
+  hypothesis: getHypothesis,
+  conclusion: getConclusion,
+  run: getRun,
+  matrix: getMatrix,
+  protocol: getProtocol,
+  comparison: getComparison,
+};
+
+function normalizeContextRefs(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("二次选题输入必须是引用列表", 400);
+  const refs = [];
+  for (const entry of value.slice(0, 100)) {
+    const kind = entry?.kind;
+    const id = typeof entry?.id === "string" ? entry.id : "";
+    if (!RESELECTION_SOURCES[kind]) throw fault(`二次选题输入类型无效：${kind}`, 400);
+    refs.push({ kind, id });
+  }
+  return refs;
+}
+
+// 保存输入快照：记录当时这些对象的关键内容，后续记录变化不影响本轮分析依据。
+function snapshotContext(projectId, refs) {
+  return refs.map((ref) => {
+    const record = RESELECTION_SOURCES[ref.kind](projectId, ref.id);
+    const summary = {
+      hypothesis: () => ({ title: record.title, decision: record.decision?.status || null, statement: record.statement }),
+      conclusion: () => ({ kind: record.kind, statement: record.statement, checked: record.checked }),
+      run: () => ({ label: record.label, status: record.status, error: record.error || "" }),
+      matrix: () => ({ title: record.title, conditions: record.conditions || "" }),
+      protocol: () => ({ title: record.title, status: record.status }),
+      comparison: () => ({ title: record.title, metricName: record.metricName, comparabilityNote: record.comparabilityNote || "" }),
+    }[ref.kind]();
+    return { kind: ref.kind, id: ref.id, summary };
+  });
+}
+
+function normalizeOpenQuestions(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("未解问题必须是列表", 400);
+  return value.slice(0, 30).map((entry, index) => {
+    const text = limitLength(entry?.text, "未解问题不能为空", 500);
+    if (!text) throw fault(`第 ${index + 1} 个未解问题为空`, 400);
+    return {
+      id: ID_PATTERN.test(entry?.id || "") ? entry.id : "q_" + (index + 1) + "_" + Date.now().toString(36),
+      text,
+      category: ["open", "failed", "insufficient-evidence", "new"].includes(entry?.category) ? entry.category : "open",
+      sourceRef: entry?.sourceRef && RESELECTION_SOURCES[entry.sourceRef.kind] ? { kind: entry.sourceRef.kind, id: String(entry.sourceRef.id) } : null,
+    };
+  });
+}
+
+function normalizeCandidates(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("候选方向必须是列表", 400);
+  return value.slice(0, 20).map((entry, index) => {
+    const text = limitLength(entry?.text, "候选方向不能为空", 1000);
+    if (!text) throw fault(`第 ${index + 1} 个候选方向为空`, 400);
+    const basedOn = normalizeContextRefs(entry?.basedOn);
+    return {
+      id: ID_PATTERN.test(entry?.id || "") ? entry.id : "cand_" + (index + 1) + "_" + Date.now().toString(36),
+      text,
+      rationale: limitLength(entry?.rationale, "候选理由无效", 2000),
+      basedOn,
+      verification: limitLength(entry?.verification, "验证动作说明无效", 1000),
+      createdHypothesisId: typeof entry?.createdHypothesisId === "string" ? entry.createdHypothesisId : "",
+      createdProtocolId: typeof entry?.createdProtocolId === "string" ? entry.createdProtocolId : "",
+    };
+  });
+}
+
+function readReselectionState(projectId, id) {
+  if (!/^rs_[A-Za-z0-9_-]{1,64}$/.test(id || "")) throw fault("无效的二次选题标识", 400);
+  const entry = resource(reselectionResourceId(id));
+  if (entry && entry.lifecycle !== "active") return null;
+  try {
+    return readJsonState(reselectionFile(projectId, id), null);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+function saveReselectionRecord(projectId, existing, patch) {
+  const now = new Date().toISOString();
+  const title = limitLength(patch.title, "二次选题标题不能为空", 200);
+  if (!title) throw fault("二次选题标题不能为空", 400);
+  const contextRefs = normalizeContextRefs(patch.contextRefs ?? existing?.contextRefs);
+  // 引用的记录必须当前存在（快照只保存摘要，不复制全文）。
+  for (const ref of contextRefs) RESELECTION_SOURCES[ref.kind](projectId, ref.id);
+  const candidates = normalizeCandidates(patch.candidates ?? existing?.candidates);
+  for (const candidate of candidates)
+    for (const ref of candidate.basedOn) RESELECTION_SOURCES[ref.kind](projectId, ref.id);
+  let decision = existing?.decision || null;
+  if (patch.decision !== undefined) {
+    decision = patch.decision == null ? null : {
+      choice: RESELECTION_CHOICES.includes(patch.decision.choice)
+        ? patch.decision.choice
+        : (() => { throw fault("研究决定必须是 continue、shrink、pivot 或 stop", 400); })(),
+      reason: limitLength(patch.decision.reason, "决定理由无效", 2000),
+      at: new Date().toISOString(),
+    };
+  }
+  const record = {
+    id: existing?.id || "rs_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    projectId,
+    title,
+    note: limitLength(patch.note, "补充说明无效", 2000),
+    contextRefs,
+    contextSnapshot: existing?.contextRefs && JSON.stringify(existing.contextRefs) === JSON.stringify(contextRefs)
+      ? existing.contextSnapshot
+      : snapshotContext(projectId, contextRefs),
+    openQuestions: normalizeOpenQuestions(patch.openQuestions ?? existing?.openQuestions),
+    candidates,
+    decision,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    revision: (existing?.revision || 0) + 1,
+  };
+  writeJsonState(reselectionFile(projectId, record.id), record, {
+    id: reselectionResourceId(record.id),
+    kind: "research-reselection",
+    title: "二次选题 · " + record.title,
+    metadata: record,
+  });
+  return record;
+}
+
+export function listReselections(projectId) {
+  assertProject(projectId);
+  let names = [];
+  try {
+    names = fs.readdirSync(reselectionDirectory(projectId)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    const value = readReselectionState(projectId, name.slice(0, -".json".length));
+    if (value) rows.push(value);
+  }
+  rows.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return rows;
+}
+
+export function getReselection(projectId, id) {
+  assertProject(projectId);
+  const value = readReselectionState(projectId, id);
+  if (!value) throw fault("二次选题记录不存在", 404);
+  return value;
+}
+
+export function createReselection(projectId, patch = {}) {
+  assertProject(projectId);
+  return saveReselectionRecord(projectId, null, patch);
+}
+
+export function updateReselection(projectId, id, patch = {}) {
+  const existing = getReselection(projectId, id);
+  if (patch.revision != null && Number(patch.revision) !== existing.revision)
+    throw fault("二次选题记录已被其他修改更新，请刷新后重试", 409);
+  return saveReselectionRecord(projectId, existing, patch);
+}
+
+// 回写：从候选方向建立下一轮研究草稿（新假设或新方案），不覆盖原记录。
+export function draftFromCandidate(projectId, id, { candidateId, target } = {}) {
+  const existing = getReselection(projectId, id);
+  const candidate = existing.candidates.find((c) => c.id === candidateId);
+  if (!candidate) throw fault("候选方向不存在", 404);
+  if (candidate.createdHypothesisId || candidate.createdProtocolId)
+    throw fault("该候选已建立草稿，不会重复创建", 409);
+  const sourceNote = "二次选题 · " + existing.title + "（候选：" + candidate.text.slice(0, 60) + "）";
+  const next = { ...existing, candidates: existing.candidates.map((c) => ({ ...c })) };
+  const index = next.candidates.findIndex((c) => c.id === candidateId);
+  if (target === "protocol") {
+    const protocol = createProtocol(projectId, {
+      title: candidate.text.slice(0, 200),
+      sourceNote,
+      objective: candidate.rationale + (candidate.verification ? "；验证动作：" + candidate.verification : ""),
+    });
+    next.candidates[index].createdProtocolId = protocol.id;
+    saveReselectionRecord(projectId, next, next);
+    return { draft: { kind: "protocol", id: protocol.id } };
+  }
+  const hypothesis = createHypothesis(projectId, {
+    title: candidate.text.slice(0, 200),
+    statement: candidate.rationale || candidate.text,
+    sourceNote,
+    prediction: candidate.verification,
+  });
+  next.candidates[index].createdHypothesisId = hypothesis.id;
+  saveReselectionRecord(projectId, next, next);
+  return { draft: { kind: "hypothesis", id: hypothesis.id } };
+}
+
+export function deleteReselection(projectId, id) {
+  const existing = getReselection(projectId, id);
+  return trashPath(reselectionFile(projectId, existing.id), {
+    id: reselectionResourceId(existing.id),
+    kind: "research-reselection",
+  });
+}
+
 // ---- 基础导出与导入（B1.6）：新增研究记录可整体打包、在项目中恢复 ----
 
 export const RESEARCH_SCHEMA_VERSION = 1;

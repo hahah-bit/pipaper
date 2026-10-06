@@ -57,6 +57,12 @@ import {
   checkManuscript,
   deleteManuscript,
   exportProjectBundle,
+  listReselections,
+  getReselection,
+  createReselection,
+  updateReselection,
+  draftFromCandidate,
+  deleteReselection,
 } from "./store.js";
 
 // 研究模块路由（加法开发）：入口挂在 /api/research 下，不影响既有路由。
@@ -158,6 +164,36 @@ export function registerResearchRoutes(api) {
   api.delete(
     "/research/projects/:projectId/hypotheses/:hypothesisId",
     route((req) => deleteHypothesis(req.params.projectId, req.params.hypothesisId)),
+  );
+
+  api.get(
+    "/research/projects/:projectId/reselections",
+    route((req) => ({ reselections: listReselections(req.params.projectId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/reselections",
+    route((req) => ({ reselection: createReselection(req.params.projectId, req.body || {}) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/reselections/:reselectionId",
+    route((req) => ({ reselection: getReselection(req.params.projectId, req.params.reselectionId) })),
+  );
+
+  api.put(
+    "/research/projects/:projectId/reselections/:reselectionId",
+    route((req) => ({ reselection: updateReselection(req.params.projectId, req.params.reselectionId, req.body || {}) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/reselections/:reselectionId/draft",
+    route((req) => draftFromCandidate(req.params.projectId, req.params.reselectionId, req.body || {})),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/reselections/:reselectionId",
+    route((req) => deleteReselection(req.params.projectId, req.params.reselectionId)),
   );
 
   api.get(

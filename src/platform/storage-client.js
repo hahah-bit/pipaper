@@ -24,6 +24,7 @@ export const labels = {
   "research-comparison": "结果比较",
   "research-conclusion": "结论卡",
   "research-manuscript": "稿件记录",
+  "research-reselection": "二次选题",
 };
 export const storageApi = (url, body, method) => requestJson("/api/" + url, { body, method: method || (body ? "POST" : "GET") });
 export const button = (name, action) =>
