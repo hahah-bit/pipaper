@@ -8,6 +8,7 @@ import { hypothesisSection } from "./hypothesis.js";
 import { protocolSection } from "./protocol.js";
 import { labSection } from "./lab.js";
 import { findingsSection } from "./findings.js";
+import { writingSection } from "./writing.js";
 
 // 研究面板（加法开发 A01）：可选的项目研究档案。
 // 不选中项目时只显示空状态；面板加载失败只影响本面板，随时可以关闭返回原工作区。
@@ -473,6 +474,19 @@ export function researchModule() {
             }
           },
         }, el("summary", {}, "比较与结论（快照、判断与依据引用）"), box);
+      })(),
+      (() => {
+        let loaded = false;
+        const box = el("div");
+        return el("details", {
+          class: "research-matrix-details",
+          ontoggle: (event) => {
+            if (event.target.open && !loaded) {
+              loaded = true;
+              box.append(writingSection({ projectId }).container);
+            }
+          },
+        }, el("summary", {}, "写作引用（稿件登记、文献引用与结论关联）"), box);
       })(),
       el("div", { class: "research-columns" },
         el("div", { class: "research-card" }, timeline),
