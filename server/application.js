@@ -15,6 +15,7 @@ import { registerTopicRoutes } from "./topics/routes.js";
 import { registerMediaRoutes } from "./modules/media/routes.js";
 import { registerClippingRoutes } from "./modules/clippings/routes.js";
 import { registerAcademicRoutes } from "./modules/academic/routes.js";
+import { registerResearchRoutes } from "./modules/research/routes.js";
 
 // HTTP composition. Library/storage recovery and listen belong to bootstrap/runtime.
 export function createApplication() {
@@ -50,6 +51,7 @@ export function createApplication() {
   registerMediaRoutes(api);
   registerClippingRoutes(api);
   registerAcademicRoutes(api);
+  registerResearchRoutes(api);
   app.use("/api", api);
   app.use(express.static(PUBLIC_DIR));
   app.get("/study/:id", (_req, res) => res.sendFile(path.join(PUBLIC_DIR, "study.html")));
