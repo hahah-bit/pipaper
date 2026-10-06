@@ -21,6 +21,8 @@ const shapes = {
     '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 4v16m12-16v16M2 8h4m-4 8h4M18 8h4m-4 8h4"/><path d="m10 9 5 3-5 3Z"/>',
   storage:
     '<rect x="3" y="2" width="18" height="20" rx="2"/><path d="M3 9h18M3 16h18M9 5h6M9 12h6M9 19h6"/>',
+  research:
+    '<path d="M9 3h6M10 3v5.5L4.6 18a2 2 0 0 0 1.8 3h11.2a2 2 0 0 0 1.8-3L14 8.5V3"/><path d="M7.5 14h9"/>',
   notesmgr: '<path d="M3 7V4h7l2 3h9v13H3ZM7 11h10M7 15h7"/>',
   resources:
     '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7m-3.5-3.5v7"/>',

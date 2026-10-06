@@ -6,6 +6,7 @@ import { openSettings } from "./settings.js";
 import { archifyModule } from "./archifyPanel.js";
 import { storageModule } from "./storagePanel.js";
 import { knowledgeModule } from "./features/retrieval/panel.js";
+import { researchModule } from "./features/research/panel.js";
 import { DockviewComponent, themeAbyss } from "dockview-core";
 import { dockIcon } from "./dockIcons.js";
 import {
@@ -221,6 +222,7 @@ export function initDock() {
   registerModule(diagramModule());
   registerModule(storageModule());
   registerModule(knowledgeModule());
+  registerModule(researchModule());
   renderDock();
   $("#btn-drawer-close")?.addEventListener("click", closeDrawer);
   let summarySequence = 0;

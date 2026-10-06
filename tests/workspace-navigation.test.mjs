@@ -104,3 +104,9 @@ test("资料提醒只采用每个资源的最新任务，不让历史失败一�
     reviews: 2,
   });
 });
+test("研究概览入口可从项目栏跳转到独立研究工作区", () => {
+  assert.deepEqual(moduleDestination("research"), {
+    workspaceId: "research",
+    activeView: "research",
+  });
+});

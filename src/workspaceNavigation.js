@@ -33,6 +33,14 @@ export const WORKSPACES = [
     ],
   },
   {
+    id: "research",
+    name: "研究",
+    icon: "research",
+    views: [
+      { id: "research", name: "研究概览", hint: "项目研究问题、成果关联与下一步" },
+    ],
+  },
+  {
     id: "media",
     name: "视频",
     icon: "video",

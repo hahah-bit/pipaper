@@ -32,6 +32,10 @@ export function initSidebar(bindings) {
   });
   // project controls
   $("#project-select").addEventListener("change", (e) => switchProject(e.target.value));
+  $("#btn-open-research").addEventListener("click", () => {
+    if (!state.projectId) return toast("先选择一个项目", true);
+    window.dispatchEvent(new CustomEvent("pipaper:workspace-open", { detail: { moduleId: "research" } }));
+  });
   $("#btn-del-project").addEventListener("click", async () => {
     const p = state.projects.find((x) => x.id === state.projectId);
     if (!p) return;
@@ -103,6 +107,8 @@ export function renderProjects() {
   }
   sel.value = state.projectId || "";
   $("#btn-del-project").hidden = !state.projectId;
+  const researchBtn = $("#btn-open-research");
+  if (researchBtn) researchBtn.hidden = !state.projectId;
   updateProjectBar();
 }
 

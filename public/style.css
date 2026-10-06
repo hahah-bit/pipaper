@@ -1502,3 +1502,29 @@ html[data-fs="xlarge"]  { --fs-doc: 19.5px; --fs-chat: 18.5px; --fs-ui: 16.5px; 
 .knowledge-result:focus { outline: 2px solid var(--accent, #90b8ff); outline-offset: 2px; }
 .knowledge-filters input[type="date"] { min-width: 140px; }
 .knowledge-progress { margin: 8px 0; line-height: 1.5; }
+
+/* ---- 研究面板（加法开发 A01：可选研究档案） ---- */
+.research-panel { height: 100%; overflow: auto; box-sizing: border-box; padding: 14px 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+.research-head { display: flex; align-items: center; gap: 10px; flex: none; }
+.research-head-note { color: var(--fg2); font-size: 12px; }
+.research-project-select { max-width: 240px; background: var(--bg1); color: var(--fg0); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; }
+.research-body { display: flex; flex-direction: column; gap: 12px; }
+.research-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg1); display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.research-card h4 { margin: 0; font-size: 13px; color: var(--fg1); }
+.research-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.research-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+.research-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--fg2); }
+.research-field input, .research-field textarea { background: var(--bg0); border: 1px solid var(--border); color: var(--fg0); border-radius: 6px; padding: 6px 9px; font: inherit; font-size: 13px; resize: vertical; }
+.research-field input:focus, .research-field textarea:focus { outline: 1px solid var(--accent); }
+.research-outcome-item, .research-action-item { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px dashed var(--border); font-size: 13px; min-width: 0; }
+.research-outcome-item > span:first-child, .research-action-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.research-action-item .tool-btn, .research-outcome-item .tool-btn { font-size: 11px; padding: 2px 7px; flex: none; }
+.research-action-item.research-status-done .research-action-text { color: var(--fg2); text-decoration: line-through; }
+.research-action-item.research-status-blocked .research-action-text { color: var(--warn); }
+.research-status-select { max-width: 90px; flex: none; background: var(--bg0); color: var(--fg0); border: 1px solid var(--border); border-radius: 6px; padding: 3px 5px; font-size: 12px; }
+.research-add-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.research-add-row input[type="text"] { flex: 1; min-width: 140px; background: var(--bg0); border: 1px solid var(--border); color: var(--fg0); border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 13px; }
+.research-timeline-item { display: flex; gap: 10px; font-size: 12.5px; padding: 3px 0; color: var(--fg1); }
+.research-timeline-at { color: var(--fg2); flex: none; font-variant-numeric: tabular-nums; }
+.research-muted { color: var(--fg2); font-size: 12.5px; line-height: 1.6; }
+.research-foot { display: flex; justify-content: flex-end; }

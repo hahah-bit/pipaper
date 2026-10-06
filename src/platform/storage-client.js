@@ -14,6 +14,7 @@ export const labels = {
   publish: "发布索引",
   original: "原始文献",
   knowledge: "知识成果",
+  "research-profile": "研究档案",
 };
 export const storageApi = (url, body, method) => requestJson("/api/" + url, { body, method: method || (body ? "POST" : "GET") });
 export const button = (name, action) =>
