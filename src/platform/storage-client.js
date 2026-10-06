@@ -18,6 +18,7 @@ export const labels = {
   "research-evidence": "证据卡",
   "research-matrix": "文献对比表",
   "research-hypothesis": "研究假设",
+  "research-protocol": "研究方案",
 };
 export const storageApi = (url, body, method) => requestJson("/api/" + url, { body, method: method || (body ? "POST" : "GET") });
 export const button = (name, action) =>

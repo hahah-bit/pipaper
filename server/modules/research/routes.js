@@ -19,6 +19,12 @@ import {
   deleteHypothesis,
   exportBundle,
   importBundle,
+  listProtocols,
+  getProtocol,
+  createProtocol,
+  updateProtocol,
+  freezeProtocol,
+  deleteProtocol,
 } from "./store.js";
 
 // 研究模块路由（加法开发）：入口挂在 /api/research 下，不影响既有路由。
@@ -130,5 +136,35 @@ export function registerResearchRoutes(api) {
   api.post(
     "/research/projects/:projectId/import",
     route((req) => importBundle(req.params.projectId, req.body?.data, { force: Boolean(req.body?.force) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/protocols",
+    route((req) => ({ protocols: listProtocols(req.params.projectId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/protocols",
+    route((req) => ({ protocol: createProtocol(req.params.projectId, req.body || {}) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/protocols/:protocolId",
+    route((req) => ({ protocol: getProtocol(req.params.projectId, req.params.protocolId) })),
+  );
+
+  api.put(
+    "/research/projects/:projectId/protocols/:protocolId",
+    route((req) => ({ protocol: updateProtocol(req.params.projectId, req.params.protocolId, req.body || {}) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/protocols/:protocolId/freeze",
+    route((req) => ({ protocol: freezeProtocol(req.params.projectId, req.params.protocolId, req.body || {}) })),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/protocols/:protocolId",
+    route((req) => deleteProtocol(req.params.projectId, req.params.protocolId)),
   );
 }

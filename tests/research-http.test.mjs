@@ -383,3 +383,73 @@ test("研究记录导出与导入：整体打包、重复导入幂等、恢复�
   const targetHypotheses = await call(fixture.url, `/research/projects/${target}/hypotheses`);
   assert.deepEqual(targetHypotheses.value.hypotheses[0].support, [evidenceId], "恢复保留假设与证据的关联");
 });
+
+test("研究方案：创建、基线对齐表、冻结版本与修订", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = await createProject(fixture.url, "方案验收");
+  const base = `/research/projects/${projectId}/protocols`;
+
+  const badBaseline = await call(fixture.url, base, {
+    method: "POST",
+    body: { title: "缺基线名", baselines: [{ paperSetup: "原文批次 32" }] },
+  });
+  assert.equal(badBaseline.status, 400, "基线行必须有名称");
+
+  const created = await call(fixture.url, base, {
+    method: "POST",
+    body: {
+      title: "基线对齐与改进验证",
+      sourceNote: "来自研读实验计划",
+      objective: "验证掩码修正是否缩小与原文差距",
+      datasets: "CFM 本地复现集，train/val 8:2",
+      metrics: "IoU（0.5 阈值）、AUROC（全 PRO 范围）",
+      budget: "单卡 8G，最多 3 次尝试",
+      baselines: [
+        { name: "原始论文", paperSetup: "batch 32 / 40 轮", repoSetup: "官方仓库默认", actualSetup: "batch 8 / 续训", status: "partial", note: "优化器状态不完整" },
+        { name: "阈值口径", status: "na" },
+      ],
+    },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.value));
+  let protocol = created.value.protocol;
+  assert.equal(protocol.status, "draft");
+  assert.equal(protocol.baselines[1].status, "na", "不适用基线允许保留");
+  assert.equal(protocol.baselines[0].status, "partial");
+
+  const frozen = await call(fixture.url, base + "/" + protocol.id + "/freeze", {
+    method: "POST",
+    body: { reason: "开始本轮执行" },
+  });
+  assert.equal(frozen.status, 200);
+  protocol = frozen.value.protocol;
+  assert.equal(protocol.status, "frozen");
+  assert.equal(protocol.versions.length, 1);
+  assert.equal(protocol.versions[0].index, 1);
+  assert.deepEqual(protocol.versions[0].snapshot.baselines, protocol.baselines, "版本快照固定当时内容");
+
+  // 冻结后仍可修订（产生新草稿状态），历史版本保留
+  const revised = await call(fixture.url, base + "/" + protocol.id, {
+    method: "PUT",
+    body: { ...protocol, status: "draft", budget: "追加 1 次尝试", revision: protocol.revision },
+  });
+  assert.equal(revised.status, 200);
+  assert.equal(revised.value.protocol.versions.length, 1, "修订不清除历史版本");
+  assert.equal(revised.value.protocol.versions[0].snapshot.budget, "单卡 8G，最多 3 次尝试", "历史快照不被改写");
+
+  const conflict = await call(fixture.url, base + "/" + protocol.id, {
+    method: "PUT",
+    body: { ...protocol, revision: 0 },
+  });
+  assert.equal(conflict.status, 409);
+
+  const list = await call(fixture.url, base);
+  assert.equal(list.value.protocols.length, 1);
+
+  const removed = await call(fixture.url, base + "/" + protocol.id, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  const restored = await call(fixture.url, `/storage/resources/${"research-protocol:" + protocol.id}/restore`, { method: "POST" });
+  assert.equal(restored.status, 200);
+  const afterRestore = await call(fixture.url, base);
+  assert.equal(afterRestore.value.protocols[0].versions.length, 1, "恢复保留冻结版本");
+});

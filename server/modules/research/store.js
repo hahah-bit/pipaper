@@ -554,6 +554,149 @@ export function deleteHypothesis(projectId, id) {
   });
 }
 
+// ---- 研究方案与基线对齐（A04）：接住研读计划与手写方案，冻结可引用版本 ----
+
+const PROTOCOL_STATUS = ["draft", "frozen"];
+const BASELINE_STATUS = ["aligned", "partial", "unaligned", "na"];
+export const protocolResourceId = (id) => "research-protocol:" + id;
+
+const protocolDirectory = (projectId) => path.join(researchDir(projectId), "protocols");
+const protocolFile = (projectId, id) => path.join(protocolDirectory(projectId), id + ".json");
+
+function normalizeBaselines(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("基线对齐行必须是列表", 400);
+  if (value.length > 20) throw fault("基线对齐表最多 20 行", 400);
+  return value.map((row) => {
+    const name = limitLength(row?.name, "基线名称无效", 200);
+    if (!name) throw fault("基线名称不能为空", 400);
+    return {
+      name,
+      paperSetup: limitLength(row?.paperSetup, "论文设置说明无效", 2000),
+      repoSetup: limitLength(row?.repoSetup, "仓库配置说明无效", 2000),
+      actualSetup: limitLength(row?.actualSetup, "实际条件说明无效", 2000),
+      status: BASELINE_STATUS.includes(row?.status) ? row.status : "unaligned",
+      note: limitLength(row?.note, "基线差异说明无效", 1000),
+    };
+  });
+}
+
+function readProtocolState(projectId, id) {
+  if (!/^prt_[A-Za-z0-9_-]{1,64}$/.test(id || "")) throw fault("无效的方案标识", 400);
+  const entry = resource(protocolResourceId(id));
+  if (entry && entry.lifecycle !== "active") return null;
+  try {
+    return readJsonState(protocolFile(projectId, id), null);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+function saveProtocolRecord(projectId, existing, patch, { keepFrozen = false } = {}) {
+  const now = new Date().toISOString();
+  const title = limitLength(patch.title, "方案标题不能为空", 200);
+  if (!title) throw fault("方案标题不能为空", 400);
+  const status = PROTOCOL_STATUS.includes(patch.status) ? patch.status : existing?.status || "draft";
+  const record = {
+    id: existing?.id || "prt_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    projectId,
+    title,
+    sourceNote: limitLength(patch.sourceNote, "方案来源说明无效", 500),
+    objective: limitLength(patch.objective, "验证目标无效", 4000),
+    datasets: limitLength(patch.datasets, "数据与划分说明无效", 4000),
+    metrics: limitLength(patch.metrics, "指标定义无效", 4000),
+    budget: limitLength(patch.budget, "预算与停止条件无效", 2000),
+    baselines: normalizeBaselines(patch.baselines ?? existing?.baselines),
+    status,
+    versions: existing?.versions || [],
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    revision: (existing?.revision || 0) + 1,
+  };
+  writeJsonState(protocolFile(projectId, record.id), record, {
+    id: protocolResourceId(record.id),
+    kind: "research-protocol",
+    title: "研究方案 · " + record.title,
+    metadata: record,
+  });
+  return record;
+}
+
+export function listProtocols(projectId) {
+  assertProject(projectId);
+  let names = [];
+  try {
+    names = fs.readdirSync(protocolDirectory(projectId)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    const value = readProtocolState(projectId, name.slice(0, -".json".length));
+    if (value) rows.push(value);
+  }
+  rows.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return rows;
+}
+
+export function getProtocol(projectId, id) {
+  assertProject(projectId);
+  const value = readProtocolState(projectId, id);
+  if (!value) throw fault("研究方案不存在", 404);
+  return value;
+}
+
+export function createProtocol(projectId, patch = {}) {
+  assertProject(projectId);
+  return saveProtocolRecord(projectId, null, patch);
+}
+
+export function updateProtocol(projectId, id, patch = {}) {
+  const existing = getProtocol(projectId, id);
+  if (patch.revision != null && Number(patch.revision) !== existing.revision)
+    throw fault("研究方案已被其他修改更新，请刷新后重试", 409);
+  return saveProtocolRecord(projectId, existing, patch);
+}
+
+export function freezeProtocol(projectId, id, { reason } = {}) {
+  const existing = getProtocol(projectId, id);
+  const record = { ...existing, status: "frozen" };
+  record.versions = [
+    ...(existing.versions || []),
+    {
+      index: (existing.versions?.length || 0) + 1,
+      revision: existing.revision,
+      frozenAt: new Date().toISOString(),
+      reason: limitLength(reason, "冻结理由无效", 2000) || "未说明理由",
+      snapshot: {
+        objective: existing.objective,
+        datasets: existing.datasets,
+        metrics: existing.metrics,
+        budget: existing.budget,
+        baselines: existing.baselines,
+      },
+    },
+  ];
+  record.updatedAt = new Date().toISOString();
+  record.revision = existing.revision + 1;
+  writeJsonState(protocolFile(projectId, id), record, {
+    id: protocolResourceId(id),
+    kind: "research-protocol",
+    title: "研究方案 · " + record.title,
+    metadata: record,
+  });
+  return record;
+}
+
+export function deleteProtocol(projectId, id) {
+  const existing = getProtocol(projectId, id);
+  return trashPath(protocolFile(projectId, existing.id), {
+    id: protocolResourceId(existing.id),
+    kind: "research-protocol",
+  });
+}
+
 // ---- 基础导出与导入（B1.6）：新增研究记录可整体打包、在项目中恢复 ----
 
 export const RESEARCH_SCHEMA_VERSION = 1;
