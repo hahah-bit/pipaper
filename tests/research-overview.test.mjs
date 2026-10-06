@@ -41,3 +41,17 @@ test("未完成行动统计与状态标签回退", () => {
   assert.equal(actionStatusLabel("doing"), "进行中");
   assert.equal(actionStatusLabel("unknown"), "unknown");
 });
+
+test("比较摘要只汇总快照中的可比较值", async () => {
+  const { comparisonSummary } = await import("../src/features/research/findings.js");
+  assert.equal(
+    comparisonSummary({ metricName: "iou", rows: [
+      { status: "value", value: 0.81 },
+      { status: "missing", value: null },
+      { status: "value", value: 0.87 },
+    ] }),
+    "iou：0.81 / 0.87",
+  );
+  assert.equal(comparisonSummary({ metricName: "iou", rows: [{ status: "missing", value: null }] }), "无可比较值");
+  assert.equal(comparisonSummary(null), "无可比较值");
+});

@@ -1544,3 +1544,4 @@ html[data-fs="xlarge"]  { --fs-doc: 19.5px; --fs-chat: 18.5px; --fs-ui: 16.5px; 
 .research-run-status-failed { color: var(--err); }
 .research-run-status-stopped { color: var(--warn); }
 .research-run-status-incomplete { color: var(--fg2); }
+.research-run-multi { min-width: 200px; min-height: 84px; background: var(--bg0); color: var(--fg0); border: 1px solid var(--border); border-radius: 6px; padding: 4px; font: inherit; font-size: 12.5px; }
