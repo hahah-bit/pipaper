@@ -188,6 +188,11 @@ export function registerResearchRoutes(api) {
     route((req) => ({ experiment: createExperiment(req.params.projectId, req.body || {}) })),
   );
 
+  api.get(
+    "/research/projects/:projectId/experiments/:experimentId",
+    route((req) => ({ experiment: getExperiment(req.params.projectId, req.params.experimentId) })),
+  );
+
   api.put(
     "/research/projects/:projectId/experiments/:experimentId",
     route((req) => ({ experiment: updateExperiment(req.params.projectId, req.params.experimentId, req.body || {}) })),

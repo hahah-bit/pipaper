@@ -1537,3 +1537,10 @@ html[data-fs="xlarge"]  { --fs-doc: 19.5px; --fs-chat: 18.5px; --fs-ui: 16.5px; 
 .research-hypothesis-evidence .research-evidence-type > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 .research-baseline-row { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr auto 1fr auto; gap: 4px; align-items: center; padding: 3px 0; border-bottom: 1px dashed var(--border); }
 .research-baseline-row input { min-width: 0; background: var(--bg0); border: 1px solid var(--border); color: var(--fg0); border-radius: 5px; padding: 4px 6px; font-size: 12px; }
+.research-metric-row { display: grid; grid-template-columns: 1fr 1fr 80px 1fr auto; gap: 4px; align-items: center; padding: 3px 0; }
+.research-metric-row input { min-width: 0; background: var(--bg0); border: 1px solid var(--border); color: var(--fg0); border-radius: 5px; padding: 4px 6px; font-size: 12px; }
+.research-run-dialog .native-dialog-body { display: flex; flex-direction: column; gap: 8px; max-width: 560px; }
+.research-run-status-succeeded { color: var(--ok); }
+.research-run-status-failed { color: var(--err); }
+.research-run-status-stopped { color: var(--warn); }
+.research-run-status-incomplete { color: var(--fg2); }
