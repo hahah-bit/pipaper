@@ -98,14 +98,22 @@ export function saveProfile(projectId, patch = {}) {
   if (patch.revision != null && existing && Number(patch.revision) !== existing.revision)
     throw fault("研究档案已被其他修改更新，请刷新后重试", 409);
   const now = new Date().toISOString();
+  // F01 修复：局部操作（添加/修改行动、关联成果）只提交对应字段；
+  // 省略的字段保留旧值，显式传入空字符串才清空，避免重建整个档案时清空已保存内容。
+  const pickText = (key) => Object.hasOwn(patch, key)
+    ? limitText(patch[key], key)
+    : (existing?.[key] ?? "");
+  const pickList = (key, normalize, max, label) => Object.hasOwn(patch, key)
+    ? normalizeList(patch[key], normalize, max, label)
+    : (existing?.[key] ?? []);
   const next = {
     projectId,
-    question: limitText(patch.question, "question"),
-    scope: limitText(patch.scope, "scope"),
-    goal: limitText(patch.goal, "goal"),
-    constraints: limitText(patch.constraints, "constraints"),
-    outcomes: normalizeList(patch.outcomes, resolveOutcome, 100, "成果关联"),
-    actions: normalizeList(patch.actions, normalizeAction, 200, "行动项"),
+    question: pickText("question"),
+    scope: pickText("scope"),
+    goal: pickText("goal"),
+    constraints: pickText("constraints"),
+    outcomes: pickList("outcomes", resolveOutcome, 100, "成果关联"),
+    actions: pickList("actions", normalizeAction, 200, "行动项"),
     createdAt: existing?.createdAt || now,
     updatedAt: now,
     revision: (existing?.revision || 0) + 1,

@@ -91,7 +91,21 @@ export function hypothesisSection({ projectId }) {
     );
   }
 
+  // F05 修复：局部动作（记录决策、关联证据）触发重绘前，先把输入框中
+  // 尚未保存的内容收集进 current，避免整区重绘丢掉正在输入的正文。
+  const draftInputs = {};
+  function collectDraft() {
+    if (!draftInputs.statement) return;
+    current.statement = draftInputs.statement.value;
+    current.prediction = draftInputs.prediction.value;
+    current.scope = draftInputs.scope.value;
+    current.counterExamples = draftInputs.counterExamples.value;
+    current.unknowns = draftInputs.unknowns.value;
+    current.sourceNote = draftInputs.source.value;
+  }
+
   function renderEditor() {
+    collectDraft();
     const field = (label, node) => el("label", { class: "research-field" }, label, node);
     const titleInput = el("input", { type: "text", value: current.title, onchange: (e) => { current.title = e.target.value.trim() || current.title; } });
     const statementInput = el("textarea", { rows: "3", placeholder: "这个方向的想法与依据（可从报告复制选定部分）" }, current.statement || "");
@@ -100,6 +114,12 @@ export function hypothesisSection({ projectId }) {
     const counterInput = el("textarea", { rows: "2", placeholder: "反例、替代解释或已知相反结果" }, current.counterExamples || "");
     const unknownsInput = el("input", { type: "text", value: current.unknowns || "", placeholder: "尚未确认的部分" });
     const sourceInput = el("input", { type: "text", value: current.sourceNote || "", placeholder: "想法来源（选题报告 / 对话 / 笔记）" });
+    draftInputs.statement = statementInput;
+    draftInputs.prediction = predictionInput;
+    draftInputs.scope = scopeInput;
+    draftInputs.counterExamples = counterInput;
+    draftInputs.unknowns = unknownsInput;
+    draftInputs.source = sourceInput;
 
     const evidenceRow = (fieldKey, label) => {
       const list = el("div", { class: "research-hypothesis-evidence" },
@@ -201,6 +221,7 @@ export function hypothesisSection({ projectId }) {
     await loadEvidence();
     try {
       current = (await requestJson(base() + "/hypotheses/" + id)).hypothesis;
+      for (const key of Object.keys(draftInputs)) draftInputs[key] = null; // 切换对象：不回填旧输入
       renderEditor();
     } catch (e) {
       toast(e.message, true);
