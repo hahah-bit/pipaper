@@ -282,3 +282,142 @@ export function deleteEvidence(projectId, id) {
     kind: "research-evidence",
   });
 }
+
+// ---- 文献对比表（A02.3—A02.6）：带单元格来源与差异标记的文献矩阵 ----
+
+const CELL_STATUS = ["value", "zero", "not-reported", "unverified", "not-applicable"];
+export const matrixResourceId = (id) => "research-matrix:" + id;
+
+const matrixDirectory = (projectId) => path.join(researchDir(projectId), "matrices");
+const matrixFile = (projectId, id) => path.join(matrixDirectory(projectId), id + ".json");
+
+function normalizeColumns(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("对比列必须是列表", 400);
+  if (value.length > 20) throw fault("对比列超过 20 列上限", 400);
+  return value.map((column, index) => {
+    const name = typeof column === "string" ? column.trim() : typeof column?.name === "string" ? column.name.trim() : "";
+    if (!name) throw fault(`第 ${index + 1} 个对比列名称不能为空`, 400);
+    if (name.length > 100) throw fault("对比列名称超过 100 字上限", 400);
+    return { id: ID_PATTERN.test(column?.id || "") ? column.id : "col_" + (index + 1) + "_" + Date.now().toString(36), name };
+  });
+}
+
+function normalizeMatrixPapers(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw fault("对比论文必须是列表", 400);
+  if (value.length > 30) throw fault("对比表最多比较 30 篇论文", 400);
+  const ids = [];
+  for (const paperId of value) {
+    if (typeof paperId !== "string" || !getPaper(paperId)) throw fault("对比表中的论文不存在：" + paperId, 400);
+    if (!ids.includes(paperId)) ids.push(paperId);
+  }
+  return ids;
+}
+
+function normalizeCells(value, paperIds, columns) {
+  if (value == null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) throw fault("单元格数据无效", 400);
+  const paperSet = new Set(paperIds), columnSet = new Set(columns.map((c) => c.id));
+  const cells = {};
+  for (const [key, cell] of Object.entries(value)) {
+    const [paperId, columnId] = key.split("|");
+    if (!paperSet.has(paperId) || !columnSet.has(columnId))
+      throw fault("单元格不属于这张对比表：" + key, 400);
+    const entry = cell && typeof cell === "object" ? cell : {};
+    cells[key] = {
+      value: limitLength(entry.value, "单元格内容无效", 2000),
+      status: CELL_STATUS.includes(entry.status) ? entry.status : "value",
+      note: limitLength(entry.note, "单元格备注无效", 500),
+      sourceLabel: limitLength(entry.sourceLabel, "单元格来源无效", 300),
+      page: Number.isInteger(Number(entry.page)) && Number(entry.page) > 0 ? Number(entry.page) : null,
+      aiCandidate: Boolean(entry.aiCandidate),
+    };
+  }
+  return cells;
+}
+
+function saveMatrixRecord(projectId, existing, patch) {
+  const now = new Date().toISOString();
+  const title = limitLength(patch.title, "对比表标题不能为空", 200);
+  if (!title) throw fault("对比表标题不能为空", 400);
+  const paperIds = normalizeMatrixPapers(patch.paperIds ?? existing?.paperIds);
+  const columns = normalizeColumns(patch.columns ?? existing?.columns);
+  const record = {
+    id: existing?.id || "mtx_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    projectId,
+    title,
+    conditions: limitLength(patch.conditions, "比较条件说明无效", 2000),
+    paperIds,
+    columns,
+    cells: normalizeCells(patch.cells ?? existing?.cells, paperIds, columns),
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    revision: (existing?.revision || 0) + 1,
+  };
+  writeJsonState(matrixFile(projectId, record.id), record, {
+    id: matrixResourceId(record.id),
+    kind: "research-matrix",
+    title: "对比表 · " + record.title,
+    metadata: record,
+  });
+  for (const paperId of record.paperIds)
+    link(matrixResourceId(record.id), "paper:" + paperId, "uses");
+  return record;
+}
+
+function readMatrixState(projectId, id) {
+  if (!/^mtx_[A-Za-z0-9_-]{1,64}$/.test(id || "")) throw fault("无效的对比表标识", 400);
+  const entry = resource(matrixResourceId(id));
+  if (entry && entry.lifecycle !== "active") return null;
+  try {
+    return readJsonState(matrixFile(projectId, id), null);
+  } catch (e) {
+    if (e.code === "ENOENT") return null;
+    throw e;
+  }
+}
+
+export function listMatrices(projectId) {
+  assertProject(projectId);
+  let names = [];
+  try {
+    names = fs.readdirSync(matrixDirectory(projectId)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    const value = readMatrixState(projectId, name.slice(0, -".json".length));
+    if (value) rows.push(value);
+  }
+  rows.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+  return rows;
+}
+
+export function getMatrix(projectId, id) {
+  assertProject(projectId);
+  const value = readMatrixState(projectId, id);
+  if (!value) throw fault("对比表不存在", 404);
+  return value;
+}
+
+export function createMatrix(projectId, patch = {}) {
+  assertProject(projectId);
+  return saveMatrixRecord(projectId, null, patch);
+}
+
+export function updateMatrix(projectId, id, patch = {}) {
+  const existing = getMatrix(projectId, id);
+  if (patch.revision != null && Number(patch.revision) !== existing.revision)
+    throw fault("对比表已被其他修改更新，请刷新后重试", 409);
+  return saveMatrixRecord(projectId, existing, patch);
+}
+
+export function deleteMatrix(projectId, id) {
+  const existing = getMatrix(projectId, id);
+  return trashPath(matrixFile(projectId, existing.id), {
+    id: matrixResourceId(existing.id),
+    kind: "research-matrix",
+  });
+}

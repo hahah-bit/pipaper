@@ -3,6 +3,7 @@ import { requestJson } from "../../platform/http.js";
 import { state } from "../../shell/state.js";
 import { selectPaper } from "../../sidebar.js";
 import { actionStatusLabel, buildTimeline, openActions } from "./overview.js";
+import { matrixSection } from "./matrix.js";
 
 // 研究面板（加法开发 A01）：可选的项目研究档案。
 // 不选中项目时只显示空状态；面板加载失败只影响本面板，随时可以关闭返回原工作区。
@@ -350,6 +351,20 @@ export function researchModule() {
         el("h4", {}, "证据卡（阅读与检索的固定来源记录）"),
         evidenceList,
         el("div", { class: "research-add-row" }, evidenceType, evidenceInput, evidenceSource, addEvidenceBtn)),
+      (() => {
+        // 文献对比表展开时才加载，避免每次打开面板都请求数据。
+        let loaded = false;
+        const box = el("div");
+        return el("details", {
+          class: "research-matrix-details",
+          ontoggle: (event) => {
+            if (event.target.open && !loaded) {
+              loaded = true;
+              box.append(matrixSection({ projectId }).container);
+            }
+          },
+        }, el("summary", {}, "文献对比表（选择论文，比较带来源的指标）"), box);
+      })(),
       el("div", { class: "research-columns" },
         el("div", { class: "research-card" }, timeline),
         el("div", { class: "research-card" },

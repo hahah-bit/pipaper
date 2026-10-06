@@ -7,6 +7,11 @@ import {
   createEvidence,
   updateEvidence,
   deleteEvidence,
+  listMatrices,
+  getMatrix,
+  createMatrix,
+  updateMatrix,
+  deleteMatrix,
 } from "./store.js";
 
 // 研究模块路由（加法开发）：入口挂在 /api/research 下，不影响既有路由。
@@ -58,5 +63,30 @@ export function registerResearchRoutes(api) {
   api.delete(
     "/research/projects/:projectId/evidence/:evidenceId",
     route((req) => deleteEvidence(req.params.projectId, req.params.evidenceId)),
+  );
+
+  api.get(
+    "/research/projects/:projectId/matrices",
+    route((req) => ({ matrices: listMatrices(req.params.projectId) })),
+  );
+
+  api.post(
+    "/research/projects/:projectId/matrices",
+    route((req) => ({ matrix: createMatrix(req.params.projectId, req.body || {}) })),
+  );
+
+  api.get(
+    "/research/projects/:projectId/matrices/:matrixId",
+    route((req) => ({ matrix: getMatrix(req.params.projectId, req.params.matrixId) })),
+  );
+
+  api.put(
+    "/research/projects/:projectId/matrices/:matrixId",
+    route((req) => ({ matrix: updateMatrix(req.params.projectId, req.params.matrixId, req.body || {}) })),
+  );
+
+  api.delete(
+    "/research/projects/:projectId/matrices/:matrixId",
+    route((req) => deleteMatrix(req.params.projectId, req.params.matrixId)),
   );
 }

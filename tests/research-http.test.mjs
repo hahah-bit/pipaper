@@ -186,3 +186,66 @@ test("证据卡：从论文与知识检索保存，可更新、冲突检测与�
   const missingDetail = await call(fixture.url, `${base}/ev_nope`);
   assert.equal(missingDetail.status, 404);
 });
+
+test("文献对比表：创建、单元格来源状态、冲突检测与回收站恢复", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = await createProject(fixture.url, "对比表验收");
+  const base = `/research/projects/${projectId}/matrices`;
+
+  const badPaper = await call(fixture.url, base, { method: "POST", body: { title: "缺论文", paperIds: ["nope"], columns: ["指标"] } });
+  assert.equal(badPaper.status, 400, "不存在的论文应拒绝");
+
+  const created = await call(fixture.url, base, {
+    method: "POST",
+    body: {
+      title: "失败模式对比",
+      conditions: "复现条件与原文存在批次差异",
+      paperIds: ["fixture-paper"],
+      columns: [{ id: "col_1", name: "AUROC" }, { id: "col_2", name: "训练轮次" }],
+      cells: {
+        "fixture-paper|col_1": { value: "0.976", status: "unverified", sourceLabel: "表2", page: 6 },
+        "fixture-paper|col_2": { status: "not-reported" },
+      },
+    },
+  });
+  assert.equal(created.status, 200, JSON.stringify(created.value));
+  const matrix = created.value.matrix;
+  assert.equal(matrix.revision, 1);
+  assert.equal(matrix.cells["fixture-paper|col_1"].sourceLabel, "表2");
+  assert.equal(matrix.cells["fixture-paper|col_2"].value, "", "未报告不需要值");
+  assert.equal(matrix.cells["fixture-paper|col_2"].status, "not-reported");
+
+  const badCell = await call(fixture.url, base + "/" + matrix.id, {
+    method: "PUT",
+    body: { title: matrix.title, paperIds: matrix.paperIds, columns: matrix.columns, cells: { "other|col_1": { value: "x" } }, revision: matrix.revision },
+  });
+  assert.equal(badCell.status, 400, "不属于矩阵的单元格应拒绝");
+
+  const conflict = await call(fixture.url, base + "/" + matrix.id, {
+    method: "PUT",
+    body: { title: matrix.title, paperIds: matrix.paperIds, columns: matrix.columns, cells: {}, revision: 0 },
+  });
+  assert.equal(conflict.status, 409);
+
+  const updated = await call(fixture.url, base + "/" + matrix.id, {
+    method: "PUT",
+    body: { title: matrix.title, conditions: matrix.conditions, paperIds: matrix.paperIds, columns: matrix.columns, cells: matrix.cells, revision: matrix.revision },
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.value.matrix.revision, 2);
+
+  const list = await call(fixture.url, base);
+  assert.equal(list.value.matrices.length, 1);
+
+  const removed = await call(fixture.url, base + "/" + matrix.id, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  const afterDelete = await call(fixture.url, base);
+  assert.equal(afterDelete.value.matrices.length, 0);
+
+  const restored = await call(fixture.url, `/storage/resources/${"research-matrix:" + matrix.id}/restore`, { method: "POST" });
+  assert.equal(restored.status, 200, JSON.stringify(restored.value));
+  const afterRestore = await call(fixture.url, base);
+  assert.equal(afterRestore.value.matrices.length, 1);
+  assert.equal(afterRestore.value.matrices[0].cells["fixture-paper|col_1"].page, 6, "恢复后单元格来源保留");
+});
