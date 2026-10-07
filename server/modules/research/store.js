@@ -1874,7 +1874,8 @@ function remapRef(ref, idMap) {
   if (!ref || typeof ref !== "object") return ref;
   const section = REF_KIND_SECTIONS[ref.kind];
   if (!section) return { ...ref };
-  const mapped = idMap[section + ":" + ref.id];
+  // Map 键必须用 .get() 取；属性访问永远取不到值，曾导致结论/处置依据引用漏映射。
+  const mapped = idMap.get(section + ":" + ref.id);
   return mapped ? { ...ref, id: mapped } : { ...ref };
 }
 

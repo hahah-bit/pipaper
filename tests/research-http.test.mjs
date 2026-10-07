@@ -67,7 +67,11 @@ test("研究档案：未启用为空，保存后可读取与更新，冲突返�
   });
   assert.equal(updated.status, 200);
   assert.equal(updated.value.profile.revision, 2);
-  assert.equal(updated.value.profile.actions.length, 0, "未提交的行动项不应保留");
+  // F01 修复后的语义：省略 actions 的局部更新保留已保存行动；显式空数组才清空。
+  assert.equal(updated.value.profile.actions.length, 2, "省略字段保留旧值");
+  const clearedActions = await call(fixture.url, `/research/projects/${projectId}/profile`, { method: "PUT", body: { actions: [] } });
+  assert.equal(clearedActions.value.profile.actions.length, 0, "显式空数组清空");
+  assert.equal(clearedActions.value.profile.question, "更新后的问题", "清空行动不影响其他字段");
   assert.equal(updated.value.profile.createdAt, profile.createdAt, "创建时间应保持");
 });
 
@@ -390,9 +394,11 @@ test("研究记录导出与导入：整体打包、重复导入幂等、恢复�
   assert.equal(targetProfile.value.profile.question, "导出验收问题");
   assert.equal(targetProfile.value.profile.actions[0].text, "恢复后继续行动", "恢复保留行动项");
   const targetEvidence = await call(fixture.url, `/research/projects/${target}/evidence`);
-  assert.equal(targetEvidence.value.evidence[0].id, evidenceId, "恢复保留证据标识");
+  assert.notEqual(targetEvidence.value.evidence[0].id, evidenceId, "F02：跨项目恢复分配新身份");
+  assert.equal(targetEvidence.value.evidence[0].content, "导出验收证据", "内容保持一致");
   const targetHypotheses = await call(fixture.url, `/research/projects/${target}/hypotheses`);
-  assert.deepEqual(targetHypotheses.value.hypotheses[0].support, [evidenceId], "恢复保留假设与证据的关联");
+  assert.equal(targetHypotheses.value.hypotheses[0].support.length, 1, "F02：批内引用重映射后仍关联");
+  assert.equal(targetHypotheses.value.hypotheses[0].support[0], targetEvidence.value.evidence[0].id, "指向副本自己的证据");
 });
 
 test("研究方案：创建、基线对齐表、冻结版本与修订", async (t) => {
@@ -714,15 +720,20 @@ test("第二批研究记录随导出包整体恢复（方案/实验/运行/比�
   assert.equal(restored.value.imported.comparisons, 1);
   assert.equal(restored.value.imported.conclusions, 1);
 
-  // 恢复后的链路：结论 → 比较 → 运行 → 实验 → 方案
+  // 恢复后的链路：结论 → 比较 → 运行 → 实验 → 方案（F02：跨项目恢复分配新身份，批内引用指向副本自己的对象）
   const targetCons = await call(fixture.url, `/research/projects/${target}/conclusions`);
-  assert.equal(targetCons.value.conclusions[0].support[0].id, cmp.value.comparison.id);
   const targetCmp = await call(fixture.url, `/research/projects/${target}/comparisons`);
-  assert.equal(targetCmp.value.comparisons[0].rows[0].runId, run2.value.run.id);
   const targetRuns = await call(fixture.url, `/research/projects/${target}/runs`);
-  const restoredRun2 = targetRuns.value.runs.find((r) => r.id === run2.value.run.id);
-  assert.equal(restoredRun2.relation.ofRunId, run1.value.run.id, "批内续跑关系恢复");
+  const newCmpId = targetCmp.value.comparisons[0].id;
+  assert.notEqual(newCmpId, cmp.value.comparison.id, "比较使用新身份");
+  assert.equal(targetCons.value.conclusions[0].support[0].id, newCmpId, "结论指向副本自己的比较");
+  const newRun2Id = targetCmp.value.comparisons[0].rows[0].runId;
+  assert.notEqual(newRun2Id, run2.value.run.id, "快照行指向副本自己的运行");
+  const restoredRun2 = targetRuns.value.runs.find((r) => r.id === newRun2Id);
+  assert.equal(restoredRun2.label, "尝试2-续跑", "按内容找回运行");
+  assert.equal(restoredRun2.relation.ofRunId, targetRuns.value.runs.find((r) => r.label === "尝试1").id, "批内续跑关系指向副本运行");
   assert.equal(restoredRun2.metrics[0].source, "csv", "导入指标来源保留");
+  assert.equal(restoredRun2.config.notes ?? "", restoredRun2.config.notes ?? "", "配置字段存在");
   const targetProtocols = await call(fixture.url, `/research/projects/${target}/protocols`);
   assert.equal(targetProtocols.value.protocols[0].versions.length, 1, "冻结版本随包恢复");
 });
@@ -848,7 +859,7 @@ test("完整课题包：包含/排除清单、校验和、恢复报告明示外�
   assert.equal(restored.status, 200, JSON.stringify(restored.value));
   assert.deepEqual(restored.value.errors, []);
   assert.equal(restored.value.imported.manuscripts, 1);
-  assert.equal(restored.value.papers[0].status, "available", "fixture 论文在目标库可用");
+  assert.equal(restored.value.papers[0].status, "metadata-only", "F09：仅元数据不再报告为可用");
   assert.equal(restored.value.papers[0].matchedBy, "id", "无 contentHash 的论文按 ID 匹配");
 
   // 未知论文的恢复报告

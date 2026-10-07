@@ -11,7 +11,7 @@ test("第四批研究记录随课题包导出、恢复与篡改检测", async ()
   const { createProject } = await import("../server/store.js");
   const {
     createReselection, createSubmission, updateSubmission,
-    exportProjectBundle, importBundle, getReselection, getSubmission,
+    exportProjectBundle, importBundle, listReselections, listSubmissions,
   } = await import("../server/modules/research/store.js");
 
   try {
@@ -38,8 +38,13 @@ test("第四批研究记录随课题包导出、恢复与篡改检测", async ()
     assert.equal(result.imported.reselections, 1, "二次选题恢复");
     assert.equal(result.imported.submissions, 1, "投稿轮次恢复");
     assert.deepEqual(result.errors, [], "无恢复错误");
-    assert.equal(getReselection(targetProject, reselection.id).candidates[0].text, "候选A", "候选保留");
-    assert.equal(getSubmission(targetProject, submission.id).comments[0].disposition.status, "done", "意见处置保留");
+    // F02：跨项目恢复分配新身份——按内容找回而非旧 ID。
+    const restoredReselections = listReselections(targetProject);
+    assert.equal(restoredReselections[0].candidates[0].text, "候选A", "候选保留");
+    const restoredSubmissions = listSubmissions(targetProject);
+    assert.equal(restoredSubmissions[0].comments[0].disposition.status, "done", "意见处置保留");
+    assert.notEqual(restoredReselections[0].id, reselection.id, "新身份");
+    assert.notEqual(restoredSubmissions[0].id, submission.id, "新身份");
 
     const tampered = JSON.parse(JSON.stringify(bundle));
     tampered.submissions[0].target = "被篡改的目标";
