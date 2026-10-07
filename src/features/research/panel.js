@@ -380,16 +380,16 @@ export function researchModule() {
     }, "导出研究记录");
     const exportProjectBtn = el("button", {
       class: "tool-btn",
-      title: "完整课题包：研究记录 + 文献元数据清单 + 包含/排除清单与校验和（不含 PDF 原文与凭据）",
+      title: "部分导出：研究记录 + 文献元数据清单 + 包含/排除清单与校验和；不含 PDF 原文、知识索引、运行产物与凭据，不能当作完整备份",
       onclick: async () => {
         try {
           const data = await requestJson("/api/research/projects/" + encodeURIComponent(projectId) + "/export?scope=project");
           downloadJson(data.export, "pipaper-project-" + projectId + ".json");
           const papers = data.export.papers || [];
-          toast("课题包已导出（" + papers.length + " 篇文献元数据；PDF 原文与外部文件未包含，见包内清单）");
+          toast("课题包已导出（部分导出：" + papers.length + " 篇文献元数据；PDF 原文与外部文件未包含，见包内清单）");
         } catch (e) { toast(e.message, true); }
       },
-    }, "导出完整课题包");
+    }, "导出课题包（部分）");
 
     const importInput = el("input", {
       type: "file",
@@ -406,15 +406,14 @@ export function researchModule() {
             body: { data },
           });
           const { imported, skipped, errors } = result;
-          const parts = [];
-          if (imported.profile) parts.push("档案 1");
-          if (imported.evidence) parts.push("证据 " + imported.evidence);
-          if (imported.matrices) parts.push("对比表 " + imported.matrices);
-          if (imported.hypotheses) parts.push("假设 " + imported.hypotheses);
-          if (imported.manuscripts) parts.push("稿件 " + imported.manuscripts);
+          // 5.3：成功摘要覆盖全部记录类型，恢复方案/实验/运行等不再被遗漏。
+          const kindLabels = [["profile", "档案"], ["evidence", "证据"], ["matrices", "对比表"], ["hypotheses", "假设"],
+            ["protocols", "方案"], ["experiments", "实验"], ["runs", "运行"], ["comparisons", "比较"],
+            ["conclusions", "结论"], ["manuscripts", "稿件"], ["reselections", "二次选题"], ["submissions", "投稿"]];
+          const parts = kindLabels.filter(([key]) => imported[key]).map(([key, label]) => label + " " + imported[key]);
           toast("导入完成：" + (parts.join("、") || "无新记录")
             + (skipped.length ? "；跳过 " + skipped.length + " 条已存在记录" : "")
-            + (errors.length ? "；失败 " + errors.length + " 条（见控制台）" : ""));
+            + (errors.length ? "；失败 " + errors.length + " 条：" + errors.slice(0, 2).join("；") + (errors.length > 2 ? " 等" : "") : ""), errors.length > 0);
           for (const message of errors) console.warn("[research-import]", message);
           if (Array.isArray(result.papers)) {
             // F09：区分原文可读 / 仅元数据 / 缺失，元数据匹配不算恢复成功。

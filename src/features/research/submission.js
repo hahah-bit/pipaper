@@ -31,6 +31,34 @@ export function submissionSection({ projectId }) {
   const container = el("div", { class: "research-submission" });
   let current = null;
   let manuscripts = [];
+  // F11：处置引用对象缓存（运行/结论），标题用于可读显示。
+  const refIndex = { runs: [], conclusions: [] };
+  const refTitle = (kind, id) => {
+    if (kind === "manuscript") return (manuscripts.find((m) => m.id === id) || {}).title;
+    if (kind === "run") return (refIndex.runs.find((r) => r.id === id) || {}).label;
+    if (kind === "conclusion") return ((refIndex.conclusions.find((c) => c.id === id) || {}).statement || "").slice(0, 30);
+    return "";
+  };
+  async function loadRefIndex() {
+    try {
+      const [runs, conclusions] = await Promise.all([
+        requestJson("/api/research/projects/" + encodeURIComponent(projectId) + "/runs"),
+        requestJson("/api/research/projects/" + encodeURIComponent(projectId) + "/conclusions"),
+      ]);
+      refIndex.runs = runs.runs || [];
+      refIndex.conclusions = conclusions.conclusions || [];
+    } catch { /* 失败时对象选择器显示加载失败，不影响其他操作 */ }
+  }
+  async function dispositionRefOptions(kind) {
+    if (!refIndex.runs.length && !refIndex.conclusions.length) await loadRefIndex();
+    if (kind === "run")
+      return refIndex.runs.map((r) => el("option", { value: r.id }, r.label + "（" + r.status + "）"));
+    if (kind === "conclusion")
+      return refIndex.conclusions.map((c) => el("option", { value: c.id }, (c.statement || "").slice(0, 34)));
+    if (kind === "manuscript")
+      return manuscripts.map((m) => el("option", { value: m.id }, m.title.slice(0, 34)));
+    return [];
+  }
 
   const base = () => "/api/research/projects/" + encodeURIComponent(projectId);
 
@@ -140,7 +168,37 @@ export function submissionSection({ projectId }) {
           Object.entries(DISPOSITION_STATUS_LABEL).map(([value, label]) => el("option", { value, selected: value === comment.disposition.status }, label)));
         const noteInput = el("input", { type: "text", value: comment.disposition.note || "", placeholder: "处置说明（回复要点 / 修改位置 / 补实验）", onchange: (e) => { comment.disposition.note = e.target.value.trim(); } });
         const kindLabel = { run: "运行", conclusion: "结论", manuscript: "稿件" };
-        const refText = comment.disposition.refs.map((r) => (kindLabel[r.kind] || r.kind) + " " + r.id.slice(0, 14)).join("、");
+        const refBadges = comment.disposition.refs.map((ref, refIndex2) => el("span", { class: "research-evidence-type" },
+          (kindLabel[ref.kind] || ref.kind) + " · " + (refTitle(ref.kind, ref.id) || ref.id.slice(0, 12)),
+          el("button", {
+            class: "research-cell-remove",
+            onclick: () => { comment.disposition.refs.splice(refIndex2, 1); renderEditor(); },
+          }, "×")));
+        // F11：处置引用选择器——直接从项目内选择补实验运行、结论或稿件记录。
+        const refKindSelect = el("select", { class: "research-status-select" },
+          el("option", { value: "run" }, "补实验运行"),
+          el("option", { value: "conclusion" }, "结论"),
+          el("option", { value: "manuscript" }, "稿件"));
+        const refObjectSelect = el("select", { class: "research-status-select" }, el("option", { value: "" }, "先选类型…"));
+        refKindSelect.addEventListener("change", async () => {
+          refObjectSelect.replaceChildren(el("option", { value: "" }, "加载中…"));
+          try {
+            const options = await dispositionRefOptions(refKindSelect.value);
+            refObjectSelect.replaceChildren(el("option", { value: "" }, "选择对象…"), ...options);
+          } catch {
+            refObjectSelect.replaceChildren(el("option", { value: "" }, "加载失败"));
+          }
+        });
+        const addRefBtn = el("button", {
+          class: "tool-btn",
+          onclick: () => {
+            if (!refObjectSelect.value) return toast("先选择要引用的对象", true);
+            if (comment.disposition.refs.some((r) => r.kind === refKindSelect.value && r.id === refObjectSelect.value))
+              return toast("该引用已存在");
+            comment.disposition.refs = [...comment.disposition.refs, { kind: refKindSelect.value, id: refObjectSelect.value }];
+            renderEditor();
+          },
+        }, "关联处置成果");
         return el("div", { class: "research-card" },
           el("div", { class: "research-outcome-item" },
             el("span", { class: "research-evidence-content", title: comment.text }, comment.text.slice(0, 120)),
@@ -150,8 +208,8 @@ export function submissionSection({ projectId }) {
               onclick: () => { current.comments.splice(index, 1); renderEditor(); },
             }, "×")),
           el("div", { class: "research-add-row" }, noteInput),
-          refText ? el("div", { class: "research-muted" }, "处置引用：" + refText) : null,
-          el("div", { class: "research-muted" }, "引用补实验运行或新结论请保存后按 JSON 引用 ID 添加；当前版本未做选择器。"));
+          refBadges.length ? el("div", { class: "research-hypothesis-evidence" }, refBadges) : null,
+          el("div", { class: "research-add-row" }, refKindSelect, refObjectSelect, addRefBtn));
       }),
       ...(current.comments || []).length ? [] : [el("div", { class: "research-muted" }, "还没有意见记录。收到审稿意见后粘贴拆解。")]);
 
@@ -192,7 +250,12 @@ export function submissionSection({ projectId }) {
           el("div", { class: "research-add-row" }, materialInput, addMaterial)),
         el("div", { class: "research-card" },
           el("h4", {}, "时间与结局"),
-          el("div", { class: "research-muted" }, "提交：" + (current.dates.submittedAt || "未登记") + "；结果：" + (current.dates.decisionAt || "未登记")),
+          el("label", { class: "research-field" }, "准备完成",
+            el("input", { type: "date", value: (current.dates.preparedAt || "").slice(0, 10), onchange: (e) => { current.dates.preparedAt = e.target.value; } })),
+          el("label", { class: "research-field" }, "实际提交（回执日期）",
+            el("input", { type: "date", value: (current.dates.submittedAt || "").slice(0, 10), onchange: (e) => { current.dates.submittedAt = e.target.value; } })),
+          el("label", { class: "research-field" }, "收到结果",
+            el("input", { type: "date", value: (current.dates.decisionAt || "").slice(0, 10), onchange: (e) => { current.dates.decisionAt = e.target.value; } })),
           outcomeNote)),
       el("div", { class: "research-card" },
         el("h4", {}, "审稿意见（" + current.comments.filter((c) => c.disposition.status === "pending").length + " 条待处理）"),
