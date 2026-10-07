@@ -794,12 +794,27 @@ function readRunState(projectId, id) {
   }
 }
 
+// F08：实验绑定的方案版本——创建（或显式换绑方案）时固化：
+// 有冻结版本引用最新冻结快照的 index/revision；引用草稿则标明 draft。
+function protocolBindingFor(projectId, protocolId) {
+  const protocol = getProtocol(projectId, protocolId);
+  const frozen = (protocol.versions || []).at(-1);
+  return frozen
+    ? { kind: "frozen", index: frozen.index, revision: frozen.revision, frozenAt: frozen.frozenAt }
+    : { kind: "draft", index: null, revision: protocol.revision, frozenAt: null };
+}
+
 function saveExperimentRecord(projectId, existing, patch) {
   const now = new Date().toISOString();
   const title = limitLength(patch.title, "实验标题不能为空", 200);
   if (!title) throw fault("实验标题不能为空", 400);
   const protocolId = typeof patch.protocolId === "string" && patch.protocolId ? patch.protocolId : existing?.protocolId || "";
   if (protocolId) getProtocol(projectId, protocolId); // 引用的方案必须存在
+  // F08：仅创建时或显式更换方案时固化绑定；旧实验不自动改绑后续冻结的新版本。
+  let protocolVersion = existing?.protocolVersion ?? null;
+  if (protocolId && (!existing || existing.protocolId !== protocolId))
+    protocolVersion = protocolBindingFor(projectId, protocolId);
+  if (!protocolId) protocolVersion = null;
   const groups = Array.isArray(patch.groups ?? existing?.groups)
     ? (patch.groups ?? existing?.groups).slice(0, 10).map((group, index) => ({
         name: limitLength(group?.name, "实验组名称无效", 100) || "组 " + (index + 1),
@@ -812,6 +827,7 @@ function saveExperimentRecord(projectId, existing, patch) {
     title,
     purpose: limitLength(patch.purpose, "实验目的无效", 2000),
     protocolId,
+    protocolVersion,
     groups,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
@@ -2209,6 +2225,15 @@ function importExperimentRecord(projectId, data, existing, force) {
     title,
     purpose: limitLength(data.purpose, "实验目的无效", 2000),
     protocolId,
+    // F08：随包保留创建时的方案版本绑定，不按目标库当前状态重绑。
+    protocolVersion: data.protocolVersion && typeof data.protocolVersion === "object"
+      ? {
+          kind: data.protocolVersion.kind === "frozen" ? "frozen" : "draft",
+          index: Number.isInteger(data.protocolVersion.index) ? data.protocolVersion.index : null,
+          revision: data.protocolVersion.revision || 0,
+          frozenAt: limitLength(data.protocolVersion.frozenAt, "冻结时间无效", 40) || null,
+        }
+      : null,
     groups: Array.isArray(data.groups) ? data.groups.slice(0, 10).map((group, index) => ({
       name: limitLength(group?.name, "实验组名称无效", 100) || "组 " + (index + 1),
       note: limitLength(group?.note, "实验组说明无效", 500),

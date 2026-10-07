@@ -12,6 +12,14 @@ export function runStatusLabel(status) {
   return RUN_STATUS_LABEL[status] || status || "不完整";
 }
 
+// F08：区分「绑定冻结版本」「引用草稿」「未明确版本」；旧实验不自动改绑。
+export function protocolBindingLabel(binding) {
+  if (!binding) return "未明确版本（绑定功能上线前创建）";
+  if (binding.kind === "frozen")
+    return "绑定冻结版本 V" + binding.index + "（revision " + binding.revision + "）";
+  return "引用方案草稿（revision " + binding.revision + "，尚未冻结）";
+}
+
 // 极简 CSV 解析：支持引号内逗号/换行/双引号转义。
 export function parseCsv(text) {
   const table = [];
@@ -368,6 +376,9 @@ export function labSection({ projectId }) {
         el("button", { class: "tool-btn primary", onclick: () => openRunDialog(null) }, "登记运行"),
         el("button", { class: "tool-btn", onclick: () => openImportDialog() }, "导入 CSV / JSON")),
       current.purpose ? el("div", { class: "research-muted" }, "目的：" + current.purpose) : null,
+      current.protocolId
+        ? el("div", { class: "research-muted" }, "方案：" + current.protocolId + " · " + protocolBindingLabel(current.protocolVersion))
+        : el("div", { class: "research-muted" }, "未绑定研究方案（允许直接登记运行）"),
       runsBox,
     );
   }

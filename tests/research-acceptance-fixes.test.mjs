@@ -221,3 +221,57 @@ test("F09：仅元数据论文的报告不再显示为可用", async (t) => {
   assert.equal(restored.value.papers[0].status, "metadata-only", "无 PDF 的论文报告为仅元数据");
   assert.equal(restored.value.papers[0].matchedBy, "id");
 });
+
+test("F08：实验创建时绑定方案冻结版本，后续冻结不自动改绑", async (t) => {
+  const fixture = await nativeHttpFixture();
+  t.after(() => fixture.dispose());
+  const projectId = (await call(fixture.url, "/projects", { method: "POST", body: { name: "版本绑定验收" } })).value.id;
+  const base = `/research/projects/${projectId}`;
+
+  // 未冻结的方案 → 引用草稿
+  const protocol = await call(fixture.url, base + "/protocols", {
+    method: "POST",
+    body: { title: "版本方案", budget: "单卡，最多 3 次" },
+  });
+  const protocolId = protocol.value.protocol.id;
+  const expDraft = await call(fixture.url, base + "/experiments", {
+    method: "POST",
+    body: { title: "草稿期实验", protocolId },
+  });
+  assert.equal(expDraft.value.experiment.protocolVersion.kind, "draft", "引用未冻结方案标为草稿");
+
+  // 冻结 V1 后建实验 → 绑定 V1
+  await call(fixture.url, base + "/protocols/" + protocolId + "/freeze", { method: "POST", body: { reason: "V1 执行" } });
+  const expV1 = await call(fixture.url, base + "/experiments", {
+    method: "POST",
+    body: { title: "V1 实验", protocolId },
+  });
+  const binding = expV1.value.experiment.protocolVersion;
+  assert.equal(binding.kind, "frozen");
+  assert.equal(binding.index, 1, "绑定冻结版本 V1");
+
+  // 方案修改并冻结 V2 → 原 V1 实验不被改绑
+  const updated = await call(fixture.url, base + "/protocols/" + protocolId, {
+    method: "PUT",
+    body: { ...protocol.value.protocol, status: "draft", budget: "追加 1 次尝试", revision: protocol.value.protocol.revision },
+  });
+  await call(fixture.url, base + "/protocols/" + protocolId + "/freeze", { method: "POST", body: { reason: "V2 调整" } });
+  const stillV1 = await call(fixture.url, base + "/experiments");
+  const v1Record = stillV1.value.experiments.find((e) => e.id === expV1.value.experiment.id);
+  assert.equal(v1Record.protocolVersion.index, 1, "后续冻结 V2 不改绑 V1 实验");
+  const protocols = await call(fixture.url, base + "/protocols");
+  assert.equal(protocols.value.protocols[0].versions.length, 2, "V2 已存在");
+
+  // 无方案实验保持未绑定
+  const expFree = await call(fixture.url, base + "/experiments", { method: "POST", body: { title: "无方案实验" } });
+  assert.equal(expFree.value.experiment.protocolVersion, null);
+
+  // 旧实验（无 protocolVersion 字段）显示语义由前端 label 兜底，导入导出保留绑定
+  const bundle = (await call(fixture.url, base + "/export")).value.export;
+  const target = (await call(fixture.url, "/projects", { method: "POST", body: { name: "版本恢复目标" } })).value.id;
+  const restored = await call(fixture.url, `/research/projects/${target}/import`, { method: "POST", body: { data: bundle } });
+  assert.equal(restored.value.errors.length, 0);
+  const restoredExp = (await call(fixture.url, `/research/projects/${target}/experiments`)).value.experiments
+    .find((e) => e.title === "V1 实验");
+  assert.equal(restoredExp.protocolVersion.index, 1, "恢复保留版本绑定");
+});

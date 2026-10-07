@@ -98,6 +98,43 @@ export function reselectionSection({ projectId }) {
     );
   }
 
+  // F10：新添加的候选只有前端数组、尚无服务端 ID；交接动作先保存整份记录
+  // 取得 ID 再建草稿，避免「候选方向不存在」；失败时保留当前编辑状态。
+  let busySaving = false;
+  async function saveAndDraft(candidateIndex, target) {
+    if (busySaving) return;
+    busySaving = true;
+    renderEditor();
+    try {
+      const saved = await requestJson(base() + "/reselections/" + current.id, {
+        method: "PUT",
+        body: {
+          title: current.title,
+          note: current.note || "",
+          contextRefs: current.contextRefs,
+          openQuestions: current.openQuestions,
+          candidates: current.candidates,
+          decision: current.decision,
+          revision: current.revision,
+        },
+      });
+      current = saved.reselection;
+      const candidate = current.candidates[candidateIndex];
+      if (!candidate) throw new Error("候选保存后丢失，请重试");
+      await requestJson(base() + "/reselections/" + current.id + "/draft", {
+        method: "POST",
+        body: { candidateId: candidate.id, target },
+      });
+      toast(target === "protocol" ? "已从候选建立方案草稿（在「研究方案」中查看）" : "已从候选建立假设草稿（在「想法与假设」中查看）");
+      await openRecord(current.id);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      busySaving = false;
+      renderEditor();
+    }
+  }
+
   function renderEditor() {
     const addContextRow = () => {
       const options = sourceOptions().filter((o) => !current.contextRefs.some((ref) => ref.kind === o.kind && ref.id === o.id));
@@ -186,30 +223,14 @@ export function reselectionSection({ projectId }) {
                 candidate.createdHypothesisId ? "已建假设草稿 " + candidate.createdHypothesisId : "已建方案草稿 " + candidate.createdProtocolId)
             : el("button", {
                 class: "tool-btn",
-                onclick: async () => {
-                  try {
-                    await requestJson(base() + "/reselections/" + current.id + "/draft", {
-                      method: "POST",
-                      body: { candidateId: candidate.id, target: "hypothesis" },
-                    });
-                    toast("已从候选建立假设草稿（在「想法与假设」中查看）");
-                    await openRecord(current.id);
-                  } catch (e) { toast(e.message, true); }
-                },
+                disabled: busySaving ? true : null,
+                onclick: async () => { await saveAndDraft(index, "hypothesis"); },
               }, "建立假设草稿"),
           !candidate.createdHypothesisId && !candidate.createdProtocolId
             ? el("button", {
                 class: "tool-btn",
-                onclick: async () => {
-                  try {
-                    await requestJson(base() + "/reselections/" + current.id + "/draft", {
-                      method: "POST",
-                      body: { candidateId: candidate.id, target: "protocol" },
-                    });
-                    toast("已从候选建立方案草稿（在「研究方案」中查看）");
-                    await openRecord(current.id);
-                  } catch (e) { toast(e.message, true); }
-                },
+                disabled: busySaving ? true : null,
+                onclick: async () => { await saveAndDraft(index, "protocol"); },
               }, "建立方案草稿")
             : null))));
 

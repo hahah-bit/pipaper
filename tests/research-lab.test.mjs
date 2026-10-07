@@ -60,3 +60,10 @@ test("F06：状态列中英文词表解析，未知状态显式标记", () => {
   const unknown = parseRunStatus("banana");
   assert.equal(unknown.known, false, "未知状态不静默回退");
 });
+
+test("F08：方案绑定标签区分冻结版本/草稿/未明确", async () => {
+  const { protocolBindingLabel } = await import("../src/features/research/lab.js");
+  assert.match(protocolBindingLabel({ kind: "frozen", index: 2, revision: 5 }), /绑定冻结版本 V2/);
+  assert.match(protocolBindingLabel({ kind: "draft", revision: 3 }), /引用方案草稿/);
+  assert.match(protocolBindingLabel(null), /未明确版本/);
+});
