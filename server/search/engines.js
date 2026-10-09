@@ -12,7 +12,9 @@ const UA = "PiPaper/0.5 (academic reader; local app)";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { DATA_DIR } from "../config.js";
+import { setTimeout as delay } from "node:timers/promises";
+import net from "node:net";
+import { DATA_DIR, getConfig } from "../config.js";
 import { rankResults } from "./readscore.js";
 
 // 随仓库分发的数据资产目录；DATA_DIR 为旧机回退路径
@@ -35,6 +37,16 @@ function metrics() {
   return metricsByIssn;
 }
 
+export function validatedJournalMetrics(record) {
+  // Some bundled catalog rows have shifted columns (e.g. q="1.336", sjr=0).
+  // These cannot establish either metric; do not infer a partition from a
+  // decimal or swap fields based on a guessed CSV layout.
+  const quartile = typeof record?.q === "number" ? record.q : /^[1-4]$/.test(String(record?.q || "")) ? Number(record.q) : null;
+  if (!Number.isInteger(quartile) || quartile < 1 || quartile > 4) return { sjr: null, quartile: null };
+  const sjr = typeof record.sjr === "number" && Number.isFinite(record.sjr) && record.sjr >= 0 ? record.sjr : null;
+  return { sjr, quartile: "Q" + quartile };
+}
+
 function enrich(r) {
   // attach journal partition (分区) + SJR impact metric by matching ISSNs
   const issns = (r.issns || []).map((i) => String(i).replace(/-/g, ""));
@@ -45,28 +57,32 @@ function enrich(r) {
       break;
     }
   }
-  if (m) {
-    r.sjr = m.sjr;
-    r.quartile = "Q" + m.q;
-  } else {
-    r.sjr = null;
-    r.quartile = null;
-  }
-  return r;
+  return Object.assign(r, validatedJournalMetrics(m));
 }
 
-async function jget(url, headers = {}) {
+function invalidResponse(source) {
+  return Object.assign(new Error(`${source} 返回无效检索响应，不能视为零篇论文`), { code: "EINVALIDRESPONSE" });
+}
+
+async function jget(url, headers = {}, { request = remote, signal } = {}) {
   let response;
-  try { response = await remote(String(url), { headers, timeoutMs: 20000 }); }
+  try { response = await request(String(url), { headers: { "User-Agent": UA, ...headers }, signal, timeoutMs: 20000 }); }
   catch (error) {
-    if (error.remoteStatus !== 429) throw error;
-    await new Promise(resolve => setTimeout(resolve, 1800));
-    response = await remote(String(url), { headers, timeoutMs: 20000 });
+    // A quota outage or long retry window cannot recover during this search.
+    if (error.remoteStatus !== 429 || error.quota || error.retryAfter > 2) throw error;
+    await delay(Math.max(1000, (error.retryAfter || 1.8) * 1000), undefined, { signal });
+    signal?.throwIfAborted();
+    response = await request(String(url), { headers: { "User-Agent": UA, ...headers }, signal, timeoutMs: 20000 });
   }
-  return JSON.parse(response.buffer.toString("utf8"));
+  try {
+    const value = JSON.parse(response.buffer.toString("utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw invalidResponse(new URL(url).hostname);
+    return value;
+  }
+  catch { throw invalidResponse(new URL(url).hostname); }
 }
 
-async function searchOpenAlex(q, o) {
+async function searchOpenAlex(q, o, sourceDef) {
   const filters = [];
   if (o.yearFrom) filters.push(`from_publication_date:${o.yearFrom}-01-01`);
   if (o.yearTo) filters.push(`to_publication_date:${o.yearTo}-12-31`);
@@ -74,13 +90,13 @@ async function searchOpenAlex(q, o) {
   const url = new URL("https://api.openalex.org/works");
   url.searchParams.set("search", q);
   url.searchParams.set("per-page", String(o.limit || 20));
-  // polite pool: unauthenticated but identifiable
-  url.searchParams.set("mailto", "pipaper@local");
+  const apiKey = sourceDef?.apiKey || o.env.OPENALEX_API_KEY || o.config().topicAnalysis?.openalexApiKey;
   if (filters.length) url.searchParams.set("filter", filters.join(","));
   if (o.sort === "citations") url.searchParams.set("sort", "cited_by_count:desc");
   if (o.sort === "year") url.searchParams.set("sort", "publication_date:desc");
-  const j = await jget(url);
-  return (j.results || []).map((w) => ({
+  const j = await jget(url, apiKey ? { Authorization: `Bearer ${apiKey}` } : {}, o);
+  if (!Array.isArray(j.results) || j.error) throw invalidResponse("OpenAlex");
+  return j.results.map((w) => ({
     id: "openalex:" + w.id,
     source: "openalex",
     title: w.title || w.display_name || "(无标题)",
@@ -92,14 +108,14 @@ async function searchOpenAlex(q, o) {
     issns: [w.primary_location?.source?.issn_l, ...((w.primary_location?.source?.issn || []).slice(0, 2))].filter(Boolean),
     citations: w.cited_by_count || 0,
     oa: !!w.open_access?.is_oa,
-    pdfUrl: w.best_oa_location?.pdf_url || w.best_oa_location?.landing_page_url || "",
+    pdfUrl: w.best_oa_location?.pdf_url || "",
     url: w.doi || w.id,
     abstract: openalexAbstract(w.abstract_inverted_index, 1500),
-    keywords: (w.concepts || []).slice(0, 5).map((c) => c.display_name),
+    keywords: (w.keywords?.length ? w.keywords : w.concepts || []).slice(0, 5).map((c) => c.display_name),
   }));
 }
 
-async function searchSemanticScholar(q, o) {
+async function searchSemanticScholar(q, o, sourceDef) {
   const url = new URL("https://api.semanticscholar.org/graph/v1/paper/search");
   url.searchParams.set("query", q);
   url.searchParams.set("limit", String(o.limit || 20));
@@ -108,17 +124,13 @@ async function searchSemanticScholar(q, o) {
     const range = `${o.yearFrom || ""}-${o.yearTo || ""}`;
     url.searchParams.set("year", range);
   }
-  // optional key: put {"id":"semanticscholar","apiKey":"..."} in data/search-sources.json
   const headers = {};
-  try {
-    const f = path.join(DATA_DIR, "search-sources.json");
-    if (fs.existsSync(f)) {
-      const s = (JSON.parse(fs.readFileSync(f, "utf8")) || []).find((x) => x.id === "semanticscholar" && x.apiKey);
-      if (s) headers["x-api-key"] = s.apiKey;
-    }
-  } catch {}
-  const j = await jget(url, headers);
-  return (j.data || []).map((p) => ({
+  const apiKey = sourceDef?.apiKey || o.env.SEMANTIC_SCHOLAR_API_KEY;
+  if (apiKey) headers["x-api-key"] = apiKey;
+  if (o.oa) url.searchParams.set("openAccessPdf", "");
+  const j = await jget(url, headers, o);
+  if (!Array.isArray(j.data) || j.error) throw invalidResponse("Semantic Scholar");
+  return j.data.map((p) => ({
     id: "s2:" + p.paperId,
     source: "semanticscholar",
     title: p.title || "(无标题)",
@@ -130,7 +142,7 @@ async function searchSemanticScholar(q, o) {
     citations: p.citationCount || 0,
     oa: !!p.openAccessPdf,
     pdfUrl: p.openAccessPdf?.url || "",
-    url: p.externalIds?.DOI ? "https://doi.org/" + p.externalIds.DOI : "",
+    url: p.externalIds?.DOI ? "https://doi.org/" + p.externalIds.DOI : `https://www.semanticscholar.org/paper/${p.paperId}`,
     abstract: (p.abstract || "").slice(0, 1500),
     keywords: (p.fieldsOfStudy || []).slice(0, 5),
   }));
@@ -146,14 +158,15 @@ async function searchArxiv(q, o) {
   // phrase match on title/abstract keeps relevance high for multi-word queries
   const quoted = `"${q.replace(/"/g, " ")}"`;
   const url = new URL("https://export.arxiv.org/api/query");
-  url.searchParams.set("search_query", `abs:${quoted} OR ti:${quoted}`);
+  const dateRange = o.yearFrom || o.yearTo ? ` AND submittedDate:[${o.yearFrom || "0000"}01010000 TO ${o.yearTo || "9999"}12312359]` : "";
+  url.searchParams.set("search_query", `(abs:${quoted} OR ti:${quoted})${dateRange}`);
   url.searchParams.set("max_results", String(o.limit || 20));
   url.searchParams.set("sortBy", o.sort === "year" ? "submittedDate" : "relevance");
-  const r = await scheduleArxiv(() => remote(url.href, { timeoutMs: 20000 }));
+  url.searchParams.set("sortOrder", "descending");
+  const r = await o.schedule(() => o.request(url.href.replaceAll("+", "%20"), { signal: o.signal, timeoutMs: 20000 }), o.signal);
   let items = parseAtom(r.buffer.toString("utf8"));
   if (o.yearFrom) items = items.filter((i) => i.year >= o.yearFrom);
   if (o.yearTo) items = items.filter((i) => i.year <= o.yearTo);
-  if (o.sort === "citations") items = items.slice().reverse();
   return items.map((i) => ({ ...i, source: "arxiv", oa: true, keywords: [] }));
 }
 
@@ -162,9 +175,17 @@ async function searchCrossref(q, o) {
   url.searchParams.set("query", q);
   url.searchParams.set("rows", String(o.limit || 20));
   url.searchParams.set("select", "DOI,title,author,issued,container-title,is-referenced-by-count,abstract,URL,subject,ISSN");
-  if (o.yearFrom) url.searchParams.set("filter", `from-pub-date:${o.yearFrom}-01-01`);
-  const j = await jget(url);
-  return (j.message?.items || []).map((w) => {
+  const filters = [];
+  if (o.yearFrom) filters.push(`from-pub-date:${o.yearFrom}-01-01`);
+  if (o.yearTo) filters.push(`until-pub-date:${o.yearTo}-12-31`);
+  if (filters.length) url.searchParams.set("filter", filters.join(","));
+  if (o.sort === "citations" || o.sort === "year") {
+    url.searchParams.set("sort", o.sort === "citations" ? "is-referenced-by-count" : "published");
+    url.searchParams.set("order", "desc");
+  }
+  const j = await jget(url, {}, o);
+  if (!Array.isArray(j.message?.items) || j.status === "failed") throw invalidResponse("Crossref");
+  return j.message.items.map((w) => {
     const year = w.issued?.["date-parts"]?.[0]?.[0] || null;
     return {
       id: "crossref:" + w.DOI,
@@ -188,10 +209,13 @@ async function searchCrossref(q, o) {
 
 async function searchPubMed(q, o) {
   const term = encodeURIComponent(q);
-  const esearch = await jget(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=${o.limit || 20}&term=${term}${o.yearFrom ? `&mindate=${o.yearFrom}&maxdate=${o.yearTo || "3000"}` : ""}`);
-  const ids = esearch.esearchresult?.idlist || [];
+  const dates = o.yearFrom || o.yearTo ? `&datetype=pdat&mindate=${o.yearFrom || "1000"}&maxdate=${o.yearTo || "3000"}` : "";
+  const esearch = await jget(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&retmode=json&retmax=${o.limit || 20}&term=${term}${dates}`, {}, o);
+  if (!Array.isArray(esearch.esearchresult?.idlist) || esearch.error) throw invalidResponse("PubMed");
+  const ids = esearch.esearchresult.idlist;
   if (!ids.length) return [];
-  const sum = await jget(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&retmode=json&id=${ids.join(",")}`);
+  const sum = await jget(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&retmode=json&id=${ids.join(",")}`, {}, o);
+  if (!sum.result || sum.error || ids.some(id => !sum.result[id]?.title)) throw invalidResponse("PubMed");
   return ids.map((id) => {
     const d = sum.result?.[id] || {};
     return {
@@ -213,6 +237,40 @@ async function searchPubMed(q, o) {
   });
 }
 
+function configuredLoopbackMirror(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" && !url.username && !url.password &&
+      (url.hostname === "localhost" || url.hostname === "[::1]" || (net.isIP(url.hostname) === 4 && url.hostname.startsWith("127.")));
+  } catch { return false; }
+}
+
+async function localMirrorRequest(url, { headers, signal, timeoutMs = 25000 } = {}) {
+  const origin = new URL(url).origin;
+  const bounded = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+  for (let redirect = 0; redirect <= 4; redirect++) {
+    const response = await fetch(url, { headers, signal: bounded, redirect: "manual" });
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      await response.body?.cancel();
+      const next = new URL(response.headers.get("location"), url);
+      if (next.origin !== origin) throw new Error("本地镜像不能重定向到其他来源");
+      url = next.href;
+      continue;
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw Object.assign(new Error(`本地镜像返回 HTTP ${response.status}`), { remoteStatus: response.status });
+    }
+    const chunks = []; let size = 0;
+    for await (const chunk of response.body) {
+      if ((size += chunk.length) > 2000000) throw new Error("本地镜像响应超过大小上限");
+      chunks.push(chunk);
+    }
+    return { buffer: Buffer.concat(chunks), url };
+  }
+  throw new Error("本地镜像重定向过多");
+}
+
 // Google Scholar via logged-in browser cookie. The user verifies the mirror
 // once in their browser, pastes the Cookie into the source config, and the
 // server-side fetch reuses that session. Without a cookie the gate blocks us —
@@ -221,17 +279,21 @@ async function searchScholarMirror(q, o, sourceDef) {
   const base = (sourceDef?.url || "https://sc.panda985.com").replace(/\/$/, "");
   const cookie = sourceDef?.cookie || "";
   const url = `${base}/scholar?hl=zh-CN&q=${encodeURIComponent(q)}${o.yearFrom ? `&as_ylo=${o.yearFrom}` : ""}${o.yearTo ? `&as_yhi=${o.yearTo}` : ""}`;
-  const r = await fetch(url, {
+  // Explicitly configured local HTTP scholar services keep their existing
+  // supported capability; arbitrary downloads cannot use this local exception.
+  const request = configuredLoopbackMirror(sourceDef?.url) ? localMirrorRequest : o.request;
+  const r = await request(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36",
       ...(cookie ? { Cookie: cookie } : {}),
     },
-    signal: AbortSignal.timeout(25000),
+    signal: o.signal, timeoutMs: 25000,
   });
-  const html = await r.text();
-  if (r.status !== 200 || html.includes("verify_gate") || html.includes("Redirecting")) {
+  const html = r.buffer.toString("utf8");
+  if (html.includes("verify_gate") || html.includes("Redirecting") || /captcha|unusual traffic/i.test(html)) {
     throw new Error("镜像需要浏览器验证 — 在浏览器打开一次该镜像并过验证后，把 Cookie 粘贴到检索源配置里（或直接用对话让 agent 走已登录浏览器检索）");
   }
+  if (!/\bgs_(?:r|res_ccl|top|abe)\b/.test(html)) throw invalidResponse("Google 学术镜像");
   const results = [];
   // scholar result blocks: <div class="gs_r gs_or gs_scl" ...> ... </div> up to next block
   const blocks = html.split(/<div class="gs_r(?=[\s"])/).slice(1);
@@ -268,14 +330,12 @@ async function searchScholarMirror(q, o, sourceDef) {
   return results;
 }
 
-export const ADAPTERS = {
-  openalex: searchOpenAlex,
-  semanticscholar: searchSemanticScholar,
-  arxiv: searchArxiv,
-  crossref: searchCrossref,
-  pubmed: searchPubMed,
-  "scholar-mirror": (q, o, sourceDef) => searchScholarMirror(q, o, sourceDef),
-};
+export function createSearchAdapters({ request = remote, config = getConfig, env = process.env, schedule = scheduleArxiv } = {}) {
+  return Object.fromEntries(Object.entries({ openalex: searchOpenAlex, semanticscholar: searchSemanticScholar,
+    arxiv: searchArxiv, crossref: searchCrossref, pubmed: searchPubMed, "scholar-mirror": searchScholarMirror })
+    .map(([type, adapter]) => [type, (q, options = {}, sourceDef) => adapter(q, { ...options, request, config, env, schedule }, sourceDef)]));
+}
+export const ADAPTERS = createSearchAdapters();
 
 // Built-in source registry. Users can add/edit sources in
 // data/search-sources.json (UI editor); type must be one of ADAPTERS keys,
@@ -295,12 +355,13 @@ export const DEFAULT_SOURCES = [
 export function dedupe(results) {
   const byKey = new Map();
   for (const r of results) {
-    const key = r.doi ? "doi:" + r.doi : "title:" + normDoi(r.title).slice(0, 60);
+    const key = r.doi ? "doi:" + normDoi(r.doi) : "title:" + String(r.title || "").toLowerCase().replace(/\s+/g, " ").trim();
     const prev = byKey.get(key);
     if (!prev) byKey.set(key, { ...r, sources: [r.source] });
     else {
-      prev.sources.push(r.source);
+      if (!prev.sources.includes(r.source)) prev.sources.push(r.source);
       if (!prev.pdfUrl && r.pdfUrl) prev.pdfUrl = r.pdfUrl;
+      if (r.oa) prev.oa = true;
       if (!prev.abstract && r.abstract) prev.abstract = r.abstract;
       if ((r.citations || 0) > (prev.citations || 0)) prev.citations = r.citations;
       if (!prev.venue && r.venue) prev.venue = r.venue;
@@ -309,22 +370,54 @@ export function dedupe(results) {
   return [...byKey.values()];
 }
 
-export async function aggregateSearch(q, { sources, yearFrom, yearTo, oa, sort, limit, quartile, projectId, anchorPaperId } = {}) {
-  let sourceDefs;
+export function readSearchSources() {
   try {
     const f = path.join(DATA_DIR, "search-sources.json");
-    sourceDefs = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null;
+    const value = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : null;
+    if (Array.isArray(value)) return value.filter(s => s && typeof s.id === "string" && typeof s.type === "string");
   } catch {}
-  if (!sourceDefs) sourceDefs = DEFAULT_SOURCES;
-  const use = (sources && sources.length ? sources : sourceDefs.filter((s) => s.enabled && s.type !== "unavailable").map((s) => s.id)).slice(0, 8);
-  const opts = { yearFrom: yearFrom && Number(yearFrom), yearTo: yearTo && Number(yearTo), oa: !!oa, sort, limit: limit || 15 };
+  return DEFAULT_SOURCES;
+}
+
+function searchFailure(error, def) {
+  const message = String(error?.message || error).slice(0, 300);
+  let code = "unknown", action = "请稍后重试，或选择其他检索源。";
+  if (error?.quota) { code = "quota"; action = "该来源的当日配额已用尽；请配置 API 密钥或等待配额恢复，其他来源仍可检索。"; }
+  else if (error?.remoteStatus === 429) { code = "rate_limited"; action = "该来源暂时限流；请稍后重试或在检索源设置中配置 API 密钥，其他来源仍可检索。"; }
+  else if ([401, 403].includes(error?.remoteStatus)) { code = "auth"; action = "请检查该来源的 API 密钥或 Cookie，也可选择其他公开检索源。"; }
+  else if (error?.code === "EUNSUPPORTED") { code = "unsupported"; action = "该来源没有可用检索适配器；请选择 OpenAlex、arXiv、Crossref 或其他支持的来源。"; }
+  else if (error?.code === "EINVALIDRESPONSE" || /Atom|无效.*响应|浏览器验证/.test(message)) { code = "invalid_response"; action = "来源可能返回验证或拦截页；镜像需要浏览器验证并配置 Cookie，也可使用其他公开来源。"; }
+  else if (error?.code === "EPROXY" || /代理|内部网络/.test(message)) { code = "proxy"; action = "请检查系统代理或 PIPAPER_HTTPS_PROXY；自定义资料来源必须解析到公开地址。"; }
+  else if (error?.code === "ETIMEDOUT" || /超时/.test(message)) { code = "timeout"; action = "来源连接超时；请检查代理连接，或暂时切换其他来源。"; }
+  else if (/ECONN|ENOTFOUND|EAI_AGAIN|TLS|CERT/.test(error?.code || "")) { code = "network"; action = "请检查网络与系统代理，或暂时切换其他来源。"; }
+  return { id: def.id, name: def.name || def.id, type: def.type || def.id, status: "error", count: 0,
+    message, code, action, ...(error?.remoteStatus ? { remoteStatus: error.remoteStatus } : {}) };
+}
+
+export async function aggregateSearch(q, { sources, yearFrom, yearTo, oa, sort, limit, quartile, projectId, anchorPaperId, signal } = {}, { adapters = ADAPTERS, sourceDefs = readSearchSources() } = {}) {
+  const selected = Array.isArray(sources) ? sources : sourceDefs.filter(s => s.enabled && s.type !== "unavailable").map(s => s.id);
+  const use = [...new Set(selected.map(id => String(id).trim()).filter(Boolean))].slice(0, 8);
+  const opts = { yearFrom: yearFrom && Number(yearFrom), yearTo: yearTo && Number(yearTo), oa: !!oa, sort,
+    limit: Math.max(1, Math.min(50, Math.floor(Number(limit) || 15))), signal };
+  const sourceStatus = [];
   const settled = await Promise.allSettled(use.map(async (id) => {
-    const def = sourceDefs.find((s) => s.id === id) || DEFAULT_SOURCES.find((s) => s.id === id);
+    const def = sourceDefs.find((s) => s.id === id) || DEFAULT_SOURCES.find((s) => s.id === id) || { id, type: id };
     const type = def?.type || id;
-    const adapter = ADAPTERS[type];
-    if (!adapter) return [];
-    return adapter(q, opts, def);
+    const adapter = adapters[type], started = Date.now();
+    try {
+      signal?.throwIfAborted();
+      if (!adapter) throw Object.assign(new Error(`${def.name || id} 暂不支持自动检索`), { code: "EUNSUPPORTED" });
+      const items = await adapter(q, opts, def);
+      if (!Array.isArray(items)) throw invalidResponse(def.name || id);
+      sourceStatus.push({ id, name: def.name || id, type, status: "ok", count: items.length, elapsedMs: Date.now() - started });
+      return items;
+    } catch (error) {
+      sourceStatus.push({ ...searchFailure(error, def), elapsedMs: Date.now() - started });
+      throw error;
+    }
   }));
+  signal?.throwIfAborted();
+  sourceStatus.sort((a, b) => use.indexOf(a.id) - use.indexOf(b.id));
   const results = [];
   const errors = [];
   settled.forEach((s, i) => {
@@ -332,6 +425,9 @@ export async function aggregateSearch(q, { sources, yearFrom, yearTo, oa, sort, 
     else errors.push(`${use[i]}: ${String(s.reason?.message || s.reason).slice(0, 100)}`);
   });
   let merged = dedupe(results).map(enrich);
+  if (opts.yearFrom) merged = merged.filter(r => Number(r.year) >= opts.yearFrom);
+  if (opts.yearTo) merged = merged.filter(r => r.year != null && Number(r.year) <= opts.yearTo);
+  if (opts.oa) merged = merged.filter(r => r.oa);
   // quartile 区间过滤：Q1=仅Q1，Q2=Q1–Q2 …，Q4=有分区（排除 arXiv/未知分区来源）
   if (quartile) {
     const rank = { Q1: 1, Q2: 2, Q3: 3, Q4: 4 };
@@ -343,7 +439,9 @@ export async function aggregateSearch(q, { sources, yearFrom, yearTo, oa, sort, 
   if (sort === "citations") merged.sort((a, b) => (b.citations || 0) - (a.citations || 0));
   else if (sort === "year") merged.sort((a, b) => (b.year || 0) - (a.year || 0));
   else if (sort === "if") merged.sort((a, b) => (b.sjr ?? -1) - (a.sjr ?? -1)); // 无分区/IF 的自然排到最后
-  return { results: merged.slice(0, 60), total: merged.length, errors, sourcesUsed: use };
+  const successes = sourceStatus.filter(s => s.status === "ok").length;
+  const status = !use.length ? "no_sources" : !errors.length ? "ok" : successes ? "partial" : "error";
+  return { results: merged.slice(0, 60), total: merged.length, errors, sourcesUsed: use, sourceStatus, status };
 }
 
 // quality tier heuristic (open data only — no JCR): citations drive the tier

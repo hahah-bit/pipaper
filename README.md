@@ -157,6 +157,8 @@ Pi 对话可通过 `search_knowledge` 和 `get_knowledge_element` 使用相同�
 | [Archify](https://github.com/tt-a1i/archify) | 交互架构、流程、时序、数据流与状态图 |
 | 学术检索服务凭据 | 可选 OpenAlex / Semantic Scholar 密钥，在设置配置 |
 
+学术检索支持结合当前项目研究档案与 RAG 原文证据，为论文显示研究匹配分及「找创新点 / 改模块 / 选题必读 / 背景参考」用途建议，可按用途筛选、手工修改待读分类，并在导入项目后保留分类。各来源分别显示健康状态，全部来源失败会明确报告故障。用法与接口见 [学术搜索与当前研究匹配](docs/academic-research-search.md)。
+
 应用内容与状态主要保存在本机；云端解析、模型和向量 API 调用会将对应输入发送给所配置的服务。Pi 认证保存在 `~/.pi/agent/`，应用配置与百炼本地凭据保存在 `data/`。默认 `data/`、`knowledge/`、本地 `library/*.pdf` 与构建包已被 Git 忽略。
 
 ## 代码结构

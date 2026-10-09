@@ -1,14 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR } from "../../config.js";
-import { importPdfFile, updateProject } from "../../store.js";
+import { importPdfFile, updateProject, upsertPaper, getProject } from "../../store.js";
 import { paperWithParseStatus } from "../../parser/index.js";
 import { aggregateSearch, DEFAULT_SOURCES, tierOf } from "../../search/engines.js";
-import { toreadAdd, toreadList, toreadDelete } from "../../toread.js";
+import { toreadAdd, toreadList, toreadDelete, toreadUpdate } from "../../toread.js";
 import { writeFile as managedWrite } from "../../storage/files.js";
+import { enrichResearchResults } from "../../search/research-match.js";
+import { pickResearchMatch } from "../../search/literature-purpose.js";
+import { normalizePurposeCategories } from "../../../shared/literature-purpose.js";
+import { remote } from "../../platform/academic/transport.js";
 const UA = "PiPaper/0.5 (academic reader; local app)";
 
-export function registerAcademicRoutes(api) {
+export function registerAcademicRoutes(api, services = {}) {
   // ---- academic search ----
   // 检索源凭证（apiKey/cookie）与 config 密钥同机制：出接口一律掩码，
   // 写回时含 *** 的值还原为已存值，空串表示清除。
@@ -69,7 +73,7 @@ export function registerAcademicRoutes(api) {
     }
     let def;
     const lower = u.toLowerCase();
-    if (lower.includes("panda985") || lower.includes("scholar")) {
+    if ((lower.includes("panda985") || lower.includes("scholar")) && !lower.includes("semanticscholar")) {
       def = {
         id: "scholar-" + Date.now().toString(36),
         name: "Google 学术（自定义镜像）",
@@ -79,13 +83,16 @@ export function registerAcademicRoutes(api) {
         note: cookie ? "已配置 Cookie" : "未配 Cookie — 浏览器过一次验证后把 Cookie 粘贴进来",
       };
       if (cookie) def.cookie = cookie.trim();
-    } else if (lower.includes("semanticscholar")) {
-      const existing = sources.find((x) => x.id === "semanticscholar");
+    } else if (lower.includes("semanticscholar") || lower.includes("openalex")) {
+      const id = lower.includes("openalex") ? "openalex" : "semanticscholar";
+      const name = id === "openalex" ? "OpenAlex" : "Semantic Scholar";
+      const existing = sources.find((x) => x.id === id);
       if (existing) {
         if (apiKey) existing.apiKey = apiKey.trim();
+        existing.enabled = true;
         def = existing;
       } else {
-        def = { id: "semanticscholar", name: "Semantic Scholar", type: "semanticscholar", enabled: true, note: apiKey ? "已配置 apiKey" : "开放（限速）" };
+        def = { id, name, type: id, enabled: true, note: apiKey ? "已配置 apiKey" : "开放（限速）" };
         if (apiKey) def.apiKey = apiKey.trim();
         sources.push(def);
       }
@@ -113,6 +120,7 @@ export function registerAcademicRoutes(api) {
   api.get("/search", async (req, res) => {
     const q = String(req.query.q || "").trim();
     if (!q) return res.json({ results: [], total: 0, errors: [] });
+    if (Buffer.byteLength(q) > 8192) return res.status(400).json({ error: "检索词过长" });
     let sources;
     try {
       const f = path.join(DATA_DIR, "search-sources.json");
@@ -123,38 +131,79 @@ export function registerAcademicRoutes(api) {
       .map((s) => s.trim())
       .filter(Boolean);
     try {
-      const r = await aggregateSearch(q, {
-        sources: requestedSources.length ? requestedSources : sources,
+      const projectId = req.query.projectId ? String(req.query.projectId) : undefined;
+      if (projectId && !getProject(projectId)) return res.status(404).json({ error: "项目不存在" });
+      const controller = new AbortController();
+      const abort = () => { if (!res.writableEnded) controller.abort(); };
+      res.once("close", abort);
+      const r = await (services.aggregateSearch || aggregateSearch)(q, {
+        sources: Object.hasOwn(req.query, "sources") ? requestedSources : sources,
         yearFrom: req.query.yearFrom,
         yearTo: req.query.yearTo,
         oa: req.query.oa === "1",
-        sort: req.query.sort,
+        sort: req.query.sort === "research" ? "recommended" : req.query.sort,
         quartile: req.query.quartile,
-        projectId: req.query.projectId,
+        projectId,
         anchorPaperId: req.query.anchor,
-        limit: Number(req.query.limit || 15),
+        limit: Math.max(1, Math.min(60, Math.floor(Number(req.query.limit) || 15))),
+        signal: controller.signal,
       });
+      if (req.query.research !== "0") {
+        try {
+          const enriched = await (services.enrichResearchResults || enrichResearchResults)(r.results, q, {
+            projectId, anchorPaperId: req.query.anchor, signal: controller.signal,
+          });
+          r.results = enriched.results;
+          r.researchContext = enriched.researchContext;
+        } catch (error) {
+          controller.signal.throwIfAborted();
+          r.researchContext = { enabled: true, projectId: projectId || null, status: "unavailable",
+            warnings: ["研究匹配暂不可用，请查看研究档案与知识库状态"], reason: "研究匹配暂不可用" };
+        }
+      } else {
+        r.researchContext = { enabled: false, projectId: projectId || null, status: "disabled" };
+      }
+      if (req.query.sort === "research") r.results.sort((a, b) =>
+        (Number(b.researchMatch?.score) || 0) - (Number(a.researchMatch?.score) || 0) ||
+        (Number(b.readScore) || 0) - (Number(a.readScore) || 0));
       r.results = r.results.map((x) => ({ ...x, tier: tierOf(x) }));
       res.json({ ...r, sources: sources || null });
     } catch (e) {
-      res.status(502).json({ error: String(e.message || e) });
+      if (!res.destroyed) res.status(e.status || 502).json({ error: String(e.message || e) });
     }
   });
 
   // import a search result: download the OA pdf and manage it like any import
   api.post("/search/import", async (req, res) => {
-    const { pdfUrl, title, projectId } = req.body || {};
+    const { pdfUrl, title, projectId, researchMatch, purposeCategories } = req.body || {};
     if (!pdfUrl) return res.status(400).json({ error: "该结果没有可下载的 PDF（非开放获取）" });
     try {
-      const r = await fetch(pdfUrl, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(120000), redirect: "follow" });
-      if (!r.ok) throw new Error("下载失败 HTTP " + r.status);
-      const buf = Buffer.from(await r.arrayBuffer());
+      if (projectId && !getProject(projectId)) return res.status(404).json({ error: "项目不存在" });
+      const purposes = purposeCategories == null ? undefined : normalizePurposeCategories(purposeCategories);
+      const response = await (services.remote || remote)(pdfUrl, { headers: { "User-Agent": UA }, timeoutMs: 120000, maxBytes: 100 * 1024 * 1024 });
+      if (projectId && !getProject(projectId)) return res.status(404).json({ error: "下载期间项目已删除，文献尚未导入" });
+      const buf = response.buffer;
       if (buf.length < 10000 || buf[0] !== 0x25) throw new Error("下载内容不是有效 PDF（可能被出版社拦截）");
       const { paper, reused } = importPdfFile((title || "paper") + ".pdf", buf);
+      const incomingMatch = pickResearchMatch(researchMatch);
+      // A reading-list snapshot can belong to a different project. Preserve its
+      // provenance instead of relabelling that project's evidence as this one's.
+      const match = incomingMatch && incomingMatch.projectId === (projectId || "") ? incomingMatch : null;
+      if (match || purposes !== undefined) {
+        const contextKey = projectId || "library";
+        const previous = paper.literatureContexts?.[contextKey] || {};
+        paper.literatureContexts = { ...paper.literatureContexts, [contextKey]: {
+          ...previous,
+          ...(match ? { researchMatch: match } : {}),
+          ...(purposes !== undefined ? { purposeCategories: purposes } : {}),
+          savedAt: new Date().toISOString(),
+        } };
+        upsertPaper(paper);
+      }
       if (projectId) updateProject(projectId, { addPaper: paper.id });
-      res.json({ ...paperWithParseStatus(paper), reused, imported: true });
+      res.json({ ...paperWithParseStatus(paper), reused, imported: true, matchDiscarded: !!incomingMatch && !match });
     } catch (e) {
-      res.status(502).json({ error: String(e.message || e).slice(0, 200) });
+      res.status(e.status || 502).json({ error: String(e.message || e).slice(0, 200) });
     }
   });
 
@@ -164,9 +213,18 @@ export function registerAcademicRoutes(api) {
   });
 
   api.post("/search/toread", (req, res) => {
-    const r = toreadAdd(req.body || {});
-    if (!r.ok) return res.status(400).json({ error: r.reason || "无效条目" });
-    res.json({ ok: true, entry: r.entry, dup: r.dup });
+    try {
+      const r = toreadAdd(req.body || {});
+      if (!r.ok) return res.status(400).json({ error: r.reason || "无效条目" });
+      res.json({ ok: true, entry: r.entry, dup: r.dup });
+    } catch (error) {
+      res.status(error.status || 400).json({ error: error.message });
+    }
+  });
+
+  api.patch("/search/toread/:id", (req, res) => {
+    try { res.json({ ok: true, entry: toreadUpdate(req.params.id, req.body || {}) }); }
+    catch (error) { res.status(error.status || 400).json({ error: error.message }); }
   });
 
   api.delete("/search/toread/:id", (req, res) => {

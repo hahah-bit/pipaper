@@ -14,18 +14,55 @@ export function privateAddress(address) {
   // Use public IPv4 DNS answers for document retrieval; IPv6 literals are rejected.
   return true;
 }
+const fakeAddress = address => net.isIP(address) === 4 && /^198\.(18|19)\./.test(address);
+const DOH_RESOLVERS = ["https://1.1.1.1/dns-query", "https://1.0.0.1/dns-query"];
+
+async function resolvePublicAddress(hostname, signal) {
+  let lastError;
+  for (const endpoint of DOH_RESOLVERS) {
+    signal?.throwIfAborted();
+    let response;
+    try {
+      const query = new URL(endpoint); query.searchParams.set("name", hostname); query.searchParams.set("type", "A");
+      // Literal resolver addresses never enter fake-IP resolution. Keep the
+      // original request's signal/deadline, and forbid resolver redirects.
+      response = await remoteRequest(query.href, { signal, maxBytes: 64000, redirectsAllowed: false, headers: { Accept: "application/dns-json" } });
+    } catch (error) { signal?.throwIfAborted(); lastError = error; continue; }
+    let answer;
+    try { answer = JSON.parse(response.buffer.toString("utf8")); }
+    catch { lastError = fault("公开 DNS 返回无效响应", 502); continue; }
+    if (answer.Status !== 0 || !Array.isArray(answer.Answer)) {
+      lastError = fault(`${hostname} 没有可验证的公开 IPv4 记录`, 502); continue;
+    }
+    const addresses = answer.Answer.filter(record => record.type === 1).map(record => ({ address: String(record.data || ""), family: 4 }));
+    if (!addresses.length) { lastError = fault(`${hostname} 没有可验证的公开 IPv4 记录`, 502); continue; }
+    // Reject the complete response if any A record is private or malformed;
+    // never select only its public subset or retry a different resolver to bypass it.
+    if (addresses.some(record => privateAddress(record.address))) throw fault("资料来源不能指向本机或内部网络（公开 DNS 核验未通过）");
+    return [...new Map(addresses.map(record => [record.address, record])).values()];
+  }
+  throw fault(`${hostname} 公开 DNS 核验失败：${lastError?.message || "没有可验证的 IPv4 记录"}`, 502);
+}
 export async function remote(url, options = {}) {
   return withDeadline(signal => remoteRequest(url, { ...options, signal }), {
     signal: options.signal, ms: options.timeoutMs || 35000, message: `${new URL(url).hostname} 请求超时（含 DNS、连接和下载）`,
   });
 }
-async function remoteRequest(url, { signal, maxBytes = 18000000, redirects = 0, method = "GET", headers = {} } = {}) {
+async function remoteRequest(url, { signal, maxBytes = 18000000, redirects = 0, method = "GET", headers = {}, redirectsAllowed = true } = {}) {
   const clean = safeURL(url); if (!clean || redirects > 4) throw fault("仅支持公开 HTTPS 来源，或重定向过多");
   signal?.throwIfAborted(); const u = new URL(clean);
-  const addresses = net.isIP(u.hostname) ? [{ address: u.hostname, family: 4 }] : await dns.lookup(u.hostname, { all: true, family: 4 });
+  const proxy = proxyFor(clean);
+  // Proxy clients such as Clash may return 198.18/15 fake-IP answers locally.
+  // Fixed academic API hosts use CONNECT hostname resolution at the configured
+  // proxy; arbitrary document/mirror hosts require a verified public address.
+  const proxyDNS = !!proxy && proxyDNSHosts.has(u.hostname);
+  let addresses = proxyDNS ? [] : net.isIP(u.hostname) ? [{ address: u.hostname, family: 4 }] : await dns.lookup(u.hostname, { all: true, family: 4 });
+  if (!proxyDNS && proxy && !net.isIP(u.hostname) && addresses.length && addresses.every(record => fakeAddress(record.address))) {
+    addresses = await resolvePublicAddress(u.hostname, signal);
+  }
   signal?.throwIfAborted();
-  if (!addresses.length || addresses.some(a => privateAddress(a.address))) throw fault("资料来源不能指向本机或内部网络");
-  const proxy = proxyFor(clean), agent = proxy ? tunnelAgent(proxy, proxyDNSHosts.has(u.hostname) ? u.hostname : addresses[0].address, signal) : null;
+  if (!proxyDNS && (!addresses.length || addresses.some(a => privateAddress(a.address)))) throw fault("资料来源不能指向本机或内部网络");
+  const agent = proxy ? tunnelAgent(proxy, proxyDNS ? u.hostname : addresses[0].address, signal) : null;
   // Direct connections can try every validated IPv4 address instead of pinning
   // the first failing address forever. Redirects receive the same validation.
   let result;
@@ -55,5 +92,10 @@ async function remoteRequest(url, { signal, maxBytes = 18000000, redirects = 0, 
       }); res.on("error", reject);
     }); req.on("error", reject); req.end();
   }); } finally { agent?.destroy(); }
-  return result.redirect ? remoteRequest(result.redirect, { signal, maxBytes, redirects: redirects + 1, method, headers }) : result;
+  if (!result.redirect) return result;
+  if (!redirectsAllowed) throw fault("公开 DNS 核验不允许重定向", 502);
+  const nextHeaders = new URL(result.redirect).origin === u.origin ? headers : Object.fromEntries(
+    Object.entries(headers).filter(([name]) => !/^(authorization|cookie|proxy-authorization)$/i.test(name)),
+  );
+  return remoteRequest(result.redirect, { signal, maxBytes, redirects: redirects + 1, method, headers: nextHeaders, redirectsAllowed });
 }

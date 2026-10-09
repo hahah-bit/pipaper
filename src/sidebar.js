@@ -3,6 +3,7 @@ import { api } from "./platform/api.js";
 import { state } from "./shell/state.js";
 import { $, el, toast, askText, askConfirm } from "./platform/dom.js";
 import { updateZoteroFoot } from "./features/library/status.js";
+import { LITERATURE_PURPOSES } from "../shared/literature-purpose.js";
 
 let activeCollection = null; // collection id or null = all
 let searchQ = "";
@@ -212,6 +213,11 @@ export function renderPapers() {
         }, inProject ? "✓" : "📁")
     );
     if (p.ingestion?.generationId) item.append(el("div", { class: "paper-knowledge-state", title: "入库、重建与待核对处理请打开右侧「资料」" }, p.ingestion.stale ? "知识库待更新" : p.ingestion.coverage?.partial ? "部分入库 · 待核对" : "已入库"));
+    const context = p.literatureContexts?.[state.projectId || "library"];
+    const purposes = context?.purposeCategories?.length ? context.purposeCategories :
+      (context?.researchMatch?.categories || []).map(category => category.id);
+    const purposeText = (purposes || []).map(id => LITERATURE_PURPOSES.find(value => value.id === id)?.label).filter(Boolean).join(" · ");
+    if (purposeText) item.append(el("div", { class: "paper-knowledge-state", title: context?.purposeCategories?.length ? "手工文献用途分类" : "用途建议，结合原文确认" }, purposeText));
     wrap.append(item);
   }
 }

@@ -7,8 +7,8 @@
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 <link rel="stylesheet" href="/vendor/dockview.css" />
 <link rel="stylesheet" href="/study.css" />
-<link rel="stylesheet" href="/style.css?v=461c16c188" />
-<link rel="stylesheet" href="/theme.css?v=461c16c188" />
+<link rel="stylesheet" href="/style.css?v=a6da7bd533" />
+<link rel="stylesheet" href="/theme.css?v=a6da7bd533" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -176,6 +176,7 @@
           <input id="sch-year-to" type="number" placeholder="年份≤" style="width:70px" />
           <select id="sch-sort">
             <option value="recommended">综合推荐 (ReadScore)</option>
+            <option value="research">当前研究匹配</option>
             <option value="local">与本地最相关</option>
             <option value="relevance">按相关度(源排序)</option>
             <option value="if">按影响因子(SJR)</option>
@@ -183,6 +184,18 @@
             <option value="year">按年份</option>
           </select>
         </div>
+        <div class="sch-row sch-research-controls">
+          <label class="sch-oa" title="结合当前项目研究档案与知识库证据，推荐文献的阅读用途"><input id="sch-research" type="checkbox" />匹配当前研究 + RAG</label>
+          <select id="sch-purpose" aria-label="筛选文献用途" title="按阅读用途建议筛选这批结果">
+            <option value="">全部用途</option>
+            <option value="innovation">找创新点</option>
+            <option value="module">改模块</option>
+            <option value="topic">选题必读</option>
+            <option value="background">背景参考</option>
+          </select>
+        </div>
+        <div id="sch-research-context" class="sch-research-context" aria-live="polite"></div>
+        <p class="sch-purpose-note">用途是阅读建议；创新点和模块改动仍需精读与实验验证。</p>
         <div class="sch-row">
           <select id="sch-quartile" style="flex:1" title="检索前按 SJR 分区过滤（依据期刊 ISSN 匹配；arXiv/无分区来源会被排除）">
             <option value="">全部分区</option>
@@ -197,10 +210,14 @@
           <div id="sch-sources" class="sch-sources"></div>
           <button id="btn-sch-sources" class="icon-btn" title="编辑检索源">⚙</button>
         </div>
-        <button id="btn-search" class="tool-btn primary" style="width:100%">🔍 检索</button>
+        <div class="sch-search-actions">
+          <button id="btn-search" class="tool-btn primary">🔍 检索</button>
+          <button id="btn-sch-cancel" class="tool-btn" hidden>取消</button>
+        </div>
         <div id="sch-toread" class="sch-toread"></div>
-        <div id="sch-status" class="res-note"></div>
-        <div id="sch-results"></div>
+        <div id="sch-status" class="res-note" role="status" aria-live="polite"></div>
+        <div id="sch-result-count" class="res-note"></div>
+        <div id="sch-results" aria-busy="false"></div>
       </div>
     </div>
     <div id="stab-video" class="stab" hidden>
@@ -362,6 +379,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=461c16c188"></script>
+<script src="/app.js?v=a6da7bd533"></script>
 </body>
 </html>

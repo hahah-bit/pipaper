@@ -140,6 +140,31 @@ input, select, textarea { font-family: inherit; }
 .sr-actions { display: flex; gap: 6px; margin-top: 6px; align-items: center; }
 .sr-actions .tool-btn { font-size: 11.5px; padding: 3px 8px; color: var(--fg1); text-decoration: none; }
 .sr-src { margin-left: auto; font-size: 10.5px; color: var(--fg2); }
+.sch-search-actions { display: flex; gap: 6px; }
+.sch-search-actions #btn-search { flex: 1; }
+.sch-research-controls { margin-top: 5px; justify-content: space-between; }
+.sch-research-context { padding: 7px 9px; margin: 5px 0; border: 1px solid var(--border); border-radius: 8px; color: var(--fg2); background: var(--bg2); font-size: 11.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.sch-research-context > span { margin-right: 5px; }
+.sch-research-question { color: var(--fg1); }
+.sch-question-source { display: block; font-size: 10.5px; color: var(--fg2); }
+.sch-research-warning, .sr-match-low { color: var(--warn); font-size: 10.5px; }
+.sch-purpose-note { color: var(--fg2); font-size: 10.5px; line-height: 1.5; margin: 4px 1px 7px; }
+button.sr-abs-toggle { border: 0; background: none; padding: 2px 0; font-size: 11px; color: var(--accent); cursor: pointer; }
+button.sch-research-link { margin-left: 5px; }
+.sr-research { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--border); }
+.sr-purpose-row { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.sr-purpose { font-size: 10.5px; color: var(--accent); border: 1px solid var(--accent); padding: 0 5px; border-radius: 5px; }
+.sr-research-score { color: var(--fg1); font-size: 11px; font-weight: 600; }
+.sr-research-details { margin-top: 5px; color: var(--fg2); font-size: 11.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.sr-research-details > summary, .sch-source-diagnostics > summary { cursor: pointer; color: var(--accent); }
+.sr-match-basis { margin-top: 4px; }
+.sr-research-evidence { margin: 6px 0; padding: 5px 8px; border-left: 2px solid var(--accent); background: var(--bg2); border-radius: 0 5px 5px 0; }
+.sr-research-evidence cite { font-style: normal; color: var(--fg1); font-size: 10.5px; }
+.sr-research-evidence p { margin: 4px 0 0; white-space: pre-wrap; }
+.sch-source-diagnostics { margin: 7px 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; color: var(--fg2); font-size: 11.5px; line-height: 1.6; overflow-wrap: anywhere; }
+.sch-source-diagnostics > div { padding-top: 5px; }
+.sch-source-diagnostics p { margin: 2px 0; color: var(--fg1); }
+.sch-source-error { color: var(--err); }
 
 /* ReadScore 评分行 */
 .sr-scorerow { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin-bottom: 5px; }
@@ -164,6 +189,7 @@ input, select, textarea { font-family: inherit; }
 .tr-actions { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; }
 .tr-actions .tool-btn { font-size: 11px; padding: 2px 7px; color: var(--fg1); text-decoration: none; }
 .tr-actions .tool-btn.primary { color: var(--fg0); }
+.tr-purpose-select { min-width: 0; max-width: 180px; padding: 2px 5px; font-size: 11px; color: var(--fg1); background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; }
 .tr-empty { margin: 6px 2px; }
 
 /* ================= Dock（macOS dock 式功能导航）+ 抽屉 ================= */

@@ -1,6 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 import tls from "node:tls";
+import net from "node:net";
 import { execFileSync } from "node:child_process";
 import { gunzip, inflate, brotliDecompress } from "node:zlib";
 import { promisify } from "node:util";
@@ -58,7 +59,7 @@ export function proxyFor(url, { env = process.env, system = systemProxy } = {}) 
 
 // Only fixed, built-in scholarly endpoints may use the trusted proxy's DNS.
 // Arbitrary document hosts still connect to locally validated public IPs.
-export const proxyDNSHosts = new Set(["api.openalex.org", "api.crossref.org", "export.arxiv.org", "arxiv.org", "api.github.com", "api2.openreview.net"]);
+export const proxyDNSHosts = new Set(["api.openalex.org", "api.semanticscholar.org", "eutils.ncbi.nlm.nih.gov", "api.crossref.org", "export.arxiv.org", "arxiv.org", "api.github.com", "api2.openreview.net"]);
 
 export function tunnelAgent(proxy, target, signal) {
   const agent = new https.Agent({ keepAlive: false });
@@ -75,7 +76,8 @@ export function tunnelAgent(proxy, target, signal) {
       socket = raw;
       if (res.statusCode !== 200) { raw.destroy(); signal.removeEventListener("abort", abort); done(Object.assign(new Error(`检索代理 CONNECT 返回 HTTP ${res.statusCode}`), { code: "EPROXY" })); return; }
       if (head.length) raw.unshift(head);
-      socket = tls.connect({ socket: raw, servername: options.servername || options.host, rejectUnauthorized: true });
+      const host = options.servername || options.host;
+      socket = tls.connect({ socket: raw, host, servername: net.isIP(host) ? undefined : host, rejectUnauthorized: true });
       socket.once("error", error => done(error));
       socket.once("close", () => signal.removeEventListener("abort", abort));
       socket.once("secureConnect", () => done(null, socket));
