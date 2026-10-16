@@ -1,13 +1,18 @@
-import { marked } from "marked";
-import DOMPurify from "dompurify";
-import renderMathInElement from "katex/contrib/auto-render";
-import { api, state, $, el, toast, renderWelcome, renderChips, addChip, askText, askConfirm } from "./app.js";
+let onBindingSnapshot;
+import { renderMd } from "./platform/markdown.js";
+export { renderMd } from "./platform/markdown.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast, askText, askConfirm } from "./platform/dom.js";
+import { renderWelcome } from "./features/chat/welcome.js";
+import { renderChips, addChip } from "./features/chat/attachments.js";
 import { createUserInputUI } from "./userInput.js";
 import { composerAction } from "./chatKeys.js";
 import { connectSessionEvents, closeSessionEvents, waitOperation } from "./sessionTransport.js";
 import { initSessionPanel, renderSessionState, renderSessionConnection } from "./sessionPanel.js";
 import { recordHistory, recordEvent } from "./artifacts.js";
 import { buildFineNotePrompt } from "./noteTemplates.js";
+import { ChatTurns, turnRecordLabel } from "./chatTurns.js";
 
 
 let autoScroll = true;
@@ -39,68 +44,6 @@ async function settleSessionActions() {
   }
   if (pendingBinding) await settleSessionActions();
   else await drainBranchJobs();
-}
-
-// ---------------- markdown / math rendering ----------------
-marked.setOptions({ gfm: true, breaks: false });
-
-export function renderMd(mdText, container) {
-  const { text, math } = protectMath(mdText || "");
-  const html = marked.parse(text);
-  container.innerHTML = DOMPurify.sanitize(html, { ADD_ATTR: ["target"] });
-  restoreMath(container, math);
-  try {
-    renderMathInElement(container, {
-      delimiters: [
-        { left: "$$", right: "$$", display: true },
-        { left: "$", right: "$", display: false },
-        { left: "\\(", right: "\\)", display: false },
-        { left: "\\[", right: "\\]", display: true },
-      ],
-      ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"],
-      throwOnError: false,
-    });
-  } catch {}
-}
-
-// Markdown treats underscores and dollar signs as formatting before KaTeX can
-// see them. Replace complete math spans with inert ASCII tokens, then restore
-// them as text nodes so the math renderer receives the original delimiters.
-// MinerU 提取的 LaTeX 常把相邻单字符用空格隔开（"$4 \times 1 0 ^ { - 4 }$"、
-// "\mathrm { F i x e d }"），KaTeX 渲染出来符号散开；数学模式里单字符链的空格
-// 是冗余的（a b 与 ab 输出一致），这里统一收拢。命令名（\log x）前后的空格不动。
-function tightenMathSpaces(token) {
-  return String(token).replace(/(?<![A-Za-z0-9\\])((?:[A-Za-z0-9] )+[A-Za-z0-9])(?![A-Za-z0-9])/g, (chain) => chain.replace(/ /g, ""));
-}
-
-function protectMath(source) {
-  const math = [];
-  const text = String(source || "").replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$(?!\$)(?:\\.|[^$\n])+(?<!\\)\$)/g, (part) => {
-    const i = math.push(tightenMathSpaces(part)) - 1;
-    return `MATHTOKEN${i}END`;
-  });
-  return { text, math };
-}
-
-function restoreMath(container, math) {
-  if (!math.length) return;
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  const nodes = [];
-  while (walker.nextNode()) nodes.push(walker.currentNode);
-  for (const node of nodes) {
-    const value = node.nodeValue || "";
-    if (!/MATHTOKEN\d+END/.test(value)) continue;
-    const frag = document.createDocumentFragment();
-    let cursor = 0;
-    value.replace(/MATHTOKEN(\d+)END/g, (token, index, offset) => {
-      frag.append(document.createTextNode(value.slice(cursor, offset)));
-      frag.append(document.createTextNode(math[Number(index)] || token));
-      cursor = offset + token.length;
-      return token;
-    });
-    frag.append(document.createTextNode(value.slice(cursor)));
-    node.replaceWith(frag);
-  }
 }
 
 // ---------------- sessions ----------------
@@ -136,8 +79,8 @@ export async function openSession(id, { force = false } = {}) {
   state.sessionId = id;
   if (state.nativeSession?.id !== id) {
     state.nativeSession = null;
-    for (const n of liveNodes) finalizeActivity(n);
-    $("#messages").replaceChildren(); liveNodes.length = 0; activeStream = null;
+    for (const n of liveNodes) { finalizeActivity(n); clearTimeout(n.renderTimer); }
+    $("#messages").replaceChildren(); liveNodes.length = 0; activeStream = null; chatTurns.reset();
   }
   restoreBindingOnSnapshot = true; pendingBinding = null;
   renderSessionMenu();
@@ -158,17 +101,18 @@ function renderContent(parts, target) {
   }
 }
 function renderHistory(h) {
-  for (const n of liveNodes) finalizeActivity(n);
-  $("#messages").replaceChildren(); liveNodes.length = 0; activeStream = null;
+  for (const n of liveNodes) { finalizeActivity(n); clearTimeout(n.renderTimer); }
+  $("#messages").replaceChildren(); liveNodes.length = 0; activeStream = null; chatTurns.reset();
   for (const m of h.messages || []) {
     let root;
     if (m.role === "user") {
+      chatTurns.begin();
       const text = m.parts.filter(p => p.type === "text").map(p => p.text).join("\n");
       const node = addMessageEl("user", text, m.parts.filter(p => p.type === "image").map(p => 'data:' + p.mimeType + ';base64,' + p.data));
       if (m.entryId) addReaskButton(node, m.entryId, text);
       root = node;
     } else if (m.role === "assistant") {
-      const node = assistantSkeleton(); $("#messages").append(node.root); liveNodes.push(node);
+      const node = assistantSkeleton(); $("#messages").append(node.root); liveNodes.push(node); chatTurns.add(node);
       for (const p of m.parts || []) if (p.type === "toolCall") addToolCard(node, p.id, p.name, p.args, true);
       flushAssistant(node, m.parts.filter(p => p.type === "text").map(p => p.text).join(""), m.parts.filter(p => p.type === "thinking").map(p => p.text).join(""), false);
       collapseThinking(node); addMeta(node, m.usage, m.model); if (m.error) markError(node, m.error); root = node.root;
@@ -188,12 +132,13 @@ function renderHistory(h) {
   }
   if (!h.messages?.length) renderWelcome();
   recordHistory(h);
+  chatTurns.finish({ keepCurrent: !!h.busy });
   applySessionState(h); scrollBottom();
 }
 let activeStream = null;
 function streamNode() {
   if (!activeStream) {
-    const node = assistantSkeleton(); $("#messages").append(node.root); liveNodes.push(node);
+    const node = assistantSkeleton(); $("#messages").append(node.root); liveNodes.push(node); chatTurns.add(node);
     activeStream = { node, text: "", thinking: "" };
   }
   return activeStream;
@@ -210,7 +155,10 @@ function applySessionState(value) {
   if (value.model) $("#model-select").value = value.model.provider + "|" + value.model.id;
   const row = state.sessions.find(s => s.id === state.sessionId); if (row && value.name) row.title = value.name;
   $("#session-title").textContent = value.name || row?.title || "(空会话)";
-  if (!state.streaming) void settleSessionActions();
+  if (!state.streaming) {
+    chatTurns.finish(); activeStream = null;
+    void settleSessionActions();
+  }
 }
 function handleSessionEvent(ev) {
   if (ev.t === "connection_status") { renderSessionConnection(ev.phase); return; }
@@ -224,8 +172,7 @@ function handleSessionEvent(ev) {
       const meta = ev.history.meta || {};
       state.projectId = meta.projectId || null;
       state.currentPaper = state.papers.find(p => p.id === meta.paperId) || null;
-      void import("./sidebar.js").then(m => { m.renderProjects(); m.renderPapers(); });
-      if (state.currentPaper) void import("./reader.js").then(m => m.readerLoadPaper(state.currentPaper));
+      onBindingSnapshot?.(state.currentPaper);
       updateComposerHint();
     }
     renderHistory(ev.history); return;
@@ -239,6 +186,7 @@ function handleSessionEvent(ev) {
   if (ev.t === "disconnected") {
     userInputUI.clear(); state.streaming = false; setStreamingUI(false);
     for (const n of liveNodes) finalizeActivity(n);
+    chatTurns.finish(); activeStream = null;
     renderSessionConnection("disconnected", ev.message);
     toast(ev.message, true); return;
   }
@@ -260,12 +208,15 @@ function handleSessionEvent(ev) {
     if (ev.error) toast(ev.error, true); else toast(ev.aborted ? "已取消压缩" : "上下文已压缩"); return;
   }
   if (ev.t === "assistant_start") { if (activeStream) flushAssistant(activeStream.node, activeStream.text, activeStream.thinking, false); activeStream = null; streamNode(); }
-  else if (ev.t === "user_start") { addMessageEl("user", ev.text, (ev.images || []).map(im => 'data:' + im.mimeType + ';base64,' + im.data)); }
+  else if (ev.t === "user_start") { chatTurns.begin(); activeStream = null; addMessageEl("user", ev.text, (ev.images || []).map(im => 'data:' + im.mimeType + ';base64,' + im.data)); }
   else if (ev.t === "delta") streamNode().text += ev.text;
   else if (ev.t === "thinking") streamNode().thinking += ev.text;
   else if (ev.t === "tool_start") recordEvent(ev), addToolCard(streamNode().node, ev.id, ev.name, ev.args);
   else if (ev.t === "tool_update") liveToolText(streamNode().node, ev.id, ev.content.filter(c => c.type === "text").map(c => c.text).join(""));
-  else if (ev.t === "tool_end") recordEvent(ev), fillToolCard(ev.id, ev.name, ev.content.filter(c => c.type === "text").map(c => c.text).join("\n"), ev.isError, ev.content, ev.details);
+  else if (ev.t === "tool_end") {
+    recordEvent(ev); fillToolCard(ev.id, ev.name, ev.content.filter(c => c.type === "text").map(c => c.text).join("\n"), ev.isError, ev.content, ev.details);
+    if (ev.name === "archify" && ev.details?.ok && ev.details.artifact) window.dispatchEvent(new CustomEvent("pipaper:archify-changed", { detail: ev.details.artifact }));
+  }
   else if (ev.t === "entry" && ev.message.role === "custom") {
     const root = el("details", { class: "native-message" }, el("summary", {}, ev.message.customType)); renderContent(ev.message.parts, root); $("#messages").append(root);
   }
@@ -679,14 +630,40 @@ function addMeta(node, usage, model) {
   if (usage) {
     bits.push(`↑${usage.input ?? "?"} ↓${usage.output ?? "?"}${usage.cost != null ? ` · $${Number(usage.cost).toFixed(4)}` : ""}`);
   }
-  node.root.append(el("div", { class: "meta" }, bits.join(" · ")));
+  node.meta = el("div", { class: "meta" }, bits.join(" · "));
+  node.root.append(node.meta);
 }
 
 function markError(node, msg) {
-  node.bubble.append(el("div", { style: { color: "var(--err)", marginTop: "8px", fontSize: "13px" } }, "⚠ " + msg));
+  node.bubble.append(el("div", { class: "msg-error", style: { color: "var(--err)", marginTop: "8px", fontSize: "13px" } }, "⚠ " + msg));
 }
 
 const liveNodes = [];
+const chatTurns = new ChatTurns(turn => {
+  for (const node of turn.nodes.slice(turn.archived)) {
+    finalizeActivity(node);
+    clearTimeout(node.renderTimer); node.renderTimer = null;
+    renderMd(node.textAcc, node.mdDiv);
+    if (node.activity || node.meta) {
+      if (!turn.record) {
+        const summary = el("summary", {});
+        const body = el("div", { class: "turn-record-body" });
+        turn.record = { root: el("details", { class: "turn-record" }, summary, body), summary, body };
+      }
+      const step = el("div", { class: "turn-record-step" });
+      if (node.root.dataset.entryId) step.dataset.entryId = node.root.dataset.entryId;
+      if (node.activity) step.append(node.activity.root);
+      if (node.meta) step.append(node.meta);
+      turn.record.body.append(step);
+    }
+    // Retain genuine answers, images and failures; only empty process bubbles disappear.
+    node.root.hidden = !node.textAcc.trim() && !node.bubble.querySelector(".native-result-image, .msg-error");
+  }
+  if (turn.record) {
+    turn.record.summary.textContent = turnRecordLabel(turn.nodes);
+    turn.nodes.at(-1).root.after(turn.record.root);
+  }
+});
 
 function scrollBottom(force = false) {
   const box = $("#messages");
@@ -916,6 +893,7 @@ export function updateComposerHint() {
   } else {
     hint.textContent = "未选择论文 — 仍可自由对话";
   }
+  hint.title = hint.textContent;
 }
 
 export function autoSizeInput() {
@@ -925,7 +903,8 @@ export function autoSizeInput() {
 }
 
 // ---------------- init ----------------
-export function initChat() {
+export function initChat({ bindingSnapshot } = {}) {
+  onBindingSnapshot = bindingSnapshot;
   initSessionPanel(() => state.sessionId ? openSession(state.sessionId) : window.location.reload());
   let editorTimer;
   $("#composer-input").addEventListener("input", () => { clearTimeout(editorTimer); editorTimer = setTimeout(() => { if (state.sessionId && state.controlId) api.sessionAction(state.sessionId, "editor", { text: $("#composer-input").value }).catch(() => {}); }, 150); });

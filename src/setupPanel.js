@@ -1,7 +1,8 @@
 // 环境检查 / 首次使用引导：拉取 /api/setup/status 渲染能力清单，
 // 未就绪项给出安装链接与命令；首启自动弹出（config.setup.onboardedAt 为空且有未就绪项时）。
-import { api, $, el, toast } from "./app.js";
-import { openSettings } from "./settings.js";
+import { api } from "./platform/api.js";
+import { $, el, toast } from "./platform/dom.js";
+import { openSettings, closeSettings } from "./settings.js";
 
 const GROUPS = [
   { id: "core", name: "必选 · 内置" },
@@ -29,11 +30,10 @@ async function autoOpen() {
 }
 
 export function openSetup() {
-  $("#setup-backdrop").hidden = false;
-  void refreshSetup();
+  void openSettings("diagnostics");
 }
 
-async function refreshSetup() {
+export async function refreshSetup() {
   const list = $("#setup-list");
   list.replaceChildren(el("p", { class: "res-note" }, "检测中…"));
   let st;
@@ -98,7 +98,7 @@ async function testItem(id) {
 async function dismissSetup() {
   try {
     await api.saveConfig({ setup: { onboardedAt: new Date().toISOString() } });
-    $("#setup-backdrop").hidden = true;
+    closeSettings();
     toast("已关闭首启引导（⚙ 可随时再次打开环境检查）");
   } catch (e) {
     toast("保存失败：" + (e.message || e), true);

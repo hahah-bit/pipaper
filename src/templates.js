@@ -1,3 +1,4 @@
+import { persistence } from "./persistence.js";
 // Prompt templates for selections / box annotations. Stored in localStorage,
 // editable from the annotation popup (⚙) — defaults provided below.
 // Placeholder {{选区}} is replaced with the selected region content;
@@ -43,14 +44,14 @@ export const DEFAULT_TEMPLATES = [
 
 export function getTemplates() {
   try {
-    const saved = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+    const saved = JSON.parse(persistence.getItem(LS_KEY) || "null");
     if (Array.isArray(saved) && saved.length) return saved;
   } catch {}
   return JSON.parse(JSON.stringify(DEFAULT_TEMPLATES));
 }
 
 export function saveTemplates(list) {
-  localStorage.setItem(LS_KEY, JSON.stringify(list));
+  persistence.setItem(LS_KEY, JSON.stringify(list));
 }
 
 // Apply a template: replace {{选区}} / {{批注}} placeholders; if placeholders

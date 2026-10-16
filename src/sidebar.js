@@ -1,9 +1,16 @@
-import { api, state, $, el, toast, updateZoteroFoot, askText, askConfirm } from "./app.js";
+let sidebarBindings;
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast, askText, askConfirm } from "./platform/dom.js";
+import { updateZoteroFoot } from "./features/library/status.js";
+import { LITERATURE_PURPOSES } from "../shared/literature-purpose.js";
 
 let activeCollection = null; // collection id or null = all
 let searchQ = "";
 
-export function initSidebar() {
+export function initSidebar(bindings) {
+  sidebarBindings = bindings;
+  window.addEventListener("pipaper:storage-changed", () => { void reloadPapers(); });
   $("#paper-search").addEventListener("input", (e) => {
     searchQ = e.target.value.trim().toLowerCase();
     renderPapers();
@@ -26,6 +33,10 @@ export function initSidebar() {
   });
   // project controls
   $("#project-select").addEventListener("change", (e) => switchProject(e.target.value));
+  $("#btn-open-research").addEventListener("click", () => {
+    if (!state.projectId) return toast("先选择一个项目", true);
+    window.dispatchEvent(new CustomEvent("pipaper:workspace-open", { detail: { moduleId: "research" } }));
+  });
   $("#btn-del-project").addEventListener("click", async () => {
     const p = state.projects.find((x) => x.id === state.projectId);
     if (!p) return;
@@ -97,6 +108,8 @@ export function renderProjects() {
   }
   sel.value = state.projectId || "";
   $("#btn-del-project").hidden = !state.projectId;
+  const researchBtn = $("#btn-open-research");
+  if (researchBtn) researchBtn.hidden = !state.projectId;
   updateProjectBar();
 }
 
@@ -104,6 +117,7 @@ function updateProjectBar() {
   const proj = state.projects.find((x) => x.id === state.projectId);
   const btn = $("#btn-open-zotero");
   if (btn) btn.hidden = proj?.type !== "zotero";
+  window.dispatchEvent(new Event("pipaper:project-changed"));
 }
 
 export async function switchProject(id) {
@@ -111,9 +125,7 @@ export async function switchProject(id) {
   renderProjects();
   renderPapers();
   // refresh session list so dropdown regroups
-  const { refreshSessions, syncSessionBinding } = await import("./chat.js");
-  await syncSessionBinding();
-  await refreshSessions();
+  await sidebarBindings.onProjectChange();
 }
 
 async function togglePaperInProject(paperId) {
@@ -134,8 +146,8 @@ export function renderCollections() {
   const wrap = $("#collections");
   wrap.replaceChildren();
   const cols = state.collections || [];
+  wrap.hidden = !cols.length;
   if (!cols.length) {
-    wrap.append(el("div", { class: "coll-item", style: { color: "var(--fg2)" } }, "（无分类目录）"));
     return;
   }
   const byParent = new Map();
@@ -187,29 +199,32 @@ export function renderPapers() {
     const authors = (p.creators || []).slice(0, 2).join(", ");
     const inProject = proj?.paperIds.includes(p.id);
     const item = el(
-      "div",
-      { class: "paper-item" + (state.currentPaper?.id === p.id ? " active" : ""), onclick: () => selectPaper(p) },
-      el("div", { class: "t" }, p.title || "(无标题)"),
-      el("div", { class: "m" },
+      "article",
+      { class: "paper-item" + (state.currentPaper?.id === p.id ? " active" : ""), "data-paper-id": p.id },
+      el("button", { type: "button", class: "paper-open", "aria-label": p.title || "(无标题)", onclick: () => selectPaper(p) },
+        el("span", { class: "t" }, p.title || "(无标题)"),
+        el("span", { class: "m" },
         el("span", { class: "dot " + status, title: "解析状态: " + status }),
-        el("span", { class: "m-text" }, [authors, p.year, p.source === "zotero" ? collectionName((p.collectionIds || [])[0]) || "Zotero" : "本地导入"].filter(Boolean).join(" · ")),
+        el("span", { class: "m-text" }, [authors, p.year, p.source === "zotero" ? collectionName((p.collectionIds || [])[0]) || "Zotero" : "本地导入"].filter(Boolean).join(" · ")))),
         el("button", {
           class: "p-proj" + (inProject ? " in" : ""),
           title: proj ? (inProject ? "从项目中移除" : "加入当前项目") : "加入项目（先在顶部选择项目）",
           onclick: (e) => { e.stopPropagation(); togglePaperInProject(p.id); },
         }, inProject ? "✓" : "📁")
-      )
     );
+    if (p.ingestion?.generationId) item.append(el("div", { class: "paper-knowledge-state", title: "入库、重建与待核对处理请打开右侧「资料」" }, p.ingestion.stale ? "知识库待更新" : p.ingestion.coverage?.partial ? "部分入库 · 待核对" : "已入库"));
+    const context = p.literatureContexts?.[state.projectId || "library"];
+    const purposes = context?.purposeCategories?.length ? context.purposeCategories :
+      (context?.researchMatch?.categories || []).map(category => category.id);
+    const purposeText = (purposes || []).map(id => LITERATURE_PURPOSES.find(value => value.id === id)?.label).filter(Boolean).join(" · ");
+    if (purposeText) item.append(el("div", { class: "paper-knowledge-state", title: context?.purposeCategories?.length ? "手工文献用途分类" : "用途建议，结合原文确认" }, purposeText));
     wrap.append(item);
   }
 }
 
 export async function selectPaper(p) {
   state.currentPaper = state.papers.find((x) => x.id === p.id) || p;
+  window.dispatchEvent(new CustomEvent("pipaper:paper-changed"));
   renderPapers();
-  const { readerLoadPaper } = await import("./reader.js");
-  readerLoadPaper(p);
-  const { updateComposerHint, syncSessionBinding } = await import("./chat.js");
-  updateComposerHint();
-  await syncSessionBinding();
+  await sidebarBindings.onPaperSelection(p);
 }

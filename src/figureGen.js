@@ -1,4 +1,5 @@
-import { api, state } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
 import { runTempPrompt, removeTempSession } from "./tempSession.js";
 import { buildFigurePrompt, figureFilePath, FIGURE_FILES } from "./figureTemplates.js";
 

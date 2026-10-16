@@ -1,4 +1,5 @@
-import { api, state } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
 import { createSessionEventChannel } from "./sessionEventChannel.js";
 
 // 临时会话执行器：后台跑一条 prompt（不进当前聊天），完成后由调用方决定删除时机。

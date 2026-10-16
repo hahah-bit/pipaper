@@ -1,12 +1,15 @@
+import { registerKnowledge } from "./storage/migration.js";
+import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile } from "./storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { resourceAt } from "./storage/catalog.js";
 import { APP_ROOT } from "./config.js";
 
 // 知识库：粗读 / 精读两类目录彼此隔离，每篇论文一个子文件夹（含 meta.json），
 // 删除以文件夹为单位递归移除，保证「删得彻底」。
-export const KNOWLEDGE_DIR = path.join(APP_ROOT, "knowledge");
-export const NOTE_CATEGORIES = ["粗读", "精读", "图表分析"];
+export const KNOWLEDGE_DIR = process.env.PIPAPER_KNOWLEDGE_DIR ? path.resolve(process.env.PIPAPER_KNOWLEDGE_DIR) : path.join(APP_ROOT, "knowledge");
+export const NOTE_CATEGORIES = ["粗读", "精读", "图表分析", "论文研读", "选题报告"];
 
 const error = (text, status = 400) => Object.assign(new Error(text), { status });
 
@@ -39,7 +42,7 @@ export function ensurePaper({ paperId, title, category = "粗读" } = {}) {
   let meta = {};
   try { meta = JSON.parse(fs.readFileSync(metaFile, "utf8")); } catch {}
   meta = { paperId, title: title || meta.title || slug, category, slug, createdAt: meta.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() };
-  fs.writeFileSync(metaFile, JSON.stringify(meta, null, 2));
+  managedWrite(metaFile, JSON.stringify(meta, null, 2));
   return meta;
 }
 
@@ -51,6 +54,7 @@ export function listNotes() {
     try { entries = fs.readdirSync(root); } catch {}
     for (const slug of entries) {
       const dir = path.join(root, slug);
+      if(resourceAt(dir)?.lifecycle&&resourceAt(dir).lifecycle!=="active")continue;
       let stat = null;
       try { stat = fs.statSync(dir); } catch { continue; }
       if (!stat.isDirectory()) continue;
@@ -59,7 +63,7 @@ export function listNotes() {
       let files = [];
       try {
         files = fs.readdirSync(dir)
-          .filter((f) => f !== "meta.json" && /\.md$/i.test(f))
+          .filter((f) => f !== "meta.json" && /\.md$/i.test(f)&&(!resourceAt(path.join(dir,f))||resourceAt(path.join(dir,f)).lifecycle==="active"))
           .map((f) => {
             const st = fs.statSync(path.join(dir, f));
             return { name: f, path: `${category}/${slug}/${f}`, size: st.size, mtime: st.mtimeMs };
@@ -78,21 +82,26 @@ export function deleteNoteFile(rel) {
   const target = insideKnowledge(rel);
   if (!target) throw error("路径越界");
   if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw error("文件不存在", 404);
-  fs.rmSync(target, { force: true });
+  trashPath(target, { kind: "knowledge" });
   if (fs.existsSync(target)) throw error("删除失败：文件仍存在", 500);
   return { ok: true };
 }
 
 // 写入（编辑器保存）：严格限定 knowledge/ 内的 .md 文件；不存在时按提供的路径新建
-export function writeNoteFile({ path: rel, content } = {}) {
+export function writeNoteFile({ path: rel, content, revision } = {}) {
   const target = insideKnowledge(rel);
   if (!target) throw error("路径越界");
   if (!/\.md$/i.test(String(rel || ""))) throw error("只允许写入 Markdown（.md）文件");
   const text = String(content ?? "");
   if (text.length > 2_000_000) throw error("内容过大（>2MB）");
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, text, "utf8");
-  return { ok: true, path: String(rel), bytes: Buffer.byteLength(text, "utf8"), updatedAt: new Date().toISOString() };
+  const entry = managedWrite(target, text, { kind: "knowledge", sourceType: "note", expectedRevision: revision, title: path.basename(target) });
+  const registered=registerKnowledge(target);
+  return { ok: true, path: String(rel), revision: registered.revision, bytes: Buffer.byteLength(text, "utf8"), updatedAt: new Date().toISOString() };
+}
+export function readNoteFile(rel) {
+  const file=insideKnowledge(rel);if(!file||!fs.existsSync(file)||!fs.statSync(file).isFile()||!file.endsWith(".md"))throw error("笔记不存在",404);
+  const r=registerKnowledge(file);if(r.lifecycle!=="active")throw error("笔记已移入回收站",404);return {path:rel,content:fs.readFileSync(file,"utf8"),revision:r.revision};
 }
 
 export function deleteNotePaper(category, slug) {
@@ -100,7 +109,7 @@ export function deleteNotePaper(category, slug) {
   if (!slug || /[\\/:*?"<>|]/.test(slug)) throw error("非法的论文目录名");
   const dir = insideKnowledge(path.join(category, slug));
   if (!dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw error("论文目录不存在", 404);
-  fs.rmSync(dir, { recursive: true, force: true });
+  trashPath(dir, { kind: "knowledge-folder" });
   if (fs.existsSync(dir)) throw error("删除失败：目录仍存在", 500);
   return { ok: true };
 }
@@ -124,6 +133,7 @@ export function registerNoteRoutes(api) {
     try { res.json(writeNoteFile(req.body || {})); }
     catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }
   });
+  api.get("/notes/file",(req,res)=>{try{res.json(readNoteFile(req.query.path));}catch(e){res.status(e.status||400).json({error:e.message});}});
   api.delete("/notes/file", (req, res) => {
     try { res.json(deleteNoteFile(req.query.path)); }
     catch (e) { res.status(e.status || 400).json({ error: String(e.message || e) }); }

@@ -21,7 +21,7 @@ fs.copyFileSync(workerSrc, path.join(PUB, "vendor", "pdf.worker.min.mjs"));
 // dockview-core 8.3 的 esm 入口是无样式构建：从 styled iife 提取内嵌 CSS 到 vendor
 await import(new URL("extract-dockview-css.mjs", import.meta.url).href);
 
-// mermaid: 打成懒加载的全局包（沉浸模式流程图模块首次使用时注入 <script>），不进主 bundle
+// mermaid: 打成懒加载的全局包（流程图模块首次使用时注入 <script>），不进主 bundle
 await esbuild.build({
   entryPoints: [path.join(ROOT, "scripts", "mermaid-entry.mjs")],
   bundle: true,
@@ -43,16 +43,26 @@ await esbuild.build({
   logLevel: "info",
 });
 
-// cache-bust: stamp bundle/css versions into index.html
-const js = fs.readFileSync(path.join(PUB, "app.js"));
-const css = fs.readFileSync(path.join(PUB, "style.css"));
-const v = crypto.createHash("sha1").update(js).update(css).digest("hex").slice(0, 10);
-const htmlPath = path.join(PUB, "index.html");
-let html = fs.readFileSync(htmlPath, "utf8");
-const jsRe = new RegExp('app[.]js([?]v=[a-f0-9]+)?' + String.fromCharCode(34));
-const cssRe = new RegExp('style[.]css([?]v=[a-f0-9]+)?' + String.fromCharCode(34));
-html = html.replace(jsRe, 'app.js?v=' + v + '"');
-html = html.replace(cssRe, 'style.css?v=' + v + '"');
-fs.writeFileSync(htmlPath, html);
+for (const entry of ["study", "topics"]) await esbuild.build({
+  entryPoints: [path.join(ROOT, "src", entry, "app.js")], bundle: true,
+  outfile: path.join(PUB, entry + ".js"), format: "iife", target: "es2022", sourcemap: true, logLevel: "info",
+});
 
-console.log("build ok (v=" + v + ")");
+// Each page includes every shared style it consumes in its cache fingerprint.
+for (const [page, assets] of Object.entries({
+  index: ["app.js", "style.css", "theme.css"],
+  study: ["study.js", "style.css", "study.css", "theme.css"],
+  topics: ["topics.js", "topics.css", "theme.css"],
+})) {
+  const hash = crypto.createHash("sha1");
+  for (const asset of assets) hash.update(fs.readFileSync(path.join(PUB, asset)));
+  const version = hash.digest("hex").slice(0, 10);
+  const htmlPath = path.join(PUB, page + ".html");
+  let html = fs.readFileSync(htmlPath, "utf8");
+  for (const asset of assets) {
+    const escaped = asset.replace(/[.]/g, "[.]");
+    html = html.replace(new RegExp(escaped + '([?]v=[a-f0-9]+)?"', "g"), asset + '?v=' + version + '"');
+  }
+  fs.writeFileSync(htmlPath, html);
+  console.log(page + " build ok (v=" + version + ")");
+}

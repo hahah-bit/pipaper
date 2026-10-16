@@ -1,8 +1,11 @@
-import { api, state, el, toast, askText } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { el, toast, askText } from "./platform/dom.js";
 import { registerModule } from "./modules.js";
-import { renderMd } from "./chat.js";
+import { renderMd } from "./platform/markdown.js";
 import { runTempPrompt, removeTempSession } from "./tempSession.js";
 import { diffLines } from "diff";
+import { persistence } from "./persistence.js";
 
 // LaTeX·MD 编辑模式（dock 抽屉）：手工 + 模型辅助编辑知识库里的 Markdown 文档。
 // - 左源码右 KaTeX 实时预览（与阅读器同一套渲染管道），可 编辑/分屏/预览 切换
@@ -50,9 +53,10 @@ function diffRows(oldText, newText) {
 }
 
 export function registerMdEditorModule() {
+  let requestedPath = "", requestOpen;
   registerModule({
     id: "mdedit",
-    name: "LaTeX·MD 编辑",
+    name: "Markdown 编辑",
     icon: "✍️",
     mount(body, ctx) {
       alive = true;
@@ -79,7 +83,10 @@ export function registerMdEditorModule() {
       const main = el("div", { class: "mde-main mode-split" }, editor, preview);
 
       let currentPath = "";
+      let currentRevision = 0;
       let dirty = false;
+      let openingSequence = 0, loadingDefault = true;
+      requestOpen = path => { requestedPath = path; if (!loadingDefault) void openPath(path); };
       let mode = "split";
       let previewTimer = null;
 
@@ -91,6 +98,7 @@ export function registerMdEditorModule() {
       setMode("split");
 
       function markDirty() {
+        if(currentPath)persistence.setItem("pipaper.mdDraft."+currentPath,JSON.stringify({content:editor.value,revision:currentRevision}));
         if (!dirty) { dirty = true; statusEl.textContent = (currentPath || "") + " ●"; }
         schedulePreview();
       }
@@ -225,7 +233,7 @@ export function registerMdEditorModule() {
         }
         aiPending = null;
         aiPanel.hidden = true;
-        dirty = true;
+        markDirty();
         statusEl.textContent = (currentPath || "") + " ●（AI 修改已写入，记得保存）";
         schedulePreview();
         editor.focus();
@@ -252,10 +260,16 @@ export function registerMdEditorModule() {
       }
 
       async function openPath(rel) {
+        const ticket = ++openingSequence;
         try {
-          const r = await api.file("knowledge/" + rel);
+          const r = await api.notesReadFile(rel);
+          if (!alive || ticket !== openingSequence) return;
           editor.value = r.content || "";
           currentPath = rel; dirty = false;
+          persistence.setItem("pipaper.notes-editor-last", rel);
+          currentRevision=r.revision;
+          const draft=persistence.getItem("pipaper.mdDraft."+rel);
+          if(draft){try{const saved=JSON.parse(draft);editor.value=saved.content;currentRevision=saved.revision;dirty=true;}catch{}}
           statusEl.textContent = fileLabel(rel) + " · " + editor.value.split("\n").length + " 行";
           fileSel.value = rel;
           schedulePreview();
@@ -271,7 +285,8 @@ export function registerMdEditorModule() {
       async function save() {
         if (!currentPath) return toast("先选择文件", true);
         try {
-          await api.notesWriteFile(currentPath, editor.value);
+          const saved=await api.notesWriteFile(currentPath, editor.value,currentRevision);
+          currentRevision=saved.revision;persistence.removeItem("pipaper.mdDraft."+currentPath);
           dirty = false;
           statusEl.textContent = fileLabel(currentPath) + " · 已保存 ✓";
           toast("已保存到知识库");
@@ -297,8 +312,8 @@ export function registerMdEditorModule() {
       // 默认打开当前论文的精读笔记（若有）
       (async () => {
         const paper = state.currentPaper;
-        let prefer = "";
-        if (paper?.id) {
+        let prefer = requestedPath || persistence.getItem("pipaper.notes-editor-last") || "";
+        if (paper?.id && !prefer) {
           try {
             const { slug } = await api.notesResolve(paper.id, paper.title || "");
             const data = await api.notes();
@@ -307,15 +322,19 @@ export function registerMdEditorModule() {
           } catch {}
         }
         await refreshFiles(prefer);
-        if (prefer) openPath(prefer);
+        loadingDefault = false;
+        prefer = requestedPath || prefer;
+        if (prefer && [...fileSel.options].some(option => option.value === prefer)) void openPath(prefer);
       })();
 
       const root = el("div", { class: "mde" }, toolbar, aiBar, main, aiPanel);
       body.append(root);
       window.dispatchEvent(new Event("resize"));
     },
+    activate(payload) { if (payload?.path) requestOpen?.(payload.path); },
     unmount() {
       alive = false;
+      requestOpen = null; requestedPath = "";
     },
   });
 }

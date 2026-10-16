@@ -1,3 +1,4 @@
+import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile } from "./storage/files.js";
 // Clipboard history: captures text selections/copies inside the app.
 // Entries auto-expire after 2 days (pruned on access + on a timer).
 import fs from "node:fs";
@@ -26,7 +27,7 @@ function prune() {
 }
 
 function persist() {
-  fs.writeFileSync(FILE, JSON.stringify(entries, null, 1));
+  managedWrite(FILE, JSON.stringify(entries, null, 1));
 }
 
 setInterval(prune, 6 * 60 * 60 * 1000).unref?.();

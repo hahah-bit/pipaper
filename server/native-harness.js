@@ -1,3 +1,5 @@
+import { beforeSessionPrompt, sessionReplaced } from "./platform/ai/session-scopes.js";
+import { trashPath, registerFile } from "./storage/files.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -9,10 +11,23 @@ import { userInputTool } from "./user-input.js";
 import { SessionController } from "./session-controller.js";
 import { normalizeResources, selectSkills } from "./resource-config.js";
 import { manualExtensionPaths, resolveProjectPackages } from "./pi-packages.js";
+import { archifyTool } from "./archify.js";
+import { knowledgeTools } from "./rag/tools.js";
+import { managedPiTools } from "./storage/pi-tools.js";
+import { isActive, resource, dependencies } from "./storage/catalog.js";
 
 const chats = new Map();
 const opening = new Map();
 const error = (text, status = 400) => Object.assign(new Error(text), { status });
+
+export async function closeSessions() {
+  await Promise.allSettled(opening.values());
+  await Promise.allSettled([...chats.values()].map(async controller => {
+    await controller.abort();
+    await controller.dispose();
+    chats.delete(controller.id);
+  }));
+}
 
 function diagnostics(loader) {
   return [
@@ -31,7 +46,7 @@ async function buildRuntime(options, controller) {
   const settingsManager = SettingsManager.inMemory(nativeSettings.getGlobalSettings());
   settingsManager.applyOverrides(nativeSettings.getProjectSettings());
   if (resources.defaultTools) settingsManager.applyOverrides({ defaultTools: resources.defaultTools });
-  const gated = meta.paperId || project?.type === "zotero" ? gatedSkillObjects() : [];
+  const gated = meta.studyRole === "guide" ? [] : meta.paperId || project?.type === "zotero" ? gatedSkillObjects() : [];
   let candidates = [];
   const resourceLoader = new DefaultResourceLoader({ cwd: APP_ROOT, agentDir: getAgentDir(), settingsManager,
     systemPromptOverride: () => SYSTEM_PROMPT,
@@ -45,8 +60,12 @@ async function buildRuntime(options, controller) {
   await resourceLoader.reload();
   const modelRuntime = await ModelRuntime.create();
   const result = await createAgentSession({ ...options, cwd: APP_ROOT, modelRuntime, settingsManager, resourceLoader,
-    customTools: [...buildPaperTools({ get id() { return controller.runtime?.session.sessionId || options.sessionManager.getSessionId(); } }), userInputTool(controller.ui)] });
+    customTools: [...buildPaperTools({ get id() { return controller.runtime?.session.sessionId || options.sessionManager.getSessionId(); } }),
+      archifyTool({ get id() { return controller.runtime?.session.sessionId || options.sessionManager.getSessionId(); } }), ...knowledgeTools(),
+      ...managedPiTools({ get id() { return controller.runtime?.session.sessionId || options.sessionManager.getSessionId(); }, paperId: meta.paperId }), userInputTool(controller.ui)] });
   if (resources.activeTools) result.session.setActiveToolsByName(resources.activeTools);
+  if (meta.studyRole === "guide") result.session.setActiveToolsByName([]);
+  else if (meta.studyId) result.session.setActiveToolsByName(["read_paper", "list_library", "search_library", "get_paper_pages", "search_papers", "archify", "search_knowledge", "get_knowledge_element"]);
   return { ...result, services: { cwd: APP_ROOT, agentDir: getAgentDir(), modelRuntime, settingsManager, resourceLoader },
     diagnostics: [...diagnostics(resourceLoader), ...(result.modelFallbackMessage ? [{ type: "warning", message: result.modelFallbackMessage }] : [])],
     candidates, revision: resources.revision };
@@ -60,6 +79,7 @@ async function makeController(sm, meta) {
       const saved = sessionMeta(newId);
       controller.meta = saved ? { ...saved } : { ...controller.meta };
       setSessionMeta(newId, controller.meta);
+      await sessionReplaced(controller, oldId, newId);
     },
     beforeSwitch: async (file, controller) => {
       const info = (await SessionManager.list(APP_ROOT)).find(x => path.resolve(x.path) === path.resolve(file));
@@ -78,6 +98,7 @@ async function makeController(sm, meta) {
 }
 
 export async function controllerFor(id) {
+  if(!isActive("session:"+id))throw error("会话已移入回收站",404);
   if (chats.has(id)) return chats.get(id);
   if (!opening.has(id)) opening.set(id, (async () => {
     const info = (await SessionManager.list(APP_ROOT)).find(s => s.id === id);
@@ -87,10 +108,23 @@ export async function controllerFor(id) {
   return opening.get(id);
 }
 export async function ownedController(id, controlId) { const c = await controllerFor(id); c.assertOwner(controlId); return c; }
-export async function createChat({ paperId = null, projectId = null, title = null } = {}) {
+export async function createChat({ paperId = null, projectId = null, title = null, studyId = null, studyRole = null, workspace = "main" } = {}) {
   if (projectId && !getProject(projectId)) throw error("项目不存在");
-  const c = await makeController(SessionManager.create(APP_ROOT), { paperId, projectId, title });
+  if (!["main", "video"].includes(workspace)) throw error("会话工作区无效");
+  const c = await makeController(SessionManager.create(APP_ROOT), { paperId, projectId, title, workspace, ...(studyId ? { studyId, studyRole } : {}) });
+  if (studyId) {
+    // Pi intentionally defers JSONL persistence until an assistant message exists.
+    // Study sessions must survive a restart even before the first user prompt.
+    c.session.sessionManager.appendMessage({ role: "assistant", content: [{ type: "text", text: studyRole === "guide" ? "研读任务已创建，请从当前检查点开始。" : "论文已绑定，可以结合原文自由提问。" }],
+      api: c.session.model?.api || "openai-completions", provider: c.session.model?.provider || "pipaper", model: c.session.model?.id || "study",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: Date.now() });
+  }
+  if(c.session.sessionFile)registerFile(c.session.sessionFile,{id:"session:"+c.id,kind:"session",metadata:sessionMeta(c.id),owner:studyId?"study:"+studyId:null});
   return { id: c.id, model: c.state().model };
+}
+export async function prepareResourceDeletion(id) {
+  const ids=new Set([id]),queue=[id];while(queue.length)for(const ref of dependencies(queue.shift()).filter(r=>r.relation==="owns"&&r.source&& !ids.has(r.target))){ids.add(ref.target);queue.push(ref.target);}
+  for(const c of [...chats.values()])if(ids.has("session:"+c.id)||ids.has("study:"+c.meta.studyId)){await c.abort();await c.dispose();chats.delete(c.id);}
 }
 export async function sessionHistory(id) { return (await controllerFor(id)).history(); }
 export async function sessionState(id) { return (await controllerFor(id)).state(); }
@@ -102,15 +136,28 @@ export async function listSessions() {
     title: c.session.sessionName || c.meta.title || rows.get(c.id)?.title || "(空会话)", parentSession: c.session.sessionManager.getHeader()?.parentSession,
     busy: c.busy, connected: !!c.connection, updatedAt: sessionMeta(c.id)?.updatedAt || rows.get(c.id)?.updatedAt || new Date().toISOString() });
   const paths = new Map([...rows.values()].filter(r => r.path).map(r => [path.resolve(r.path), r.id]));
-  return [...rows.values()].map(r => ({ ...r, parentId: r.parentSession ? paths.get(path.resolve(r.parentSession)) : null })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+  for(const r of rows.values()) if(r.path && isActive("session:"+r.id)) registerFile(r.path,{id:"session:"+r.id,kind:"session",metadata:sessionMeta(r.id),owner:r.studyId?"study:"+r.studyId:null});
+  return [...rows.values()].filter(r=>isActive("session:"+r.id)).map(r => ({ ...r, parentId: r.parentSession ? paths.get(path.resolve(r.parentSession)) : null })).sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 export async function deleteChat(id, controlId) {
   const c = await controllerFor(id); if (c.connection) c.assertOwner(controlId);
   const file = c.session.sessionFile; await c.dispose(); chats.delete(id);
-  if (file && fs.existsSync(file)) fs.rmSync(file);
+  if(file && fs.existsSync(file) && !fs.statSync(file).isFile()) throw error("会话文件损坏，不能回收",500);
+  if (file && fs.existsSync(file)) trashPath(file, { id: "session:" + id, kind: "session", metadata: sessionMeta(id) });
+  deleteSessionMeta(id);
+}
+// Called only by the task lifecycle service, after cancelling task operations.
+export async function deleteStudyChat(id, studyId) {
+  if (sessionMeta(id)?.studyId !== studyId) throw error("会话不属于当前研读任务", 409);
+  const c = chats.get(id) || (opening.has(id) ? await opening.get(id) : null);
+  const file = c?.session.sessionFile || (await SessionManager.list(APP_ROOT)).find(s => s.id === id)?.path;
+  if(file && fs.existsSync(file) && !fs.statSync(file).isFile()) throw error("会话文件损坏，不能回收",500);
+  if (c) { await c.abort(); await c.dispose(); chats.delete(id); }
+  if (file) trashPath(file, { id: "session:" + id, kind: "session", owner: "study:" + studyId, metadata: sessionMeta(id) });
   deleteSessionMeta(id);
 }
 export async function updateBinding(c, { paperId, projectId }) {
+  if (c.meta.studyId && ((paperId !== undefined && paperId !== c.meta.paperId) || (projectId !== undefined && projectId !== c.meta.projectId))) throw error("研读会话不能重新绑定论文或项目", 409);
   const next = { ...c.meta, ...(paperId !== undefined ? { paperId } : {}), ...(projectId !== undefined ? { projectId } : {}) };
   if (next.paperId === c.meta.paperId && next.projectId === c.meta.projectId) return;
   if (c.busy) throw error("执行期间不能切换论文或项目绑定", 409);
@@ -121,7 +168,10 @@ export async function updateBinding(c, { paperId, projectId }) {
 }
 export async function promptChat(id, body, controlId) {
   const c = await ownedController(id, controlId);
+  if (c.meta.studyRole === "guide") throw error("引导会话请使用研读接口", 409);
+  if (c.meta.studyId && /^[!/]/.test(String(body.text || "").trim())) throw error("研读问答只接受论文问题，不执行会话切换或系统命令", 409);
   await updateBinding(c, body);
+  await beforeSessionPrompt(c, body);
   if (!c.session.sessionName && body.text) c.session.setSessionName(body.text.slice(0, 60));
   setSessionMeta(c.id, { updatedAt: new Date().toISOString() });
   return { ok: true, operationId: c.submit(body.text || "", body.images).id };
@@ -147,6 +197,7 @@ export async function compactSession(id, instructions, controlId) {
 }
 export async function forkChat(id, { entryId, title }, controlId) {
   const c = await ownedController(id, controlId);
+  if (c.meta.studyId) throw error("研读会话请通过新建研读任务建立独立进度", 409);
   if (c.busy) throw error("请等待父任务完成后建立分支", 409);
   return { operationId: c.start("fork", async () => {
     const r = await c.replace("fork", entryId);
@@ -191,6 +242,7 @@ export async function resourceInfo(sessionId, projectId) {
 }
 export async function operate(id, action, body, controlId) {
   const c = await ownedController(id, controlId);
+  if (c.meta.studyId && ["tree/navigate", "tools"].includes(action)) throw error("研读会话不支持修改流程或工具边界", 409);
   if (action === "binding") { await updateBinding(c, body); c.emitState(); return c.state(); }
   if (action === "editor") { c.ui.displayState.editor = String(body.text || ""); c.ui.editorInitialized = true; return { ok: true }; }
   if (action === "queue/take") return c.takeQueue();

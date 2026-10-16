@@ -11,11 +11,13 @@
     "test": "node --test tests/*.test.mjs",
     "build": "node scripts/build.mjs",
     "start": "node scripts/build.mjs && node server/index.js",
-    "dev": "node scripts/build.mjs && node server/index.js"
+    "dev": "node scripts/build.mjs && node server/index.js",
+    "check": "node scripts/check.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "0.84.4",
     "@xmldom/xmldom": "^0.9.12",
+    "@zilliz/milvus2-sdk-node": "3.0.6",
     "adm-zip": "^0.5.16",
     "diff": "^9.0.0",
     "dockview-core": "^8.3.1",

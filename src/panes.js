@@ -1,4 +1,5 @@
-import { $ } from "./app.js";
+import { persistence } from "./persistence.js";
+import { $ } from "./platform/dom.js";
 
 // Draggable panes plus a persisted presentation layer. The panels keep their
 // existing DOM and behavior; these controls only change their layout.
@@ -6,29 +7,28 @@ export function initPanes() {
   const root = document.getElementById("app");
   if (!root) return;
 
-  const cur = { sideW: 264, chatW: 560 };
+  const cur = { sideW: 280, chatW: 560 };
   const paneState = { sidebar: false, chat: false, reader: false, floating: false };
 
   try {
-    const saved = JSON.parse(localStorage.getItem("pipaper.panes") || "{}");
-    if (Number.isFinite(saved.sideW)) cur.sideW = saved.sideW;
+    const saved = JSON.parse(persistence.getItem("pipaper.panes") || "{}");
     if (Number.isFinite(saved.chatW)) cur.chatW = saved.chatW;
-    const savedState = JSON.parse(localStorage.getItem("pipaper.paneState") || "{}");
+    const savedState = JSON.parse(persistence.getItem("pipaper.paneState") || "{}");
     for (const key of Object.keys(paneState)) if (typeof savedState[key] === "boolean") paneState[key] = savedState[key];
     // 阅读器是主工作区：折叠状态不跨会话记忆，启动始终展开（侧栏/对话的折叠仍会记住）
     paneState.reader = false;
   } catch {}
 
   const applyWidths = () => {
-    root.style.setProperty("--side-w", Math.max(180, Math.min(520, cur.sideW)) + "px");
+    root.style.setProperty("--side-w", cur.sideW + "px");
     root.style.setProperty("--chat-w", "min(" + Math.max(320, cur.chatW) + "px, 60vw)");
   };
   applyWidths();
 
   function persist() {
     try {
-      localStorage.setItem("pipaper.panes", JSON.stringify(cur));
-      localStorage.setItem("pipaper.paneState", JSON.stringify(paneState));
+      persistence.setItem("pipaper.panes", JSON.stringify(cur));
+      persistence.setItem("pipaper.paneState", JSON.stringify(paneState));
     } catch {}
     window.dispatchEvent(new Event("resize"));
   }
@@ -54,17 +54,11 @@ export function initPanes() {
     g.addEventListener("dblclick", () => { reset?.(); persist(); });
   }
 
-  drag("#gutter-1", (x) => {
-    cur.sideW = Math.max(180, Math.min(520, x));
-    root.style.setProperty("--side-w", cur.sideW + "px");
-  }, () => {
-    cur.sideW = 264;
-    root.style.setProperty("--side-w", "264px");
-  });
   drag("#gutter-2", (x) => {
     // dock 抽屉打开时 reader 隐藏，预留量从 460 降到 380（给工作区更大空间）
     const reserve = document.getElementById("app").classList.contains("dock-open") ? 380 : 460;
-    cur.chatW = Math.max(320, Math.min(window.innerWidth - cur.sideW - reserve, x - cur.sideW));
+    const visibleSideW = $("#sidebar").getBoundingClientRect().width;
+    cur.chatW = Math.max(320, Math.min(window.innerWidth - visibleSideW - reserve, x - visibleSideW));
     root.style.setProperty("--chat-w", "min(" + cur.chatW + "px, 60vw)");
   }, () => {
     cur.chatW = 560;
@@ -205,7 +199,7 @@ export function initPanes() {
   const FLOAT_MIN_W = 360, FLOAT_MIN_H = 220, FLOAT_EDGE = 8;
   const floatGeo = { x: null, y: null, w: null, h: null };
   try {
-    const savedGeo = JSON.parse(localStorage.getItem(FLOAT_KEY) || "{}");
+    const savedGeo = JSON.parse(persistence.getItem(FLOAT_KEY) || "{}");
     for (const k of ["x", "y", "w", "h"]) if (Number.isFinite(savedGeo[k])) floatGeo[k] = savedGeo[k];
   } catch {}
 
@@ -227,7 +221,7 @@ export function initPanes() {
     chat.style.setProperty("--float-h", h + "px");
   }
   function saveFloatGeom() {
-    try { localStorage.setItem(FLOAT_KEY, JSON.stringify(floatGeo)); } catch {}
+    try { persistence.setItem(FLOAT_KEY, JSON.stringify(floatGeo)); } catch {}
   }
   function startFloatDrag(e, mode) {
     if (!paneState.floating) return;
@@ -275,7 +269,7 @@ export function initPanes() {
   chatHead?.addEventListener("dblclick", (e) => {
     if (!paneState.floating || floatInterActive(e)) return;
     floatGeo.x = floatGeo.y = floatGeo.w = floatGeo.h = null;
-    try { localStorage.removeItem(FLOAT_KEY); } catch {}
+    try { persistence.removeItem(FLOAT_KEY); } catch {}
     applyFloatGeom();
   });
   if (chat) {

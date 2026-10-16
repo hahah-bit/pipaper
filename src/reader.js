@@ -1,8 +1,14 @@
+let refreshLibrary;
+import { renderChips } from "./features/chat/attachments.js";
 import * as pdfjsLib from "pdfjs-dist";
-import { blocksToContext } from "../server/parser/mdblocks.js";
-import { renderMd } from "./chat.js";
+import { blocksToContext } from "../shared/document/markdown.js";
+import { renderMd } from "./platform/markdown.js";
 import { streamPrompt } from "./chat.js";
-import { api, state, $, el, toast, addChip } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { requestJson } from "./platform/http.js";
+import { $, el, toast } from "./platform/dom.js";
+import { addChip } from "./features/chat/attachments.js";
 import { getTemplates, saveTemplates, applyTemplate } from "./templates.js";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "/vendor/pdf.worker.min.mjs";
@@ -14,9 +20,12 @@ let boxMode = false;
 let renderSeq = 0;
 let parseVersions = [];
 let previewing = false;
+let translatingAll = false;
+let translationAbort = null;
 
 // ---------------- load paper ----------------
 export async function readerLoadPaper(p) {
+  translatingAll = false; translationAbort?.abort();
   $("#tab-parsed").click();
   $("#reader-status").textContent = p.title ? p.title.slice(0, 42) : "";
   document.title = `${p.title || "PiPaper"} · PiPaper`;
@@ -59,6 +68,20 @@ function renderBlocks(paper, blocks, meta, document = {}) {
   wrap.append(el("h1", { class: "doc-title" }, paper.title || "(无标题)"));
   const metaBits = [(paper.creators || []).slice(0, 4).join(", "), paper.year, paper.publication, paper.doi ? `DOI: ${paper.doi}` : "", `引擎: ${document.meta?.engine || meta?.parse?.engine || "?"}`].filter(Boolean);
   wrap.append(el("div", { class: "doc-meta" }, metaBits.join(" · ")));
+  const translationStatus = el("span", { class: "res-note" });
+  const translateAll = el("button", { class: "tool-btn", onclick: async () => {
+    if (translatingAll) { translatingAll = false; translationAbort?.abort(); return; }
+    translatingAll = true; translateAll.textContent = "暂停翻译";
+    try {
+      for (let i = 0; i < blocks.length && translatingAll; i++) {
+        if (state.currentPaper?.id !== paper.id) break;
+        translationStatus.textContent = `双语翻译 ${i + 1}/${blocks.length}`;
+        const blockEl = wrap.querySelector(`.blk[data-idx="${i}"]`);
+        if (blockEl) await translateBlock(blockEl, blocks[i], paper, document.meta, { show: true, index: i });
+      }
+    } finally { translatingAll = false; translateAll.textContent = "整篇双语 / 继续翻译"; translationStatus.textContent = "已保存译文，可随时继续"; }
+  } }, "整篇双语 / 继续翻译");
+  wrap.append(el("div", { class: "sch-row" }, translateAll, translationStatus));
   const notes = document.quality;
   if (notes?.warnings?.length || notes?.errors?.length) wrap.append(el("div", { class: "doc-quality" }, `需核对 ${notes.warnings.length} 项 · 结构错误 ${notes.errors.length} 项`));
 
@@ -99,9 +122,9 @@ function renderBlocks(paper, blocks, meta, document = {}) {
     }, "＋ 对话");
     const transBtn = el("button", {
       class: "add-btn",
-      title: "翻译该段（LibreTranslate）",
+      title: "精确翻译该段（当前 Pi 模型）",
       style: { right: "58px" },
-      onclick: (e) => { e.stopPropagation(); translateBlock(blk); },
+      onclick: (e) => { e.stopPropagation(); translateBlock(blk, b, paper, document.meta, { index: idx }); },
     }, "译");
     if (!previewing) blk.append(addBtn, transBtn);
     if (b.id && document.v === 4) {
@@ -362,33 +385,36 @@ function renderTplEditor(back) {
   );
 }
 
-// per-block translation via the self-hosted LibreTranslate service
-async function translateBlock(blkEl) {
+// Per-block translation reads the original versioned block and uses the current Pi model.
+async function translateBlock(blkEl, block, paper, meta, { show = false, index = 0 } = {}) {
   let box = blkEl.querySelector(".trans-result");
-  if (box) {
+  if (box && !show) {
     box.remove();
     return;
   }
-  const text = blkEl.querySelector(".md-body, p, .tbl-wrap, .formula-blk")?.innerText?.trim() || blkEl.innerText.trim();
-  if (!text) return;
+  if (box?.dataset.complete) return;
+  box?.remove();
   box = el("div", { class: "trans-result" }, "翻译中…");
   blkEl.append(box);
   try {
+    translationAbort = new AbortController();
     const res = await fetch("/api/translate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text.slice(0, 4500), target: "zh" }),
+      body: JSON.stringify({ paperId: paper.id, versionId: meta?.versionId, blockId: block.id || `legacy_${index}`, sessionId: state.sessionId }),
+      signal: translationAbort.signal,
     });
     const j = await res.json();
     if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
-    box.textContent = j.translated;
-    box.append(el("div", { class: "trans-meta" }, "LibreTranslate · 点击「译」收起"));
+    renderMd(j.translated, box); box.dataset.complete = "true";
+    box.append(el("div", { class: "trans-meta" }, `${j.model?.id || "Pi 模型"} · 已检查公式、数值和结构 · 点击「译」收起`));
+    for (const warning of j.warnings || []) box.append(el("div", { class: "trans-meta" }, warning));
   } catch (e) {
-    box.textContent = "翻译失败: " + e.message;
+    box.textContent = e.name === "AbortError" ? "翻译已暂停，点击「译」重试" : "翻译失败: " + e.message;
   }
 }
 
-function renderChipsIf() { import("./app.js").then((m) => m.renderChips()); }
+function renderChipsIf() { renderChips(); }
 
 export function lightbox(src, caption) {
   const back = el("div", {
@@ -451,6 +477,31 @@ function initSelection() {
     }
     popup.hidden = true;
   });
+  $("#btn-sel-evidence").addEventListener("click", async () => {
+    const text = selectedSourceText();
+    popup.hidden = true;
+    if (previewing) return toast("请先采用该版本，再保存证据", true);
+    if (!text) return;
+    const paper = state.currentPaper;
+    if (!paper) return toast("先选择论文再保存证据", true);
+    if (!state.projectId) return toast("先在顶部选择项目，才能保存证据卡", true);
+    try {
+      await requestJson(
+        "/api/research/projects/" + encodeURIComponent(state.projectId) + "/evidence",
+        {
+          method: "POST",
+          body: {
+            type: "fact",
+            content: text.slice(0, 8000),
+            source: { kind: "paper", paperId: paper.id, page: parseInt(popup.dataset.page) || null },
+          },
+        },
+      );
+      toast("已保存为证据卡，可在「研究」面板查看");
+    } catch (e) {
+      toast("保存证据失败: " + e.message, true);
+    }
+  });
 }
 
 // ---------------- pdf view ----------------
@@ -488,8 +539,7 @@ async function renderPage(pno) {
   }
   const canvas = pageEl.querySelector("canvas");
   const textDiv = pageEl.querySelector(".textLayer");
-  // 沉浸模式下栏位更宽：放开 900px 上限，让 PDF 铺满栏位
-  const maxW = document.getElementById("immersive")?.hidden === false ? 1600 : 900;
+  const maxW = 900;
   const cssWidth = Math.min(maxW, holder.clientWidth - 48);
   const scale = cssWidth / page.getViewport({ scale: 1 }).width;
   const viewport = page.getViewport({ scale });
@@ -711,10 +761,8 @@ function setBusyStatus(txt) {
 
 async function reloadPaperQuiet(paperId) {
   if (state.currentPaper?.id !== paperId) return;
-  const { loadPapers, renderPapers } = await import("./sidebar.js");
-  await loadPapers();
+  await refreshLibrary();
   state.currentPaper = state.papers.find((p) => p.id === paperId) || state.currentPaper;
-  renderPapers();
   const p = state.currentPaper;
   const res = await fetch(`/api/papers/${p.id}/blocks`).then((r) => r.json());
   updateParseStatus(res.status, res.engine, res.error);
@@ -723,7 +771,8 @@ async function reloadPaperQuiet(paperId) {
 }
 
 // ---------------- init ----------------
-export function initReader() {
+export function initReader({ reloadLibrary } = {}) {
+  refreshLibrary = reloadLibrary;
   $("#tab-parsed").addEventListener("click", () => switchTab("parsed"));
   $("#tab-pdf").addEventListener("click", () => switchTab("pdf"));
   initSelection();

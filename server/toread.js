@@ -1,8 +1,11 @@
+import { writeFile as managedWrite, readJsonState, writeJsonState, trashPath, registerFile } from "./storage/files.js";
 // 待读清单（to-read）：检索结果的元数据暂存，不下载 PDF。
 // 用户在清单里显式点“加入项目”时才走 /api/search/import 下载入库。
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR } from "./config.js";
+import { normalizePurposeCategories } from "../shared/literature-purpose.js";
+import { pickResearchMatch } from "./search/literature-purpose.js";
 
 const FILE = path.join(DATA_DIR, "to-read.json");
 const MAX = 200;
@@ -19,7 +22,7 @@ load();
 
 function persist() {
   try {
-    fs.writeFileSync(FILE, JSON.stringify(entries, null, 1));
+    managedWrite(FILE, JSON.stringify(entries, null, 1));
   } catch {}
 }
 
@@ -44,6 +47,8 @@ function pick(e) {
     abstract: String(e.abstract || "").slice(0, 2000),
     keywords: (e.keywords || []).slice(0, 8),
     sources: (e.sources || []).slice(0, 5),
+    ...(e.researchMatch ? { researchMatch: pickResearchMatch(e.researchMatch) } : {}),
+    ...(Object.hasOwn(e, "purposeCategories") ? { purposeCategories: normalizePurposeCategories(e.purposeCategories) } : {}),
   };
 }
 
@@ -79,4 +84,14 @@ export function toreadDelete(id) {
   entries = entries.filter((e) => e.id !== id);
   persist();
   return entries.length < before;
+}
+
+export function toreadUpdate(id, patch = {}) {
+  const entry = entries.find(value => value.id === id);
+  if (!entry) throw Object.assign(new Error("待读条目不存在"), { status: 404 });
+  if (!Object.hasOwn(patch, "purposeCategories"))
+    throw Object.assign(new Error("缺少文献用途分类"), { status: 400 });
+  entry.purposeCategories = normalizePurposeCategories(patch.purposeCategories);
+  persist();
+  return entry;
 }

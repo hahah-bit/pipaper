@@ -1,4 +1,7 @@
-import { api, state, $, el, toast, askConfirm } from "./app.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast, askConfirm } from "./platform/dom.js";
+import { openSettings } from "./settings.js";
 
 // Resource manager: visual entry for pi skills / extensions / packages / MCP,
 // with per-project skill & extension scoping for sessions bound to a project.
@@ -8,8 +11,7 @@ let activeTab = "skills";
 let saving = false;
 
 export function initResources() {
-  window.addEventListener("pi:resources", () => { if (!$("#resources-backdrop").hidden) loadResources(); });
-  $("#btn-resources").addEventListener("click", openResources);
+  window.addEventListener("pi:resources", () => { if (!$("#settings-resources").hidden) loadResources(); });
   $("#btn-resources-close").addEventListener("click", () => ($("#resources-backdrop").hidden = true));
   $("#resources-backdrop").addEventListener("click", (e) => {
     if (e.target.id === "resources-backdrop") e.target.hidden = true;
@@ -24,8 +26,10 @@ export function initResources() {
   );
 }
 
-async function openResources() {
-  $("#resources-backdrop").hidden = false;
+export async function openResources() {
+  return openSettings("resources");
+}
+export async function loadResources() {
   try {
     resData = await api.resources();
   } catch (e) {
@@ -244,13 +248,6 @@ function renderPackages(body) {
       }, "移除")
     ));
   }
-}
-
-async function loadResources() {
-  try {
-    resData = await api.resources();
-  } catch {}
-  renderRes();
 }
 
 function renderMcp(body) {

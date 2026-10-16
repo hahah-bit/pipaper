@@ -1,0 +1,107 @@
+[
+  {
+    "id": "attention",
+    "text": "Scaled dot product self attention divides query key similarities by the square root of the key dimension before softmax.",
+    "english": "scaled dot product self attention key dimension",
+    "chinese": "点积注意力怎样缩放查询与键的相似度？",
+    "background": "点积注意力在 softmax 前使用键维数平方根缩放相似度。"
+  },
+  {
+    "id": "dropout",
+    "text": "Dropout randomly disables hidden units during training to reduce coadaptation and regularize neural networks.",
+    "english": "dropout randomly disables hidden units training",
+    "chinese": "随机失活怎样减少神经网络单元共同适应？",
+    "background": "随机失活通过训练时随机停用隐藏单元减少共同适应。"
+  },
+  {
+    "id": "batchnorm",
+    "text": "Batch normalization standardizes activations using minibatch mean and variance with learned scale and offset parameters.",
+    "english": "batch normalization minibatch mean variance activations",
+    "chinese": "批归一化如何利用小批次均值方差处理激活？",
+    "background": "批归一化依据小批次均值和方差标准化激活，并学习缩放与偏移。"
+  },
+  {
+    "id": "residual",
+    "text": "Residual networks add identity shortcut connections so layers learn residual mappings instead of complete transformations.",
+    "english": "residual networks identity shortcut mappings",
+    "chinese": "残差网络的恒等捷径连接让层学习什么？",
+    "background": "残差网络利用恒等捷径连接，使层学习残差映射。"
+  },
+  {
+    "id": "convolution",
+    "text": "Convolution applies shared local filters across spatial positions to extract translation equivariant image features.",
+    "english": "convolution shared local filters translation equivariant",
+    "chinese": "卷积的共享局部滤波器如何提取平移等变特征？",
+    "background": "卷积在空间位置共享局部滤波器，以提取平移等变图像特征。"
+  },
+  {
+    "id": "contrastive",
+    "text": "Contrastive learning pulls representations of positive pairs together while separating representations of negative pairs.",
+    "english": "contrastive learning positive negative representations",
+    "chinese": "对比学习如何处理正样本对和负样本对的表示？",
+    "background": "对比学习拉近正样本对的表示，分离负样本对的表示。"
+  },
+  {
+    "id": "distillation",
+    "text": "Knowledge distillation transfers information from a teacher model to a student model using softened output distributions.",
+    "english": "knowledge distillation teacher student softened distributions",
+    "chinese": "知识蒸馏如何用软化输出将教师信息传给学生？",
+    "background": "知识蒸馏使用软化输出分布，将教师模型的信息传给学生模型。"
+  },
+  {
+    "id": "beam",
+    "text": "Beam search keeps a bounded set of high scoring partial sequences and expands them during autoregressive decoding.",
+    "english": "beam search partial sequences autoregressive decoding",
+    "chinese": "束搜索在自回归解码中保留和扩展哪些序列？",
+    "background": "束搜索在自回归解码中保留有限个高分部分序列并继续扩展。"
+  },
+  {
+    "id": "retrieval",
+    "text": "Retrieval augmented generation retrieves relevant source passages and conditions generated answers on those passages.",
+    "english": "retrieval augmented generation relevant source passages",
+    "chinese": "检索增强生成怎样让回答依据相关原文段落？",
+    "background": "检索增强生成检索相关来源段落，并以这些段落为条件生成回答。"
+  },
+  {
+    "id": "milvus",
+    "text": "A vector database indexes dense embeddings and supports similarity search over stored document representations.",
+    "english": "vector database dense embeddings similarity search",
+    "chinese": "向量数据库怎样索引文档表示并进行相似度搜索？",
+    "background": "向量数据库索引稠密嵌入，并对已存储的文档表示进行相似度搜索。"
+  },
+  {
+    "id": "rrf",
+    "text": "Reciprocal rank fusion combines retrieval rankings using reciprocal rank contributions without requiring comparable raw scores.",
+    "english": "reciprocal rank fusion retrieval rankings scores",
+    "chinese": "倒数排名融合为何不要求原始检索分数可比？",
+    "background": "倒数排名融合使用倒数排名贡献组合检索排序，因此无需可比的原始分数。"
+  },
+  {
+    "id": "adam",
+    "text": "Adam maintains exponentially decayed estimates of gradient first moments and second moments to adapt parameter updates.",
+    "english": "adam gradient first second moments parameter updates",
+    "chinese": "自适应矩估计优化器怎样使用梯度一阶和二阶矩？",
+    "background": "Adam 维护梯度一阶和二阶矩的指数衰减估计，以调整参数更新。"
+  },
+  {
+    "id": "pca",
+    "text": "Principal component analysis projects centered observations onto orthogonal directions that maximize explained variance.",
+    "english": "principal component analysis orthogonal explained variance",
+    "chinese": "主成分分析如何选择解释方差最大的正交方向？",
+    "background": "主成分分析将中心化观测投影到解释方差最大的正交方向。"
+  },
+  {
+    "id": "crossval",
+    "text": "Cross validation partitions observations into training and held out folds to estimate model generalization performance.",
+    "english": "cross validation held out folds generalization",
+    "chinese": "交叉验证怎样用留出折估计模型泛化性能？",
+    "background": "交叉验证将观测分为训练折和留出折，以估计模型泛化性能。"
+  },
+  {
+    "id": "bootstrap",
+    "text": "Bootstrap resampling draws samples with replacement from observed data to estimate uncertainty in a statistic.",
+    "english": "bootstrap resampling replacement statistic uncertainty",
+    "chinese": "自助重采样怎样通过有放回抽样估计统计量不确定性？",
+    "background": "自助重采样从观测数据有放回抽样，以估计统计量的不确定性。"
+  }
+]

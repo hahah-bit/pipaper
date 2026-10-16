@@ -1,117 +1,235 @@
-# PiPaper · 论文精读工作台
+# PiPaper · 论文阅读与研究工作台
 
-以 [pi agent](https://github.com/badlogic/pi-mono)（`@earendil-works/pi-coding-agent`）为内核的论文阅读 / 对话 Web UI：把「读论文」所需的一切——文献库、解析阅读器、AI 对话、笔记与知识库——装进一个本地应用。
+PiPaper 是基于 [Pi agent](https://github.com/badlogic/pi-mono) 的本地 Web 工作台，将文献管理、PDF 阅读、AI 对话、多模态知识库、独立论文研读、选题分析和写作放在同一套工作流程中。
 
-完全复用 pi 的会话管理与模型认证（`~/.pi/agent` 下的 `auth.json`、`models.json`、JSONL 会话）：pi 里能用什么模型，这里就能用什么模型，不引入任何额外账号体系，也不需要在本应用填写模型密钥。
-
-## 功能一览
-
-### 阅读
-
-- **两层解析管线**：MinerU（云端 API / 本地 CLI，公式表格精排）→ unstructured（云端 API / 本地 Docker）→ pdf.js 兜底（零配置，图注定位自动裁图）。中间态为带页码 + 坐标的 blocks.json v2，图表公式按原位置插回正文
-- **双视图阅读器**：解析视图（KaTeX 公式、表格、图片按原大小排版）与 pdf.js 原文（文字划选 + ⬚ 框选截图），悬停任意块可「＋对话」
-- **段落即时翻译**：LibreTranslate 本地 Docker，或 LLM 模板「翻译选区」
-
-### 对话（原生 pi 能力）
-
-- 原生 JSONL 会话：树状分支 / compaction / 自动重试全保留，按项目分组，在 pi TUI 打开同一目录可无缝接力
-- 交互提问：Agent 发起的确认、选择、文本提问显示为网页小窗（含 Pi 扩展 `ctx.ui.*`），Esc 取消
-- 排队 / 插队：回复中介入或等任务完成后处理，待处理消息显示在输入框下方
-- 原生状态：上下文占用、累计 Token、缓存与费用实时显示；支持压缩、取消、重试与 HTML / JSONL 导出
-- `@` 文件引用：论文解析全文、插图、工作区文件、library PDF 一键入上下文
-- 论文域工具：`read_paper`（outline/section/search/full）、`list_library`、`search_library`、`get_paper_pages`（渲染论文页给视觉模型）
-- 思考过程单行滚动、完成后折叠可展开；会话树查看节点 / 标签 / 分支切换
-
-### 知识沉淀
-
-- **Dock 功能导航 + 可拖动工作区**：右侧 macOS dock 式图标栏（悬浮放大 + 显示功能名），功能按大分类分组；点击在右侧打开占满阅读器区域的抽屉，内部是 dockview 工作区——每个功能是一个可拖动面板，拖标签即可分栏 / 重排 / 组合，布局自动保存；再点击同一图标收起该面板，全部面板关闭时自动回到默认的阅读器视图。侧栏 / 对话 / 阅读器折叠后保留 44px 窄条（图标 + 展开按钮），随时点回
-- **图表分析三模块**：🖼 图解析（每张图原图在上、AI 逐图解读直接跟在图下方）、📊 表解析（每张原表在上、逐表解读在下方）、🗺 复现大纲（含 mermaid 实验流水线）；文档骨架按「图N/表N」小节固化，生成后自动挂到对应原图原表下
-- **LaTeX·MD 编辑器**：知识库 Markdown 的分屏编辑（源码 + KaTeX 实时预览，与阅读器同一渲染管道），公式插入工具条；点「🤖 AI」展开模型辅助改稿——整篇或选中段落下发指令（润色 / 中译英 / LaTeX 纠错），临时会话返回修改稿，行级 diff 确认后应用，Ctrl+S 保存回知识库
-- **沉浸式模块化工作台**：模块注册表 + 可组合布局（两栏 / 一大两小），栏位随时切换模块，组合与栏宽持久化；首批模块含论文阅读器、对话、粗读解析、思维导图、流程图
-- **一键生成**：精读 / 粗读笔记、markmap 思维导图、mermaid 流程图（生成走临时 pi 会话，过程实时可见，完成自动清理）
-- 知识库按论文分目录管理（粗读 / 精读 / 图表分析分库），笔记管理弹窗支持预览与递归删除
-
-### 文献管理
-
-- **Zotero 7 集成**：读取 `zotero.sqlite` 快照（自动探测数据目录，Zotero 开着也能同步），分类树 + 搜索，PDF 附件直读
-- **学术检索**：ReadScore 综合推荐排序（悬停查看六个评分维度），年份 / 分区 / 开放全文筛选会记忆；「＋待读」只存元数据，点「＋项目」才下载开放 PDF 并导入
-
-### 其他
-
-- 框选批注：提示词模板（⚙ 可编辑，支持 `{{选区}}`/`{{批注}}` 占位符）+ 批注输入，「▶ 问 AI」直达模型；图 / 表 / 公式各有专用分析模板
-- 剪贴板管理面板：自动收集应用内复制与划选，2 天自动清理
-- 6 套主题配色（默认 / Nord / GitHub Dark / Gruvbox / 纸白 / Solarized Light）
-- 本地 / 链接视频播放，截帧问 AI
-- 环境自检：首启自动检查依赖，逐项给出就绪状态与安装指引
-- 技能 / 提示模板 / 扩展 / Packages 管理（Pi 原生 `DefaultPackageManager`，支持 npm / Git / 本地路径来源）
+对话复用 Pi 的模型配置、认证与 JSONL 会话，模型通过 `~/.pi/agent/` 配置。应用资源由 SQLite 清单统一管理，文件系统保存原文与成果，Milvus 保存检索索引。Embedding 与重排使用服务端百炼凭据。
 
 ## 快速开始
 
-前置：[Node.js](https://nodejs.org/) ≥ 22.13（用到内置 `node:sqlite`）+ pi 登录一次：
+需要 **Node.js ≥ 22.13**，推荐 Node.js 24，以及 Git、npm。当前存储与 RAG 重构位于 `codex/unified-storage-rag` 分支，以下命令获取该版本：
 
 ```bash
-npm install -g @earendil-works/pi-coding-agent   # 安装 pi CLI
-pi                                               # 首次运行按提示登录模型
-```
-
-拉取并启动：
-
-```bash
-git clone <本仓库> && cd piagent_ui_reading
+git clone --branch codex/unified-storage-rag https://github.com/hahah-bit/pipaper.git
+cd pipaper
 npm ci
-npm start        # 自动构建前端并启动（等价 npm run dev）
+npm start
 ```
 
-打开 **http://127.0.0.1:4318**（端口见 `data/config.json` 或环境变量 `PORT`）。首次进入自动弹出环境检查面板，缺什么会有下载链接与安装命令；之后可在 ⚙ 设置 → 「环境检查」随时打开。
+打开 [http://127.0.0.1:4318/](http://127.0.0.1:4318/)。`npm start` 会先构建前端再启动服务；`npm run dev` 使用相同流程，没有自动热更新。端口由环境变量 `PORT` 或 `data/config.json` 的 `port` 指定，启动日志显示实际地址。
+
+AI 功能需要配置 Pi 模型。已经使用 Pi 的用户可以沿用现有配置；首次使用可安装与本项目 SDK 对应版本的 CLI，再按提示配置认证：
+
+```bash
+npm install -g @earendil-works/pi-coding-agent@0.84.4
+pi
+```
+
+首次进入可通过环境诊断查看依赖状态，之后在 **设置 → 环境诊断** 打开。未配置云端解析器时，PDF 阅读可使用内置 PDF.js；多模态入库需要另外启用下文的 Milvus 和模型服务。
+
+## 界面与工作流程
+
+主界面由文献库、对话、阅读器和可分栏工作区组成。右侧提供八个入口：
+
+| 入口 | 用途 |
+| --- | --- |
+| 阅读 | PDF 原文与结构化解析、批注、翻译、加入对话 |
+| 检索 | 知识库证据检索；外部学术来源找论文、加入待读或导入项目 |
+| 解读 | 粗读、逐图逐表分析、思维导图、流程图与 Archify 交互图解 |
+| 视频 | 播放、截帧提问、时间轴、思维导图与批量分析 |
+| 写作 | Markdown、LaTeX 与当前会话产出 |
+| 资料 | 资源、笔记与成果、处理任务、待核对、回收站 |
+| 选题 | 打开独立的 `/topics` 选题分析页面 |
+| 设置 | 常规、知识库连接与模型、技能与扩展、环境诊断 |
+
+工作区支持拖动标签分栏、调整尺寸与布局恢复。切换入口保留检索结果、筛选条件和编辑草稿；关闭标签才释放工作区。主界面、选题与视频共用六套主题和滚动条样式，支持跨页同步；字号可选紧凑、标准、大、特大。
+
+文献列表负责选文献与显示简短状态。**解析操作在阅读器；解析并入库／重建在资料 → 资源；进度与暂停、继续、取消在资料 → 处理任务。**
+
+常见流程：导入 PDF 或同步 Zotero → 解析与阅读 → 对话、研读或图表解读 → 保存笔记／报告 → 解析并入库 → 检索证据 → 整理写作。
+
+## 统一存储、版本与回收站
+
+统一清单位于 `data/storage/catalog.sqlite`，使用 Node 内置 SQLite、WAL 和事务。原始文件、解析版本、图表公式、笔记、研读与选题成果、会话附件、暂存及运维文件通过同一机制登记。
+
+- **稳定身份与历史版本**：资源 ID 保持稳定，内容更新产生新版本；SHA-256 内容对象去重。更新使用修订号检测冲突，冲突返回 `409`，编辑器保留草稿。
+- **状态分开管理**：生命周期为正常／回收站／清理中／已清理；内容记录可用、过期、待核对、缺失或损坏；后台任务单独记录排队、运行、暂停、等待配置、中断、成功、失败或取消。
+- **依赖失效与恢复**：原文、解析或模型配置变化仅使受影响阶段及下游过期。新版本完成校验后才发布；重建失败保留上一个发布版本，并明确显示过期状态。后台任务持久化检查点，重启后可以继续。
+- **删除与清理**：默认进入 30 天回收站，立即从检索排除并撤销旧任务发布权限。所属、共享资源和已保存的独立快照分别处理；物理清理失败保留可重试操作。
+- **外部文件**：Zotero 原库、外部工作区与 Pi 全局认证不由回收站删除。应用仅管理自己的文件、快照与外部引用。
+
+首次启动只为旧数据建立清单，不自动调用模型或全库入库。迁移保留既有文献 ID、解析版本、研读固定版本及附件链接；提供扫描、备份和回滚工具。迁移命令及生命周期 API 见 [统一存储与多模态知识库](docs/storage-rag.md)。
+
+## 多模态入库
+
+```mermaid
+flowchart LR
+    A[PDF / Markdown / 保存成果] --> B[结构化解析]
+    B --> C[清洗与视觉补全]
+    C --> D[元素目录与引用关联]
+    D --> E[标题树分块]
+    E --> F[背景与问题扩写]
+    F --> G[百炼 Embedding]
+    G --> H[Milvus 发布]
+```
+
+解析复用 MinerU → unstructured → PDF.js，保存 Markdown、结构化块、页码、坐标与引擎原始证据。扫描页、截图文字、图表、公式和算法由 Pi 视觉模型补全；候选经过结构、来源及数值等检查。疑点保存原图并进入待核对列表，可靠部分可继续入库，检索显示覆盖缺口。
+
+文本、图片、表格、公式、代码／算法、科学脚注和参考文献分别管理。图片接口提供 base64 与 MIME，表格为 HTML，公式为 LaTeX。正文优先按图表／公式编号建立引用，支持跨页和多处引用，使用稳定占位符与邻接简述；页眉页脚等冗余从检索正文移除，科学注释在可确认的位置加入说明。
+
+分块建立完整标题树，按最深实际标题归属，超限按段落、列表项、句子递归细分。同一标题下的块保留相同标题路径，默认目标 4500 UTF-8 字节、上限 6000 字节、重叠最多 300 字节。每块生成背景说明与四个问题，默认中文、英文各两个；扩写只用于检索，召回返回原文和对应版本的附件。
+
+### 启用向量与模型服务
+
+需要 Docker / Docker Compose。启动固定版本 **Milvus 3.0.2** 及其依赖：
+
+```bash
+docker compose --profile rag up -d milvus
+docker compose --profile rag ps
+```
+
+Milvus、etcd、MinIO 使用持久化卷。向量服务默认 `127.0.0.1:19530`，健康检查为 `http://127.0.0.1:9091/healthz`；停止容器保留数据卷。Node SDK 固定为 `3.0.6`。
+
+百炼密钥按以下顺序由服务端读取：`PIPAPER_EMBEDDING_API_KEY` → `DASHSCOPE_API_KEY` → `data/credentials/embedding.json` → Pi 百炼认证。使用本地文件时，手动创建以下内容，并替换占位值：
+
+```json
+{
+  "apiKey": "填写你自己的百炼 API Key"
+}
+```
+
+环境变量需在启动应用的终端中设置。服务不会自动读取 `.env`。密钥文件位于 Git 忽略的 `data/` 内；前端配置接口只返回凭据状态。
+
+在 **设置 → 知识库** 检查百炼地域／业务空间接口地址、Milvus 地址及模型。默认值如下，Pi 模型需要已配置并可用：
+
+| 功能 | 默认模型／参数 |
+| --- | --- |
+| Embedding | 百炼 `text-embedding-v4`，1024 维，每批最多 10 条，区分 document／query |
+| 重排 | 百炼 `qwen3.7-text-rerank`，默认复用 Embedding 凭据，可用 `PIPAPER_RERANK_API_KEY` 单独配置 |
+| 视觉清洗 | Pi `zai-coding-cn/glm-4.6v`，备用 `deepseek/deepseek-v4-flash-vision-exp` |
+| 语义扩写与检索分析 | Pi `deepseek/deepseek-v4-flash` |
+| 检索选区翻译 | Pi `zai-coding-cn/glm-4.7` |
+
+然后在 **资料 → 资源** 选择资源启动「解析并入库」。缺少凭据、服务或可用额度时，任务进入等待配置，可修复配置后继续／重试。入库启动会先检查 Embedding 和 Milvus，再进行模型清洗与扩写。
+
+## Self-RAG 检索与时间证据
+
+知识库检索采用：**问题改写 → 多路召回 → 加权融合 → 专门重排 → 证据反思 → 必要时补检索一次 → 带引用分析与核对**。
+
+- 原始问题与改写同时检索正文／元素的稠密向量和 BM25，并加入本地原文、标题元数据与精确图表编号召回。加权 RRF 融合后交给百炼重排，MMR 控制近重复结果；可查看各路排名、相关度与依据。
+- 分析评估子问题覆盖与证据支持，最多两轮检索。模型输出引用原文及已核验元素；无法完成核对时展示原始证据和原因。重排不可用时明确显示降级。
+- 支持相关性优先、近期优先、截至日期、日期区间和历史对比等策略。相似来源保留不同日期，结合任务比较适用性，提示未知日期、未来年份、时间精度与差异；论文发表时间和成果生成时间分别标注。
+- 每条证据展示原文片段、完整标题路径、页码、来源、版本及日期依据，下方提供对应图表和独立公式。行内数学在原位置渲染，共享附件去重，大附件按预算加载。
+- 在英文正文或元素说明中选中内容，可「翻译」或「添加进对话」。点击翻译才在当前文本块下方展开译文；默认 GLM，可收起、重试。加入对话保留来源信息，随用户下一条消息发送。
+
+这里的 Self-RAG 使用通用 Pi 模型进行自反思检索，没有训练 reflection token 专用模型。**“最新”判断限于本地已入库资料**；未联网核验时无法确认全球最新。当前没有 GraphRAG，保留独立检索提供方接口，后续可接入图谱应用。
+
+Pi 对话可通过 `search_knowledge` 和 `get_knowledge_element` 使用相同证据。参数、评分、时间策略、流式接口与评测见 [Self-RAG 检索说明](docs/self-rag-retrieval.md)。
+
+## 阅读、研读与选题
+
+**阅读器**支持 PDF 原文、文字划选、框选截图及结构化解析视图，使用 KaTeX 渲染数学，保留图表原文证据。解析版本可以预览、对比、采用与本地重建；已有采用版本时新结果先作为候选保存。段落与整篇双语翻译通过 Pi 模型执行，支持缓存、暂停和继续。复杂公式、表格与算法疑点仍需结合原文核对。详见 [PDF 解析说明](docs/pdf-parser.md)。
+
+**独立论文研读**保留 `/study/:taskId` 三栏页面：原文、研读引导、自由提问。可以选择理解／复现／创新目标，按粗读、精读、总结推进，检查点与答题记录持久化。引导与自由提问使用独立会话，任务固定解析版本；保存到知识库的成果与附件作为独立快照保留。可选生图扩展在页面内安装与配置，不会自动运行实验训练。
+
+**选题分析**从右侧「选题」进入 `/topics`，任务页面为 `/topics/:id`，保留独立报告、证据检索与方向对话。首次选题结合调查卡、真实文献、代码、硬件／数据证据及政策来源生成候选问题、验证路线与期刊分析；保留引用与来源，证据不足显示缺口。当前尚未实现基于既有论文与技术栈的二次选题。详见 [选题分析说明](docs/topic-analysis.md)。
+
+## 项目研究（可选）
+
+**研究模块**为选定项目附加可选研究档案：项目栏 🔬 或 dock「研究」打开研究概览，记录研究问题、目标、成果关联与下一步行动；阅读选区与知识检索选区可「保存为证据」（固定来源与页码），面板内维护文献对比表（单元格区分零值/未报告/未核对/不适用并附来源）、想法与假设（关联支持/反对证据，记录决策与历史）；支持研究记录 JSON 导出与幂等导入。全部记录进统一存储与回收站，不启用时各功能照常使用。详见 [研究模块说明](docs/research.md)。
+
+## 对话、写作与视频
+
+**Pi 原生对话**支持 JSONL 会话、分支、压缩、重试、排队／插队、扩展交互和导出。多页面打开同一会话时后连接的页面接管控制，原页面可以重新连接。每个问题结束后，思考、工具步骤与模型用量合并到一条默认折叠的「执行记录」，回答和失败提示保留；输入区的高级操作、快捷提问与剪贴板集中在「更多」。论文工具包括 `read_paper`、`list_library`、`search_library`、`get_paper_pages`。详见 [Pi 原生接入](docs/pi-native-integration.md)。
+
+**知识与写作**支持粗读／精读笔记、逐图逐表解读、markmap、Mermaid、Markdown 分屏编辑与 AI 修改差异确认。LaTeX 工作区提供文件树、源码、`pdflatex` 编译和 PDF 预览，需要本机 TeX 环境。Archify 交互图解复用已有上游仓库或技能目录，路径在连接设置或 `PIPAPER_ARCHIFY_DIR` 中指定；产物校验后发布，并保存修改版本。
+
+**视频**拥有右侧独立入口及 `/videos` 页面，可播放本地／远程视频、截帧提问、生成时间轴与思维导图，批量入口按实际视频数量出现。视频对话使用独立会话归属，不会接管主界面对话。当前本地视频是页面临时对象，刷新后需重新选择，持久化视频资料库尚未实现。
 
 ## 可选组件
 
-| 组件 | 用途 | 获取方式 |
-|---|---|---|
-| Docker sidecar | unstructured 本地解析（:8000）+ LibreTranslate 翻译（:5001），`docker compose up -d` | [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
-| [Zotero 7](https://www.zotero.org/download/) | 文献库同步（自动探测数据目录） | https://www.zotero.org/download/ |
-| [MinerU CLI](https://github.com/opendatalab/MinerU) | 公式 / 表格精排（本地模式），`pip install "mineru[core]"`；不装也可用云端 API | https://github.com/opendatalab/MinerU |
-| MinerU token | 云端解析 API（⚙ 设置填写） | https://mineru.net/ |
-| unstructured API key | 云端解析 API（⚙ 设置填写） | https://unstructured.io/ |
-| Semantic Scholar key | 学术检索解除限速（⚙ 设置 → 检索源密钥） | https://www.semanticscholar.org/product-api |
+| 组件 | 用途与启用方式 |
+| --- | --- |
+| [Zotero](https://www.zotero.org/download/) | 文献与分类同步，读取 SQLite 快照和附件引用 |
+| [MinerU](https://github.com/opendatalab/MinerU) | 本地 CLI 或云端结构化解析，在设置配置模式与认证 |
+| [unstructured](https://unstructured.io/) | 云端解析或 `docker compose up -d unstructured`，本地默认端口 8000 |
+| Docker / Compose | 本地 Milvus 与可选解析服务 |
+| TeX 发行版 | LaTeX 工作区的 `pdflatex` 编译 |
+| [Archify](https://github.com/tt-a1i/archify) | 交互架构、流程、时序、数据流与状态图 |
+| 学术检索服务凭据 | 可选 OpenAlex / Semantic Scholar 密钥，在设置配置 |
 
-> **隐私**：所有密钥与运行数据只存本机 `data/`，接口返回一律打码；`library/` 的 PDF、`knowledge/` 的笔记与解析缓存均已 gitignore，**不会进入仓库**。
+学术检索支持结合当前项目研究档案与 RAG 原文证据，为论文显示研究匹配分及「找创新点 / 改模块 / 选题必读 / 背景参考」用途建议，可按用途筛选、手工修改待读分类，并在导入项目后保留分类。各来源分别显示健康状态，全部来源失败会明确报告故障。用法与接口见 [学术搜索与当前研究匹配](docs/academic-research-search.md)。
 
-## 界面
+应用内容与状态主要保存在本机；云端解析、模型和向量 API 调用会将对应输入发送给所配置的服务。Pi 认证保存在 `~/.pi/agent/`，应用配置与百炼本地凭据保存在 `data/`。默认 `data/`、`knowledge/`、本地 `library/*.pdf` 与构建包已被 Git 忽略。
 
+## 代码结构
+
+```text
+server/
+  application.js        创建 HTTP 应用、装配路由，供启动与隔离测试复用
+  bootstrap/            启动、迁移、恢复、退出
+  modules/              文献、学术检索、写作文件、媒体、摘录与设置路由
+  platform/
+    ai/                 公共模型网关、JSON 解码与业务会话适配器
+    academic/           代理、传输、来源元数据与 arXiv 节流
+    jobs/               运行器执行权、去重、取消与安全释放
+    storage/ files/     任务仓储投影与受管路径工具
+  storage/              SQLite 清单、版本、文件操作、迁移、维护与状态 API
+  rag/ parser/ search/  入库检索、解析版本与论文排序规则
+  native-harness.js     Pi 会话控制与已注册业务上下文
+  studies.js topics/    研读检查点与选题业务流程（保留兼容入口）
+src/
+  app.js                启动装配及跨功能回调
+  platform/             HTTP、DOM、Markdown、公共 UI、存储客户端
+  features/
+    chat/ library/      对话与文献状态、附件及欢迎页
+    retrieval/          独立知识检索面板
+  shell/                旧面板使用的状态兼容投影
+  dock.js taskWorkspace.js workspaceNavigation.js  导航与布局迁移
+  study/ topics/        独立研读与选题页面
+shared/
+  contracts/            状态常量与资源、任务、引用、工作区类型声明
+  document/             前后端共用的纯文档处理
+public/                 页面、共用样式与构建产物
+scripts/ tests/ docs/   工程检查、测试与设计说明
+data/ library/ knowledge/  默认运行数据、文献与知识成果
 ```
-┌──────────┬──────────────────────┬───────────────────────────┐
-│ 侧边栏    │ 会话（左）             │ 阅读器（右）                │
-│ Zotero   │ pi 会话列表/新建/删除   │ 解析视图 ｜ PDF 原文         │
-│ 分类/文献 │ 模型/思考深度切换       │ 解析、框选、状态            │
-│ 导入/搜索 │ 上下文 chips + 输入    │ 公式/表格/图片原样排版       │
-└──────────┴──────────────────────┴───────────────────────────┘
+
+## 开发与验证
+
+```bash
+npm run check
+npm test
+npm run build
 ```
 
-## 目录结构
+`npm run check` 检查 JavaScript 语法、前端循环依赖、启动入口反向导入和平台层业务依赖。GitHub CI 在 Windows 与 Linux 的 Node 24 环境执行检查、测试与构建。共享类型声明是逐步类型化的入口，目前未对全仓启用 TypeScript 类型检查。
 
+自动测试覆盖存储与版本、生命周期、任务恢复、解析、元素关联、分块、检索时间策略、引用核对、选区翻译、Pi 会话和前端状态。真实 Milvus 测试需先启动本地服务，再显式启用：
+
+```powershell
+$env:PIPAPER_TEST_MILVUS = "1"
+node --test tests/rag-milvus.test.mjs
 ```
-server/                  Node 服务端（Express + pi SDK 桥接）
-  native-harness.js      会话、资源与项目绑定
-  session-controller.js  原生运行时生命周期和单控制连接
-  session-routes.js      SSE、状态、会话树、队列、工具与导出接口
-  paper-tools.js         论文工具和领域提示词
-  setup-status.js        环境自检（能力注册表 + 探测）
-  zotero.js              Zotero 集成（sqlite 快照）
-  parser/                两层解析管线 + merge（中间态 blocks.json v2）
-  assets/                随仓库分发的数据资产（期刊 SJR / 分区指标）
-src/ public/             前端（esbuild 打包，marked + KaTeX + pdf.js）
-data/ library/ knowledge/   运行数据 / 本地 PDF / 笔记（均不入库）
+
+已配置模型、百炼和 Milvus 时，可以运行隔离的真实检索评测，**会产生实际 API 用量**：
+
+```bash
+node --use-system-ca scripts/rag-recall.mjs
+node --use-system-ca scripts/retrieval-evaluate.mjs
 ```
+
+脚本使用专用评测数据与临时集合，不改动用户文献发布索引。固定 30 问夹具可验证连接、召回和不退步；当前满分结果不能证明扩写或重排提升了真实多文献检索质量，也没有覆盖所有时间冲突与困难负例。
+
+`npm run build` 会更新页面资源版本戳。更多研读／选题的隔离验收和可选真实模型检查见相应文档。
 
 ## 文档
 
-- [Pi 原生接入说明](docs/pi-native-integration.md) — 会话、资源、扩展的完整使用规则与验收方式
-- [解析管线说明](docs/pdf-parser.md)
-- [原生能力审计](docs/pi-native-capability-audit.md)
-
-## 测试
-
-```bash
-npm test        # node --test tests/*.test.mjs
-```
+- [当前架构与开发约定](docs/architecture.md)：模块职责、兼容入口、本轮重构与后续边界
+- [统一存储与多模态知识库](docs/storage-rag.md)：部署、凭据、迁移、版本、生命周期与 API
+- [Self-RAG 检索](docs/self-rag-retrieval.md)：召回、重排、反思、日期、证据、翻译与扩展接口
+- [工作区导航与前端状态](docs/workspace-navigation.md)：入口分工、主题、草稿与旧布局迁移
+- [PDF 解析与恢复](docs/pdf-parser.md)：解析证据、版本采用、质量检查与限制
+- [选题分析](docs/topic-analysis.md)：调查卡、真实来源、报告与任务恢复
+- [研究模块](docs/research.md)：研究档案、证据卡、文献对比表、假设与导出导入
+- [Pi 原生接入](docs/pi-native-integration.md)：会话、资源、模型与扩展
+- [Pi 原生能力审计](docs/pi-native-capability-audit.md)：接入范围与验证记录

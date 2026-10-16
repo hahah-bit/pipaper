@@ -1,8 +1,10 @@
+import { persistence } from "./persistence.js";
 // 产出物：会话中 agent 通过 write/edit 写出的文件。登记来源有二：
 // 1) 历史快照（renderHistory 传入的 messages，含 assistant 消息的 toolCall parts）
 // 2) 实时事件（tool_start / tool_end）
 // 展示在阅读器「产出物」tab：左列表、右查看器（Markdown 渲染 / 图片 / 文本）。
-import { api, $, el, toast } from "./app.js";
+import { api } from "./platform/api.js";
+import { $, el, toast } from "./platform/dom.js";
 
 const WRITER_TOOLS = new Set(["write", "edit"]);
 const TOOL_CHIP = { write: "写文件", edit: "编辑" };
@@ -142,7 +144,7 @@ async function openArtifact(path) {
     const doc = el("div", { class: "paper-doc artifact-doc" });
     body.append(doc);
     try {
-      const { renderMd } = await import("./chat.js");
+      const { renderMd } = await import("./platform/markdown.js");
       renderMd(res.content || "", doc);
     } catch (e) {
       doc.replaceChildren(el("pre", {}, res.content || ""));
@@ -160,7 +162,7 @@ function applyCollapsed() {
 }
 function setCollapsed(v) {
   collapsed = v;
-  try { localStorage.setItem(COLLAPSE_KEY, v ? "1" : "0"); } catch {}
+  try { persistence.setItem(COLLAPSE_KEY, v ? "1" : "0"); } catch {}
   applyCollapsed();
 }
 
@@ -176,7 +178,7 @@ export function initArtifacts() {
       el("button", { class: "icon-btn artifact-list-toggle", onclick: () => setCollapsed(!collapsed) }),
       railLabelEl),
     listBodyEl);
-  collapsed = (() => { try { return localStorage.getItem(COLLAPSE_KEY) === "1"; } catch { return false; } })();
+  collapsed = (() => { try { return persistence.getItem(COLLAPSE_KEY) === "1"; } catch { return false; } })();
   applyCollapsed();
   renderList();
 }

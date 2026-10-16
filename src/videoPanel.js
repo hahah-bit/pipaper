@@ -1,4 +1,6 @@
-import { $, el, toast, addChip, state } from "./app.js";
+import { $, el, toast } from "./platform/dom.js";
+import { addChip } from "./features/chat/attachments.js";
+import { state } from "./shell/state.js";
 import { streamPrompt, streamPromptInBranch } from "./chat.js";
 import { renderMarkmap } from "./markmapUtil.js";
 
@@ -78,6 +80,7 @@ export function initVideoPanel() {
   });
   $("#btn-va-pip").addEventListener("click", openPip);
   bindFrameButtons();
+  renderList();
 }
 
 function addVideo(v) {
@@ -103,6 +106,12 @@ function removeVideo(i) {
 function renderList() {
   const box = $("#video-list");
   if (!box) return;
+  $("#video-empty").hidden = !!videos.length;
+  $("#video-list-head").hidden = !videos.length;
+  $("#btn-va-batch").hidden = videos.length < 2;
+  $("#btn-va-batch").disabled = !selected.size;
+  $("#video-batch-help").hidden = videos.length < 2;
+  $("#va-batch-count").textContent = selected.size ? `（${selected.size}）` : "";
   box.replaceChildren();
   videos.forEach((v, i) => {
     const cb = el("input", { type: "checkbox", title: "批量解析勾选" });
@@ -110,6 +119,7 @@ function renderList() {
     cb.addEventListener("change", () => {
       cb.checked ? selected.add(v) : selected.delete(v);
       $("#va-batch-count").textContent = selected.size ? `（${selected.size}）` : "";
+      $("#btn-va-batch").disabled = !selected.size;
     });
     box.append(
       el("div", { class: "video-item" + (current === v ? " active" : "") },

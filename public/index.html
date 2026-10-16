@@ -6,7 +6,9 @@
 <title>PiPaper · 论文精读工作台</title>
 <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
 <link rel="stylesheet" href="/vendor/dockview.css" />
-<link rel="stylesheet" href="/style.css?v=b7a90f26dc" />
+<link rel="stylesheet" href="/study.css" />
+<link rel="stylesheet" href="/style.css?v=a6da7bd533" />
+<link rel="stylesheet" href="/theme.css?v=a6da7bd533" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
 </head>
 <body>
@@ -14,20 +16,19 @@
   <!-- ============ Sidebar ============ -->
   <aside id="sidebar">
     <div class="side-head">
-      <span id="btn-theme-slot" style="display:flex"></span>
-      <button id="btn-sidebar-toggle" class="pane-toggle" title="折叠文献库" aria-label="折叠文献库">‹</button>
       <div class="brand"><span class="logo">π</span><span>PiPaper</span></div>
-      <div class="side-actions">
-        <button id="btn-import" class="icon-btn" title="导入本地 PDF">＋导入</button>
-        <button id="btn-notes-mgr" class="icon-btn" title="笔记管理（知识库：粗读/精读）">🗂</button>
-        <button id="btn-resources" class="icon-btn" title="资源管理（技能/扩展/MCP）">🧩</button>
-        <button id="btn-settings" class="icon-btn" title="设置">⚙</button>
-      </div>
+      <span id="btn-theme-slot"></span>
+      <button id="btn-sidebar-toggle" class="pane-toggle" title="折叠文献库" aria-label="折叠文献库">‹</button>
+    </div>
+    <div class="side-primary-actions">
+      <button id="btn-study" class="tool-btn primary">✦ 读论文</button>
+      <button id="btn-import" class="tool-btn" title="导入本地 PDF">＋ 导入</button>
     </div>
     <div class="project-bar">
       <select id="project-select" title="项目（会话分组）"></select>
       <button id="btn-open-zotero" class="icon-btn" title="打开 Zotero" hidden>🔗</button>
       <button id="btn-del-project" class="icon-btn" title="删除当前项目" hidden>🗑</button>
+      <button id="btn-open-research" class="icon-btn" title="研究概览（可选研究档案）" hidden>🔬</button>
       <button id="btn-new-project" class="icon-btn" title="新建项目">＋</button>
     </div>
     <div id="stab-lib" class="stab">
@@ -40,7 +41,7 @@
   </aside>
 
   <!-- ============ Chat ============ -->
-  <div class="gutter" id="gutter-1" title="拖拽调整宽度">
+  <div class="gutter" id="gutter-1">
     <button class="pane-reopen" data-pane="sidebar" title="展开文献库" aria-label="展开文献库">›</button>
   </div>
   <section id="chat-pane">
@@ -69,7 +70,6 @@
     <div id="composer-wrap">
       <div id="cmd-menu"></div>
       <div id="chips"></div>
-      <div id="quick-actions"></div>
       <div id="composer">
         <textarea id="composer-input" rows="1" placeholder="问点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
         <button id="btn-send" title="发送">➤</button>
@@ -77,7 +77,18 @@
         <button id="btn-stop" title="停止" hidden>■</button>
       </div>
       <div id="chat-queue" aria-live="polite" hidden></div>
-      <div id="composer-keys">Enter 发送 · Shift+Enter 换行</div>
+      <div class="composer-footer">
+        <div id="composer-keys">Enter 发送 · Shift+Enter 换行</div>
+        <details id="composer-more" class="composer-more">
+          <summary>更多</summary>
+          <div class="composer-more-body">
+            <section><h4>论文快捷提问</h4><div id="quick-actions"></div></section>
+            <section id="composer-session-actions"><h4>会话管理</h4></section>
+            <section id="composer-queue-actions"><h4>消息队列与恢复</h4></section>
+            <section id="composer-clipboard-actions"><h4>摘录</h4></section>
+          </div>
+        </details>
+      </div>
       <div id="composer-hint"></div>
     </div>
   </section>
@@ -96,7 +107,6 @@
       <span id="reader-status" class="status-chip"></span>
       <button id="btn-parse" class="tool-btn">解析</button>
       <button id="btn-boxselect" class="tool-btn" title="在 PDF 上框选截图加入对话">⬚ 框选</button>
-      <button id="btn-immersive" class="tool-btn primary" title="进入沉浸式阅读工作台（自选布局与模块组合）">⛶ 沉浸</button>
       <button id="btn-reader-toggle" class="pane-toggle" title="折叠阅读器" aria-label="折叠阅读器">›</button>
     </header>
     <div id="parse-panel" hidden>
@@ -166,6 +176,7 @@
           <input id="sch-year-to" type="number" placeholder="年份≤" style="width:70px" />
           <select id="sch-sort">
             <option value="recommended">综合推荐 (ReadScore)</option>
+            <option value="research">当前研究匹配</option>
             <option value="local">与本地最相关</option>
             <option value="relevance">按相关度(源排序)</option>
             <option value="if">按影响因子(SJR)</option>
@@ -173,6 +184,18 @@
             <option value="year">按年份</option>
           </select>
         </div>
+        <div class="sch-row sch-research-controls">
+          <label class="sch-oa" title="结合当前项目研究档案与知识库证据，推荐文献的阅读用途"><input id="sch-research" type="checkbox" />匹配当前研究 + RAG</label>
+          <select id="sch-purpose" aria-label="筛选文献用途" title="按阅读用途建议筛选这批结果">
+            <option value="">全部用途</option>
+            <option value="innovation">找创新点</option>
+            <option value="module">改模块</option>
+            <option value="topic">选题必读</option>
+            <option value="background">背景参考</option>
+          </select>
+        </div>
+        <div id="sch-research-context" class="sch-research-context" aria-live="polite"></div>
+        <p class="sch-purpose-note">用途是阅读建议；创新点和模块改动仍需精读与实验验证。</p>
         <div class="sch-row">
           <select id="sch-quartile" style="flex:1" title="检索前按 SJR 分区过滤（依据期刊 ISSN 匹配；arXiv/无分区来源会被排除）">
             <option value="">全部分区</option>
@@ -187,10 +210,14 @@
           <div id="sch-sources" class="sch-sources"></div>
           <button id="btn-sch-sources" class="icon-btn" title="编辑检索源">⚙</button>
         </div>
-        <button id="btn-search" class="tool-btn primary" style="width:100%">🔍 检索</button>
+        <div class="sch-search-actions">
+          <button id="btn-search" class="tool-btn primary">🔍 检索</button>
+          <button id="btn-sch-cancel" class="tool-btn" hidden>取消</button>
+        </div>
         <div id="sch-toread" class="sch-toread"></div>
-        <div id="sch-status" class="res-note"></div>
-        <div id="sch-results"></div>
+        <div id="sch-status" class="res-note" role="status" aria-live="polite"></div>
+        <div id="sch-result-count" class="res-note"></div>
+        <div id="sch-results" aria-busy="false"></div>
       </div>
     </div>
     <div id="stab-video" class="stab" hidden>
@@ -208,6 +235,11 @@
           <span>视频管理</span><span class="vd-caret">▾</span>
         </div>
         <div id="video-list"></div>
+        <div id="video-empty" class="video-empty">
+          <h3>添加一个视频</h3>
+          <p>支持本地视频与视频链接。播放时可以截帧提问，也可以生成时间轴、思维导图和内容摘要。</p>
+          <small>本地视频仅在当前页面使用，刷新后需重新选择。</small>
+        </div>
         <div id="video-player-card" class="video-player-card" hidden>
           <div id="video-stage">
             <video id="video-el" controls style="width:100%; background:#000; border-radius:8px;"></video>
@@ -238,41 +270,26 @@
             <div id="va-summary" style="max-height:200px;overflow:auto;font-size:12.5px;color:var(--fg1);white-space:pre-wrap"></div>
           </div>
         </div>
-        <button id="btn-va-batch" class="tool-btn" style="width:100%;margin-top:8px">🧠 批量解析所选<span id="va-batch-count"></span> → 综合思维导图</button>
-        <p class="res-note">勾选列表中的视频后可批量解析；AI 解析调用会话中的 video-use 技能，基于等间隔关键帧生成时间轴/思维导图/脉络。</p>
+        <button id="btn-va-batch" class="tool-btn" style="width:100%;margin-top:8px" hidden>批量解析所选<span id="va-batch-count"></span> → 综合思维导图</button>
+        <p id="video-batch-help" class="res-note" hidden>勾选多个视频后，可以合并分析并生成综合思维导图。</p>
       </div>
     </div>
   </div>
 </div>
 
-<div id="sel-popup" hidden><button id="btn-sel-add">✂ 加入对话</button></div>
-
-<!-- ============ 沉浸式阅读工作台 ============ -->
-<div id="immersive" hidden>
-  <header id="imm-head">
-    <span class="imm-brand">⛶</span>
-    <span id="imm-title">沉浸阅读</span>
-    <div class="spacer"></div>
-    <button id="btn-imm-layout" class="tool-btn" title="切换布局：两栏 / 一大两小">布局</button>
-    <button id="btn-imm-combo" class="tool-btn" title="重新选择模块组合">模块组合</button>
-    <button id="btn-imm-notes" class="tool-btn" title="笔记管理（知识库）">🗂 笔记管理</button>
-    <button id="btn-imm-exit" class="tool-btn" title="退出沉浸模式（Esc 退出全屏后仍可用此按钮）">✕ 退出</button>
-  </header>
-  <div id="imm-body"></div>
-</div>
-
-<!-- ============ 笔记管理 modal（用 <dialog>：showModal 的 top layer 在浏览器全屏时依然可见可点） ============ -->
-<dialog id="notes-backdrop" class="native-dialog notes-dialog">
-  <div class="modal-head"><span>笔记管理 · 知识库（粗读 / 精读）</span><button id="btn-notes-close" class="icon-btn">✕</button></div>
-  <div class="modal-body" id="notes-manage-body" style="min-height: 200px; max-height: 52vh; overflow: auto;"></div>
-  <div class="modal-body" id="notes-manage-view" hidden style="border-top: 1px solid var(--border); max-height: 38vh; overflow: auto;"></div>
-</dialog>
+<div id="sel-popup" hidden><button id="btn-sel-add">✂ 加入对话</button><button id="btn-sel-evidence">🔖 保存为证据</button></div>
 
 <!-- ============ Settings modal ============ -->
 <div id="modal-backdrop" hidden>
-  <div id="settings-modal" class="modal">
-    <div class="modal-head"><span>设置</span><button id="btn-settings-close" class="icon-btn">✕</button></div>
-    <div class="modal-body">
+  <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="modal-head"><span id="settings-title">设置</span><button id="btn-settings-close" class="icon-btn" aria-label="关闭设置">✕</button></div>
+    <div id="settings-tabs" class="workspace-tabs" role="tablist" aria-label="设置分类">
+      <button class="workspace-tab active" role="tab" data-section="general">常规</button>
+      <button class="workspace-tab" role="tab" data-section="knowledge">知识库</button>
+      <button class="workspace-tab" role="tab" data-section="resources">技能与扩展</button>
+      <button class="workspace-tab" role="tab" data-section="diagnostics">环境诊断</button>
+    </div>
+    <div class="modal-body" id="settings-general">
       <h4>界面</h4>
       <label>界面字号（阅读正文 / 对话 / 侧栏同步缩放）
         <select id="cfg-font-size">
@@ -316,12 +333,15 @@
       <label>学术镜像 Cookie（Google 学术镜像）<input id="cfg-scholar-cookie" type="password" placeholder="浏览器过一次验证后复制 Cookie；留空保持不变" /></label>
       <p class="res-note" style="margin:4px 0 0">密钥只存本机 data/（已 gitignore，不会进仓库）；接口返回一律打码。清除请到检索面板的源配置 ⚙。</p>
     </div>
-    <div class="modal-foot">
+    <div class="modal-foot" id="settings-general-foot">
       <span id="settings-msg"></span>
       <button id="btn-open-setup" class="tool-btn" title="环境检查：pi 登录 / Docker 服务 / Zotero / 密钥">环境检查</button>
       <div class="spacer"></div>
       <button id="btn-settings-save" class="tool-btn primary">保存</button>
     </div>
+    <section id="settings-knowledge" class="modal-body" hidden></section>
+    <section id="settings-resources" hidden></section>
+    <section id="settings-diagnostics" hidden></section>
   </div>
 </div>
 
@@ -359,6 +379,6 @@
   </div>
 </div>
 
-<script src="/app.js?v=b7a90f26dc"></script>
+<script src="/app.js?v=a6da7bd533"></script>
 </body>
 </html>

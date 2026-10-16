@@ -1,29 +1,75 @@
-import { api, state, $, el, toast } from "./app.js";
+import { persistence } from "./persistence.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { $, el, toast } from "./platform/dom.js";
+import { PURPOSES, purposeCategories, filterSearchResults, evidenceLabel, createRequestGate } from "./searchModel.js";
 
 // 筛选条件持久化：检索前设置（年份/分区/OA/排序）记忆在 localStorage
 const LS = "pipaper.sch.";
-const FILTER_FIELDS = { sort: "sort", quartile: "quartile", yearFrom: "year-from", yearTo: "year-to" };
+const FILTER_FIELDS = { sort: "sort", quartile: "quartile", yearFrom: "year-from", yearTo: "year-to", purpose: "purpose" };
+const searchGate = createRequestGate();
+let sourceRequest, toReadRevision = 0, searchTimer, lastResponse, lastSearchProjectId, lastSearchAnchorId;
+let sourceChoices = {};
+try { sourceChoices = JSON.parse(persistence.getItem(LS + "sources") || "{}"); } catch {}
+if (!sourceChoices || typeof sourceChoices !== "object" || Array.isArray(sourceChoices)) sourceChoices = {};
+
+async function requestJson(url, options = {}) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(12000), ...options });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || "HTTP " + res.status);
+  if (!data || typeof data !== "object") throw new Error("服务返回格式异常，请检查服务是否正在运行");
+  return data;
+}
+
+function openResearch() {
+  if (!state.projectId) return toast("先在文献库选择或新建一个研究项目", true);
+  window.dispatchEvent(new CustomEvent("pipaper:workspace-open", { detail: { moduleId: "research" } }));
+}
+
+function researchEnabled() { return !!state.projectId && !!$("#sch-research")?.checked; }
+
+function updateResearchControls() {
+  const checkbox = $("#sch-research");
+  if (!checkbox) return;
+  checkbox.disabled = !state.projectId;
+  checkbox.checked = !!state.projectId && persistence.getItem(LS + "research") !== "0";
+  $("#sch-sort option[value='research']").disabled = !researchEnabled();
+  $("#sch-purpose").disabled = !researchEnabled();
+  if (!researchEnabled()) $("#sch-purpose").value = "";
+  if (!researchEnabled() && $("#sch-sort").value === "research") $("#sch-sort").value = "recommended";
+  renderResearchContext();
+}
+
+function stopSearch() {
+  searchGate.cancel();
+  clearInterval(searchTimer);
+  searchTimer = null;
+  $("#btn-search").textContent = "🔍 检索";
+  $("#btn-sch-cancel").hidden = true;
+  $("#sch-results").setAttribute("aria-busy", "false");
+}
 
 function saveFilters() {
   for (const [k, id] of Object.entries(FILTER_FIELDS)) {
     const node = $("#sch-" + id);
-    if (node) localStorage.setItem(LS + k, node.value || "");
+    if (node) persistence.setItem(LS + k, node.value || "");
   }
-  localStorage.setItem(LS + "oa", $("#sch-oa").checked ? "1" : "");
+  persistence.setItem(LS + "oa", $("#sch-oa").checked ? "1" : "");
 }
 
 function restoreFilters() {
   for (const [k, id] of Object.entries(FILTER_FIELDS)) {
     const node = $("#sch-" + id);
-    const v = localStorage.getItem(LS + k);
+    const v = persistence.getItem(LS + k);
     if (node && v != null) node.value = v;
   }
-  $("#sch-oa").checked = localStorage.getItem(LS + "oa") === "1";
+  $("#sch-oa").checked = persistence.getItem(LS + "oa") === "1";
 }
 
 export function onShow() {
   renderSources();
   renderToRead();
+  updateResearchControls();
 }
 
 // 分区徽章行：分区 + SJR 影响指标
@@ -35,8 +81,9 @@ function metaBadges(r) {
 }
 
 function bibtex(r) {
-  const key = (r.authors[0] || "anon").split(" ").pop().toLowerCase() + (r.year || "nd") + (r.title.match(/\w+/)?.[0] || "").toLowerCase();
-  const authors = r.authors.join(" and ");
+  const names = Array.isArray(r.authors) ? r.authors : [];
+  const key = (names[0] || "anon").split(" ").pop().toLowerCase() + (r.year || "nd") + ((r.title || "").match(/\w+/)?.[0] || "").toLowerCase();
+  const authors = names.join(" and ");
   return [
     "@article{" + key + ",",
     `  title = {${r.title}},`,
@@ -49,18 +96,121 @@ function bibtex(r) {
   ].filter(Boolean).join("\n");
 }
 
-function renderSources() {
-  fetch("/api/search/sources").then((r) => r.json()).then((d) => {
-    const box = $("#sch-sources");
-    box.replaceChildren();
-    for (const s of d.sources) {
-      const cb = el("input", { type: "checkbox", ...(s.enabled && s.type !== "unavailable" ? { checked: true } : {}) });
-      cb.dataset.sid = s.id;
-      const label = el("label", { class: "sch-src" + (s.type === "unavailable" ? " off" : ""), title: s.note || "" }, cb, s.name);
-      if (s.type === "unavailable") { cb.disabled = true; label.title = s.note || "不可用"; }
-      box.append(label);
+async function renderSources() {
+  if (sourceRequest) return sourceRequest;
+  sourceRequest = (async () => {
+    try {
+      const d = await requestJson("/api/search/sources");
+      const box = $("#sch-sources");
+      if (!box) return;
+      box.replaceChildren();
+      for (const s of d.sources || []) {
+        const selected = Object.hasOwn(sourceChoices, s.id) ? sourceChoices[s.id] : s.enabled;
+        const cb = el("input", { type: "checkbox", ...(selected && s.type !== "unavailable" ? { checked: true } : {}),
+          onchange: () => { sourceChoices[s.id] = cb.checked; persistence.setItem(LS + "sources", JSON.stringify(sourceChoices)); },
+        });
+        cb.dataset.sid = s.id;
+        const label = el("label", { class: "sch-src" + (s.type === "unavailable" ? " off" : ""), title: s.note || "" }, cb, s.name);
+        if (s.type === "unavailable") { cb.disabled = true; label.title = s.note || "不可用"; }
+        box.append(label);
+      }
+      if (!d.sources?.length) box.append(el("span", { class: "res-note" }, "没有可用检索源，请在 ⚙ 添加检索源"));
+    } catch (e) {
+      const box = $("#sch-sources");
+      if (!box?.querySelector("input")) box?.replaceChildren(el("span", { class: "res-note sch-source-error" }, "检索源加载失败：" + e.message));
+      return false;
     }
-  });
+    return true;
+  })();
+  try { return await sourceRequest; } finally { sourceRequest = null; }
+}
+
+const QUESTION_SOURCES = { profile: "研究档案", records: "研究记录", "project-papers": "项目论文", anchor: "当前论文", none: "尚未填写" };
+
+function renderResearchContext(context = lastResponse?.researchContext) {
+  const box = $("#sch-research-context");
+  if (!box) return;
+  if (!state.projectId) {
+    box.replaceChildren(el("span", {}, "选择研究项目后，可结合研究问题与项目知识库匹配文献。"));
+    return;
+  }
+  const action = el("button", { class: "sr-abs-toggle sch-research-link", onclick: openResearch }, "编辑研究档案");
+  if (!researchEnabled()) {
+    box.replaceChildren(el("span", {}, "当前研究匹配已关闭。"), action);
+    return;
+  }
+  if (!context || context.projectId && context.projectId !== state.projectId) {
+    box.replaceChildren(el("span", {}, "将结合当前项目研究问题与 RAG 证据，给出阅读用途建议。"), action);
+    return;
+  }
+  const nodes = [];
+  if (context.question) nodes.push(el("div", { class: "sch-research-question" }, "研究问题：" + context.question,
+    el("span", { class: "sch-question-source" }, "来源：" + (QUESTION_SOURCES[context.questionSource] || context.questionSource || "当前项目"))));
+  if (!context.profileAvailable) nodes.push(el("span", {}, "尚未填写研究档案；补充研究问题和待改模块，匹配会更准确。"));
+  if (context.indexReady) nodes.push(el("span", {}, `项目知识库可检索 · ${context.evidenceCount || 0} 条匹配证据。`));
+  else nodes.push(el("span", {}, "项目暂无可用 RAG 索引，可继续根据研究档案和文献元数据匹配。"));
+  if (context.reason) nodes.push(el("span", {}, context.reason));
+  if (context.warnings?.length) nodes.push(el("div", { class: "sch-research-warning" }, context.warnings.join("；")));
+  nodes.push(action);
+  box.replaceChildren(...nodes);
+}
+
+function purposeBadges(entry) {
+  return purposeCategories(entry).map((category) => el("span", {
+    class: "sr-purpose", title: category.reason || "阅读用途建议，可在待读清单手工调整",
+  }, category.label));
+}
+
+function researchMatchRow(entry, saved = false) {
+  const match = entry.researchMatch;
+  if (!match) return null;
+  const level = { strong: "强", moderate: "中", weak: "弱", pending: "待判断" }[match.level] || match.level || "待判断";
+  const score = Number.isFinite(Number(match.score)) ? " " + Number(match.score) : "";
+  const details = el("details", { class: "sr-research-details" },
+    el("summary", {}, "匹配理由与证据"),
+    match.basis ? el("div", { class: "sr-match-basis" }, "依据：" + match.basis) : null,
+    ...(match.reasons || []).map((reason) => el("div", { class: "sr-match-reason" }, "· " + reason)),
+    ...(match.categories || []).filter((category) => category.reason).map((category) => el("div", { class: "sr-match-reason" }, category.label + "：" + category.reason)),
+    ...(match.evidence || []).map((evidence) => el("blockquote", {
+      class: "sr-research-evidence", title: [evidence.resourceId, evidence.generationId, evidence.recordId].filter(Boolean).join(" / "),
+    }, el("cite", {}, evidenceLabel(evidence)), evidence.text ? el("p", {}, evidence.text) : null)),
+    !match.evidence?.length ? el("div", { class: "sr-match-basis" }, "尚无项目全文证据，当前建议需精读核对。") : null,
+    ...(match.warnings || []).map((warning) => el("div", { class: "sch-research-warning" }, warning)),
+  );
+  return el("div", { class: "sr-research" },
+    el("div", { class: "sr-purpose-row" },
+      el("span", { class: "sr-research-score", title: "相对检索时研究的阅读匹配分，不代表论文创新性已验证" }, (saved ? "收录时匹配" : "研究匹配") + score + " · " + level),
+      ...purposeBadges(entry),
+      !purposeCategories(entry).length ? el("span", { class: "sr-scorepart" }, "用途待判断") : null,
+      match.confidence === "low" ? el("span", { class: "sr-match-low" }, "证据有限，待核对") : null),
+    details);
+}
+
+function renderSearchResults() {
+  if (!lastResponse) return;
+  const response = lastResponse;
+  const all = Array.isArray(response.results) ? response.results : [];
+  const purpose = $("#sch-purpose")?.value || "";
+  const results = filterSearchResults(all, purpose, $("#sch-sort").value);
+  const box = $("#sch-results");
+  box.replaceChildren();
+  if (!results.length) {
+    const failed = response.status === "error" || response.status === "no_sources" || !all.length && response.errors?.length;
+    box.append(el("div", { class: "res-note" }, failed
+      ? "检索源未返回可用结果。请查看下方来源诊断，检查源设置、凭据或代理后重试。"
+      : all.length && purpose ? "这批结果暂无该用途建议，可切换“全部用途”查看；研究问题不足时用途可能待判断。"
+      : $("#sch-quartile").value || $("#sch-oa").checked
+        ? "过滤后没有结果 — 分区/OA 过滤会排除部分来源，可放宽后重试。"
+        : "没有结果 — 试着换英文关键词或增加数据源。"));
+  } else for (const result of results) box.append(resultCard(result));
+  const failedSources = (response.sourceStatus || []).filter((source) => source.status === "error");
+  if (failedSources.length) box.append(el("details", { class: "sch-source-diagnostics", ...(results.length ? {} : { open: true }) },
+    el("summary", {}, "检索源诊断（" + failedSources.length + " 个来源异常）"),
+    ...failedSources.map((source) => el("div", {}, el("strong", {}, source.name || source.id),
+      "：" + (source.message || "请求失败"), source.action ? el("p", {}, source.action) : null))));
+  else if (response.errors?.length) box.append(el("div", { class: "sch-source-diagnostics" }, response.errors.join("；")));
+  if (purpose && all.length) $("#sch-result-count").textContent = `显示 ${results.length}/${all.length} 条 · 当前用途筛选`;
+  else $("#sch-result-count").textContent = "";
 }
 
 // ---------------- 待读清单 ----------------
@@ -79,13 +229,11 @@ async function refreshLibraryData() {
 
 export async function addToToRead(r) {
   try {
-    const res = await fetch("/api/search/toread", {
+    const j = await requestJson("/api/search/toread", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(r),
     });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
     toast(j.dup ? "已在待读清单中" : "已加入待读（不会自动下载）");
     renderToRead();
     return true;
@@ -102,20 +250,24 @@ async function importEntry(entry, btn) {
     return;
   }
   if (btn) { btn.disabled = true; btn.textContent = "下载中…"; }
+  const projectId = state.projectId || null;
   try {
-    const res = await fetch("/api/search/import", {
+    const j = await requestJson("/api/search/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pdfUrl: entry.pdfUrl, title: entry.title, projectId: state.projectId || null }),
+      body: JSON.stringify({ pdfUrl: entry.pdfUrl, title: entry.title, projectId,
+        researchMatch: entry.researchMatch,
+        ...(Object.hasOwn(entry, "purposeCategories") ? { purposeCategories: entry.purposeCategories } : {}) }),
+      signal: AbortSignal.timeout(120000),
     });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
     await refreshLibraryData();
-    if (state.projectId) toast("已下载并加入当前项目");
-    else toast("已下载入库（未选择项目）");
+    const importedMessage = projectId ? "已下载并加入所选项目" : "已下载入库（未选择项目）";
+    toast(importedMessage + (j.matchDiscarded ? "；已忽略其他项目的匹配快照" : ""));
     if (entry.id) {
-      await fetch("/api/search/toread/" + entry.id, { method: "DELETE" });
-      renderToRead();
+      try {
+        await requestJson("/api/search/toread/" + encodeURIComponent(entry.id), { method: "DELETE" });
+        renderToRead();
+      } catch (e) { toast("论文已导入，待读移除失败：" + e.message, true); }
     }
   } catch (e) {
     toast("导入失败: " + e.message, true);
@@ -124,7 +276,34 @@ async function importEntry(entry, btn) {
 }
 
 function toReadRow(e) {
-  return el("div", { class: "tr-row" },
+  let purposeSaving = false, row;
+  const manual = Array.isArray(e.purposeCategories) && e.purposeCategories.length;
+  const purposeSelect = el("select", { class: "tr-purpose-select", "aria-label": "手工调整阅读用途", title: "手工调整用途；选择自动建议可恢复系统分类",
+    onchange: async () => {
+      if (purposeSaving) return;
+      const previous = manual ? e.purposeCategories[0] : "";
+      const nextPurposes = purposeSelect.value ? [purposeSelect.value] : [];
+      const actionStates = [...row.querySelectorAll(".tr-actions button")].map(button => [button, button.disabled]);
+      purposeSaving = true;
+      purposeSelect.disabled = true;
+      for (const [button] of actionStates) button.disabled = true;
+      try {
+        await requestJson("/api/search/toread/" + encodeURIComponent(e.id), {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ purposeCategories: nextPurposes }),
+        });
+        e.purposeCategories = nextPurposes;
+        await renderToRead();
+      } catch (err) { purposeSelect.value = previous; toast("用途保存失败：" + err.message, true); }
+      finally {
+        purposeSaving = false;
+        purposeSelect.disabled = false;
+        for (const [button, disabled] of actionStates) button.disabled = disabled;
+      }
+    },
+  }, el("option", { value: "" }, "用途：自动建议"), ...PURPOSES.map((purpose) => el("option", { value: purpose.id }, "用途：" + purpose.label)));
+  purposeSelect.value = manual ? e.purposeCategories[0] : "";
+  row = el("div", { class: "tr-row" },
     el("div", { class: "tr-main" },
       el("div", { class: "tr-title", title: e.title }, e.title),
       el("div", { class: "tr-meta" },
@@ -132,42 +311,61 @@ function toReadRow(e) {
         e.quartile ? el("span", { class: "sr-quartile" }, e.quartile) : null,
         e.venue ? el("span", { class: "tr-venue" }, e.venue.slice(0, 40)) : null,
         e.pdfUrl ? el("span", { class: "sr-oa" }, "PDF") : el("span", { class: "tr-nopdf", title: "无开放 PDF，导入时需手动获取" }, "无PDF"),
+        ...(!e.researchMatch ? purposeBadges(e) : []),
       ),
+      e.researchMatch ? researchMatchRow(e, true) : null,
     ),
     el("div", { class: "tr-actions" },
+      purposeSelect,
       e.pdfUrl ? el("a", { class: "tool-btn", href: e.pdfUrl, target: "_blank", rel: "noreferrer", title: "打开 PDF 链接" }, "PDF") : null,
       e.url ? el("a", { class: "tool-btn", href: e.url, target: "_blank", rel: "noreferrer", title: "打开原文链接" }, "原文") : null,
       el("button", {
         class: "tool-btn", title: "复制 BibTeX",
         onclick: () => navigator.clipboard.writeText(bibtex(e)).then(() => toast("BibTeX 已复制"), () => toast("复制失败", true)),
       }, "BibTeX"),
-      el("button", { class: "tool-btn primary", title: "下载 PDF 并加入当前项目/文献库（显式操作，不自动下载）", onclick: (ev) => importEntry(e, ev.currentTarget) }, "＋项目"),
+      el("button", { class: "tool-btn primary", title: "下载 PDF 并加入当前项目/文献库（显式操作，不自动下载）", onclick: (ev) => {
+        if (!purposeSaving) return importEntry(e, ev.currentTarget);
+      } }, "＋项目"),
       el("button", {
         class: "tool-btn", title: "从待读清单移除",
-        onclick: async () => {
-          await fetch("/api/search/toread/" + e.id, { method: "DELETE" });
-          renderToRead();
+        onclick: async (ev) => {
+          if (purposeSaving) return;
+          const button = ev.currentTarget;
+          button.disabled = true;
+          try {
+            await requestJson("/api/search/toread/" + encodeURIComponent(e.id), { method: "DELETE" });
+            renderToRead();
+          } catch (err) { toast("移除失败：" + err.message, true); button.disabled = false; }
         },
       }, "✕"),
     )
   );
+  return row;
 }
 
 export async function renderToRead() {
   const box = $("#sch-toread");
   if (!box) return;
+  const revision = ++toReadRevision;
   let entries = [];
   try {
-    const j = await fetch("/api/search/toread").then((r) => r.json());
+    const j = await requestJson("/api/search/toread");
     entries = j.entries || [];
-  } catch {}
-  const open = localStorage.getItem(LS + "toreadOpen") === "1";
+  } catch (e) {
+    if (revision === toReadRevision) box.replaceChildren(el("div", { class: "res-note" }, "待读清单加载失败：" + e.message,
+      el("button", { class: "tool-btn", onclick: renderToRead }, "重试")));
+    return;
+  }
+  if (revision !== toReadRevision) return;
+  const open = persistence.getItem(LS + "toreadOpen") === "1";
   // replaceChildren 不能收 null（会渲染成 "null" 文本），先收集有效子节点
   const kids = [
     el("div", {
       class: "tr-head" + (entries.length ? "" : " empty"),
+      role: "button", tabindex: "0", "aria-expanded": String(open),
+      onkeydown: (event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); event.currentTarget.click(); } },
       onclick: () => {
-        localStorage.setItem(LS + "toreadOpen", open ? "0" : "1");
+        persistence.setItem(LS + "toreadOpen", open ? "0" : "1");
         renderToRead();
       },
     },
@@ -211,13 +409,15 @@ function scoreRow(r) {
 
 function resultCard(r) {
   const tierColor = r.tier?.color || "#767e99";
-  const authors = r.authors.slice(0, 3).join(", ") + (r.authors.length > 3 ? " 等" : "");
+  const names = Array.isArray(r.authors) ? r.authors : [];
+  const authors = names.slice(0, 3).join(", ") + (names.length > 3 ? " 等" : "");
   const absId = "abs-" + Math.random().toString(36).slice(2, 8);
-  const inList = { done: false };
   const addBtn = el("button", {
     class: "tool-btn", title: "收藏到待读清单（只存元数据，不下载 PDF）",
     onclick: async () => {
-      if (await addToToRead(r)) { inList.done = true; addBtn.textContent = "已在待读 ✓"; addBtn.disabled = true; }
+      addBtn.disabled = true;
+      if (await addToToRead(r)) addBtn.textContent = "已在待读 ✓";
+      else addBtn.disabled = false;
     },
   }, "＋待读");
   const card = el("div", { class: "sch-result" },
@@ -232,16 +432,18 @@ function resultCard(r) {
     ),
     el("div", { class: "sr-title", title: r.title }, r.title),
     el("div", { class: "sr-authors" }, authors),
+    researchMatchRow(r),
     r.abstract ? el("div", {},
       el("div", { class: "sr-abs", id: absId, style: { maxHeight: "44px", overflow: "hidden" } }, r.abstract),
-      el("a", {
-        class: "sr-abs-toggle", style: { fontSize: "11px", color: "var(--accent)", cursor: "pointer" },
+      el("button", {
+        class: "sr-abs-toggle", "aria-expanded": "false", "aria-controls": absId,
         onclick: () => {
           const a = document.getElementById(absId);
           const open = a.style.maxHeight !== "none";
           a.style.maxHeight = open ? "none" : "44px";
           a.textContent = r.abstract;
           a.nextElementSibling.textContent = open ? "收起" : "展开摘要";
+          a.nextElementSibling.setAttribute("aria-expanded", String(open));
         },
       }, "展开摘要"),
     ) : null,
@@ -263,13 +465,40 @@ function resultCard(r) {
 
 async function doSearch() {
   const q = $("#sch-q").value.trim();
-  if (!q) return;
+  if (!q) { stopSearch(); $("#sch-status").textContent = "请输入主题、方法或模型名后检索。"; return; }
+  const yearFrom = $("#sch-year-from").value, yearTo = $("#sch-year-to").value;
+  if (yearFrom && yearTo && Number(yearFrom) > Number(yearTo)) {
+    stopSearch();
+    $("#sch-status").textContent = "起始年份不能晚于结束年份。";
+    return;
+  }
   saveFilters();
+  const request = searchGate.begin();
+  clearInterval(searchTimer);
+  $("#sch-status").textContent = "加载检索源…";
+  if (!$("#sch-sources input")) await renderSources();
+  if (!searchGate.isCurrent(request)) return;
   const sources = [...document.querySelectorAll("#sch-sources input:checked")].map((c) => c.dataset.sid);
+  if (!sources.length) {
+    stopSearch();
+    $("#sch-status").textContent = "请勾选至少一个可用检索源；加载失败时可重新打开检索面板重试。";
+    return;
+  }
+  const projectId = state.projectId || null;
+  lastResponse = null;
+  lastSearchProjectId = projectId;
+  lastSearchAnchorId = state.currentPaper?.id || null;
+  const useResearch = researchEnabled();
+  $("#btn-search").textContent = "🔍 重新检索";
+  $("#btn-sch-cancel").hidden = false;
+  $("#sch-results").setAttribute("aria-busy", "true");
+  $("#sch-result-count").textContent = "";
+  renderResearchContext();
   $("#sch-status").textContent = "检索中…";
   // 多源聚合通常 10–20s：计时提示让等待可感知
   const t0 = Date.now();
-  const timer = setInterval(() => {
+  searchTimer = setInterval(() => {
+    if (!searchGate.isCurrent(request)) return;
     $("#sch-status").textContent = `检索中… ${Math.round((Date.now() - t0) / 1000)}s（多源聚合通常 10–20s）`;
   }, 500);
   $("#sch-results").replaceChildren();
@@ -277,76 +506,110 @@ async function doSearch() {
     const params = new URLSearchParams({
       q, sources: sources.join(","), sort: $("#sch-sort").value,
       limit: "15",
+      research: useResearch ? "1" : "0",
     });
     if ($("#sch-year-from").value) params.set("yearFrom", $("#sch-year-from").value);
     if ($("#sch-year-to").value) params.set("yearTo", $("#sch-year-to").value);
     if ($("#sch-quartile").value) params.set("quartile", $("#sch-quartile").value);
     if ($("#sch-oa").checked) params.set("oa", "1");
     // 本地关联度：带上当前项目与当前论文，后端据此算 ReadScore 的本地项
-    if (state.projectId) params.set("projectId", state.projectId);
-    if (state.currentPaper?.id) params.set("anchor", state.currentPaper.id);
-    const r = await fetch("/api/search?" + params);
-    const j = await r.json();
-    clearInterval(timer);
-    if (!r.ok) throw new Error(j.error || "HTTP " + r.status);
-    $("#sch-status").textContent = `共 ${j.total} 条（${((Date.now() - t0) / 1000).toFixed(1)}s）` + (j.errors?.length ? `（部分源失败: ${j.errors.join("; ")}）` : "");
-    const box = $("#sch-results");
-    box.replaceChildren();
-    if (!j.results.length) {
-      const filtered = $("#sch-quartile").value || $("#sch-oa").checked;
-      box.append(el("div", { class: "res-note" }, filtered
-        ? "过滤后没有结果 — 分区/OA 过滤会排除 arXiv 与无分区来源，可放宽后重试。"
-        : "没有结果 — 试着换英文关键词或增加数据源。"));
-      return;
-    }
-    for (const r of j.results) box.append(resultCard(r));
+    if (projectId) params.set("projectId", projectId);
+    const anchorInProject = !projectId || state.projects?.find(project => project.id === projectId)?.paperIds?.includes(lastSearchAnchorId);
+    if (lastSearchAnchorId && anchorInProject) params.set("anchor", lastSearchAnchorId);
+    const j = await requestJson("/api/search?" + params, { signal: AbortSignal.any([request.signal, AbortSignal.timeout(75000)]) });
+    if (!searchGate.isCurrent(request) || projectId !== (state.projectId || null)) return;
+    lastResponse = j;
+    const failed = j.status === "error" || j.status === "no_sources";
+    $("#sch-status").textContent = (failed ? "检索源失败" : `共 ${j.total ?? j.results?.length ?? 0} 条`)
+      + `（${((Date.now() - t0) / 1000).toFixed(1)}s）` + (j.status === "partial" || j.errors?.length && !failed ? " · 部分来源异常" : "");
+    renderResearchContext(j.researchContext);
+    renderSearchResults();
   } catch (e) {
-    clearInterval(timer);
-    $("#sch-status").textContent = "检索失败: " + e.message;
+    if (!searchGate.isCurrent(request)) return;
+    $("#sch-status").textContent = e.name === "TimeoutError"
+      ? "检索超时，可减少检索源或检查代理后重试。" : "检索失败: " + e.message;
+  } finally {
+    if (searchGate.isCurrent(request)) {
+      clearInterval(searchTimer);
+      searchTimer = null;
+      $("#btn-search").textContent = "🔍 检索";
+      $("#btn-sch-cancel").hidden = true;
+      $("#sch-results").setAttribute("aria-busy", "false");
+    }
   }
 }
 
 export function initSearchPanel() {
+  if (window.__schInit) return;
   window.__schInit = true;
   restoreFilters();
   renderSources();
   renderToRead();
+  updateResearchControls();
   // 旧版 rightbar tab 切换已移除：检索/视频由 dock 抽屉按需挂载
   $("#btn-search").addEventListener("click", doSearch);
+  $("#btn-sch-cancel").addEventListener("click", () => { stopSearch(); $("#sch-status").textContent = "已取消检索。"; });
   $("#sch-q").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); doSearch(); }
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !e.shiftKey && !e.repeat) { e.preventDefault(); doSearch(); }
   });
-  for (const k of ["sort", "quartile", "year-from", "year-to"]) {
+  for (const k of ["quartile", "year-from", "year-to"]) {
     const node = $("#sch-" + k);
     node?.addEventListener("change", saveFilters);
   }
+  $("#sch-sort").addEventListener("change", () => { saveFilters(); if (lastResponse || searchTimer) doSearch(); });
+  $("#sch-purpose").addEventListener("change", () => { saveFilters(); renderSearchResults(); });
+  $("#sch-research").addEventListener("change", () => {
+    persistence.setItem(LS + "research", $("#sch-research").checked ? "1" : "0");
+    updateResearchControls();
+    if (lastResponse || searchTimer) doSearch();
+  });
+  window.addEventListener("pipaper:project-changed", () => {
+    if (lastSearchProjectId !== (state.projectId || null)) {
+      stopSearch();
+      lastResponse = null;
+      $("#sch-results").replaceChildren();
+      $("#sch-status").textContent = "项目已切换，请重新检索以匹配当前研究。";
+      $("#sch-result-count").textContent = "";
+    }
+    updateResearchControls();
+  });
+  window.addEventListener("pipaper:paper-changed", () => {
+    if (lastSearchAnchorId === (state.currentPaper?.id || null) || lastSearchAnchorId === undefined) return;
+    stopSearch();
+    lastResponse = null;
+    $("#sch-results").replaceChildren();
+    $("#sch-status").textContent = "当前论文已切换，请重新检索以更新论文关联度。";
+    $("#sch-result-count").textContent = "";
+    renderResearchContext();
+  });
   $("#sch-oa").addEventListener("change", saveFilters);
   $("#btn-sch-sources").addEventListener("click", () => {
     const url = el("input", { type: "text", placeholder: "镜像/站点网址，如 https://sc.panda985.com", style: { width: "100%" } });
-    const key = el("input", { type: "text", placeholder: "Semantic Scholar apiKey（可选）", style: { width: "100%" } });
-    const cookie = el("input", { type: "text", placeholder: "镜像 Cookie（可选：浏览器过验证后 F12 复制 Cookie 头）", style: { width: "100%" } });
+    const key = el("input", { type: "password", placeholder: "OpenAlex / Semantic Scholar apiKey（可选）", style: { width: "100%" } });
+    const cookie = el("input", { type: "password", placeholder: "镜像 Cookie（可选：浏览器过验证后 F12 复制 Cookie 头）", style: { width: "100%" } });
     const back = el("div", { id: "tpl-editor-backdrop" }, el("div", { class: "modal", style: { width: "560px" } },
       el("div", { class: "modal-head" }, el("span", {}, "添加检索源"), el("button", { class: "icon-btn", onclick: () => back.remove() }, "✕")),
       el("div", { class: "modal-body" },
-        el("p", { class: "res-note" }, "只需填网址（和可选的密钥/Cookie），其余元数据自动补全。Google 学术镜像需先在浏览器过一次人机验证，再把 Cookie 复制进来即可免登录检索。"),
+        el("p", { class: "res-note" }, "填写网址及可选密钥/Cookie，系统会识别支持的检索源。部分学术镜像需要先在浏览器完成验证；Cookie 失效或站点限流时仍可能无法检索。"),
         el("label", { class: "modal-label" }, "网址", url),
         el("label", { class: "modal-label" }, "API Key（可选）", key),
         el("label", { class: "modal-label" }, "Cookie（可选）", cookie),
         el("div", { style: { display: "flex", gap: "8px", marginTop: "10px" } },
           el("button", {
-            class: "tool-btn primary", onclick: async () => {
+            class: "tool-btn primary", onclick: async (event) => {
+              const button = event.currentTarget;
+              button.disabled = true;
               try {
-                const res = await fetch("/api/search/sources/add", {
+                const j = await requestJson("/api/search/sources/add", {
                   method: "POST", headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ url: url.value, apiKey: key.value, cookie: cookie.value }),
                 });
-                const j = await res.json();
-                if (!res.ok) throw new Error(j.error || "HTTP " + res.status);
                 toast("检索源已添加: " + (j.source?.name || ""));
                 back.remove();
                 renderSources();
               } catch (e) {
                 toast("添加失败: " + e.message, true);
+                button.disabled = false;
               }
             }
           }, "添加源"),

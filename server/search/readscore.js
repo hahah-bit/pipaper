@@ -67,8 +67,8 @@ export function buildLocalProfile({ projectId, anchorPaperId, maxDocs = 80 } = {
   let scope = "library";
   let pool = all;
   const proj = projectId ? getProject(projectId) : null;
-  if (proj && (proj.paperIds || []).length) {
-    pool = proj.paperIds.map((id) => getPaper(id)).filter(Boolean);
+  if (proj) {
+    pool = (proj.paperIds || []).map((id) => getPaper(id)).filter(Boolean);
     scope = "project";
   }
   const docs = pool.slice(0, maxDocs).map((p) => ({
@@ -77,7 +77,7 @@ export function buildLocalProfile({ projectId, anchorPaperId, maxDocs = 80 } = {
     vec: paperTokens(p, loadDocTokens(p.id)),
   }));
   let anchor = null;
-  const ap = anchorPaperId ? getPaper(anchorPaperId) : null;
+  const ap = anchorPaperId && (!proj || proj.paperIds?.includes(anchorPaperId)) ? getPaper(anchorPaperId) : null;
   if (ap) anchor = { id: ap.id, title: ap.title, vec: paperTokens(ap, loadDocTokens(ap.id)) };
   return { docs, anchor, scope, total: all.length };
 }

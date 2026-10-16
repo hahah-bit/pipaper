@@ -1,56 +1,12 @@
-import { api, state } from "./app.js";
-import { createSessionEventChannel } from "./sessionEventChannel.js";
+import { api } from "./platform/api.js";
+import { state } from "./shell/state.js";
+import { runTempPrompt, removeTempSession } from "./tempSession.js";
 import { buildPrompt, noteFilePath, NOTE_FILES } from "./noteTemplates.js";
 
 // 粗读笔记生成：前端自动创建一个临时 pi 会话跑生成任务，结束后自动删除该会话，
 // 主对话完全不受影响；产物是落在 knowledge/粗读/<slug>/ 下的文件。
 
 const running = new Map(); // `${paperId}/${file}` → Promise，防止同一产物重复触发
-
-function tmpFetch(holder, url, opts = {}) {
-  return fetch(url, {
-    ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      ...(holder.controlId ? { "X-Pi-Control": holder.controlId } : {}),
-      ...(opts.headers || {}),
-    },
-    body: opts.body != null ? JSON.stringify(opts.body) : undefined,
-  });
-}
-
-// 在临时会话里跑一条 prompt。成功返回 { sessionId, holder, assistantText }；
-// 会话的删除由调用方根据结果决定（成功删、失败保留回查）。
-async function runInTempSession({ paper, prompt, onStatus }) {
-  // 独立的 state 对象：临时会话的 controlId 不能污染主对话的全局 state
-  const holder = { controlId: null };
-  const channel = createSessionEventChannel({ state: holder });
-  const created = await api.createSession(paper.paperId, state.projectId || null, `粗读生成 · ${String(paper.title || "").slice(0, 36)}`);
-  const sessionId = created.id;
-  let assistantText = "";
-  try {
-    await channel.connectSessionEvents(sessionId, (ev) => {
-      if (ev.t === "connected") holder.controlId = ev.controlId;
-      else if (ev.t === "delta") assistantText += ev.text || "";
-      else if (ev.t === "tool_start" && ev.name === "write") onStatus?.("正在写入 " + (ev.args?.path || "文件") + " …");
-      else if (ev.t === "tool_start" && ["read", "read_paper"].includes(ev.name)) onStatus?.("正在阅读论文…");
-    });
-    const res = await tmpFetch(holder, `/api/sessions/${encodeURIComponent(sessionId)}/prompt`, {
-      method: "POST",
-      body: { text: prompt, paperId: paper.paperId, projectId: state.projectId || null },
-    });
-    const op = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(op.error || `HTTP ${res.status}`);
-    await channel.waitOperation(op.operationId);
-  } finally {
-    channel.closeSessionEvents();
-  }
-  return { sessionId, holder, assistantText };
-}
-
-async function removeTempSession(sessionId, holder) {
-  try { await tmpFetch(holder, `/api/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }); } catch {}
-}
 
 async function fileExists(category, slug, file) {
   try {
@@ -79,19 +35,20 @@ export async function generateArtifact(paper, kind, { onStatus } = {}) {
     const filePath = noteFilePath(slug, def.file);
 
     onStatus?.("启动临时会话…");
-    const { sessionId, holder, assistantText } = await runInTempSession({
-      paper,
+    const { sessionId, controlId, assistantText } = await runTempPrompt({
+      title: `粗读生成 · ${String(paper.title || "").slice(0, 36)}`,
+      paperId: paper.paperId, projectId: state.projectId || null,
       prompt: buildPrompt(kind, { title: paper.title || "", slug }),
       onStatus,
     });
 
     if (await fileExists("粗读", slug, def.file)) {
-      await removeTempSession(sessionId, holder);
+      await removeTempSession(sessionId, controlId);
       onStatus?.("");
       return { ok: true };
     }
     if (/^\s*\[\[无需生成\]\]/m.test(assistantText)) {
-      await removeTempSession(sessionId, holder);
+      await removeTempSession(sessionId, controlId);
       onStatus?.("");
       return { noop: true, reason: assistantText.replace(/^\s*\[\[无需生成\]\]\s*/m, "").split("\n").filter(Boolean)[0] || "本文不涉及该内容" };
     }

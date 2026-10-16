@@ -23,6 +23,7 @@ const GROUPS = {
   Header: null,
   Footer: null,
   Caption: "caption",
+  Footnote: "footnote",
 };
 
 export async function parseUnstructured(pdfPath, cfg, log = () => {}, capture = () => {}) {

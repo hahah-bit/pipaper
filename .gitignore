@@ -4,8 +4,29 @@ library/*.pdf
 public/vendor/
 public/app.js
 public/app.js.map
+public/study.js
+public/study.js.map
+public/topics.js
+public/topics.js.map
 *.log
 .DS_Store
 .zcode/
 /knowledge/
 /POMO精读笔记.md
+
+# ===== CFM 跨模态研究产物（属于远程 /home/fbl/桌面/cfm 项目，不属于本仓库）=====
+.cfm_download_deps/
+official_backbones/
+official_cable_gland/
+cfm_issues.json
+cfm_train_repro.py
+remote_cfm_transfer.py
+repair_failure_analysis.py
+train_cable_bs4.sh
+/CFM训练结果审计_*.md
+
+# ===== 选题分区表导入暂存（CAS 表已导入 data/topic-analysis，原始 CSV 仅本地留档）=====
+/tmp-import/
+
+# ===== ZCode IDE 个人排除配置 =====
+.zcodeignore
